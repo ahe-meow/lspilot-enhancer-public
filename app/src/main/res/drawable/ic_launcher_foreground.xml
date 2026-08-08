@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Quiet orbit: an independent module enhancing the host without replacing it. -->
+    <path
+        android:fillColor="@android:color/transparent"
+        android:pathData="M22,57 C24,35 43,20 64,23 C82,25 93,40 91,57"
+        android:strokeColor="#66FFFFFF"
+        android:strokeLineCap="round"
+        android:strokeWidth="3" />
+
+    <path
+        android:fillColor="@android:color/transparent"
+        android:pathData="M86,66 C80,82 62,91 45,85"
+        android:strokeColor="#6634C759"
+        android:strokeLineCap="round"
+        android:strokeWidth="3" />
+
+    <!-- Pilot pointer and stylised L. -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:fillType="evenOdd"
+        android:pathData="M33,27 L79,47 L59,55 L51,76 L33,27 Z M41,38 L53,67 L57,50 L69,47 L41,38 Z" />
+
+    <!-- Enhancer sparkle / active hook signal. -->
+    <path
+        android:fillColor="#FF34C759"
+        android:pathData="M76,59 C77.5,65.5 81,69 87.5,70.5 C81,72 77.5,75.5 76,82 C74.5,75.5 71,72 64.5,70.5 C71,69 74.5,65.5 76,59 Z" />
+
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M88,28 C88.7,31.2 90.3,32.8 93.5,33.5 C90.3,34.2 88.7,35.8 88,39 C87.3,35.8 85.7,34.2 82.5,33.5 C85.7,32.8 87.3,31.2 88,28 Z" />
+</vector>

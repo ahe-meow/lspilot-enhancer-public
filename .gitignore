@@ -1,0 +1,34 @@
+# Gradle / Android build outputs
+.gradle/
+**/build/
+
+# Local Android SDK and machine-specific paths
+.sdk/
+local.properties
+
+# IDE metadata
+.idea/
+*.iml
+.vscode/
+
+# Generated packages and signing material
+*.apk
+*.ap_
+*.aab
+*.jks
+*.keystore
+
+# Native / Java build artifacts
+*.class
+*.dex
+.externalNativeBuild/
+.cxx/
+
+# OS/editor files
+.DS_Store
+Thumbs.db
+*.swp
+*.tmp
+
+# Logs
+*.log
