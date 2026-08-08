@@ -27,6 +27,15 @@ final class NativeChatTopBarAction {
         catch (Throwable e) { Log.e(TAG, "compose chat panel failed", e); }
     }
 
+    static void refreshPanel() {
+        try {
+            PanelBridge bridge = panelBridge;
+            if (bridge != null) bridge.set(true);
+        } catch (Throwable error) {
+            Log.e(TAG, "compose compression panel refresh failed", error);
+        }
+    }
+
     static void showDialog() {
         Log.i(TAG, "native TopAppBar compression icon clicked");
         InjectedUiController.showChatCompressionDialog();
@@ -241,7 +250,7 @@ final class NativeChatTopBarAction {
             ManualCompressionManager.ScreenState screen = ManualCompressionManager.getCurrentScreen();
             int count = screen == null ? 0 : screen.messageCount;
             int keep = ModuleSettings.getManualKeepRecent();
-            return "当前共 " + count + " 条消息。将压缩较早历史，保留最近 " + keep + " 条；摘要只用于下一次发送，原始聊天记录不会被修改。";
+            return "当前共 " + count + " 条消息。将压缩较早历史，保留最近 " + keep + " 条；摘要会作为本会话长期基线持续复用，原始聊天记录不会被修改。";
         }
 
         void drawText(String value, Object composer) throws Exception {

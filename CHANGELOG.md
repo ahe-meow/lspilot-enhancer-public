@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.7.4-preview.8
+
+- Replace model-backed manual summarization with deterministic local window compression, eliminating the extra compression model request and its token cost.
+- Keep manual compression as a persistent chat baseline and support incremental updates from the existing compacted baseline plus newly added tail messages.
+- Cap oversized message/tool-call excerpts in compression blocks with head/tail retention and SHA-256 anchors to reduce prompt bloat while preserving traceability.
+- Stop reopening the compression panel after completion on every later request; show the compression-baseline notice once per prepared baseline.
+
 ## 1.7.4
 
 - Add project settings for automatic context compression thresholds: trigger by conversation turns or estimated context tokens.

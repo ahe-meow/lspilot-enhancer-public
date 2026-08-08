@@ -1,5 +1,8 @@
 package dev.operit.lspilot.enhancer;
 
+import android.os.Handler;
+import android.os.Looper;
+
 import org.json.JSONArray;
 import org.json.JSONObject;
 
@@ -156,7 +159,8 @@ static final class Result {
     private static volatile boolean compressionUsedForPendingRequest;
     private static volatile int lastProgressCompleted;
     private static volatile int lastProgressTotal;
-
+    private static volatile long lastBlockedSendNoticeAt;
+    private static final Handler MAIN_HANDLER = new Handler(Looper.getMainLooper());
 
     private static volatile ScreenState currentScreen;
     private static volatile Prepared prepared;
@@ -164,6 +168,7 @@ static final class Result {
     private static volatile Result lastResult;
     private static volatile int lastKeepRecent;
     private static volatile boolean preparedUsedForActiveResponse;
+    private static volatile boolean preparedUsageNoticePosted;
     private static volatile int preparedApplyCount;
 
     static Result getLastResult() {
@@ -215,11 +220,17 @@ static final class Result {
 
     private static void postStatus(String chatId, String content) {
         if (chatId == null || content == null || repositoryAddMessage == null
-                || hostMessageConstructor == null || repositoryInstance == null) return;
+                || hostMessageConstructor == null || repositoryInstance == null) {
+            DebugLogger.w("chat status skipped chat=" + DebugLogger.id(chatId)
+                    + " bridgeReady=" + (repositoryAddMessage != null
+                    && hostMessageConstructor != null && repositoryInstance != null));
+            return;
+        }
         STATUS_EXECUTOR.execute(() -> {
             try {
                 Object message = hostMessageConstructor.newInstance(
-                        "lspilot-enhancer-" + STATUS_SEQUENCE.incrementAndGet(), ENHANCER_ROLE,
+                        "lspilot-enhancer-" + System.currentTimeMillis()
+                                + "-" + STATUS_SEQUENCE.incrementAndGet(), ENHANCER_ROLE,
                         ENHANCER_MARKER + "\n" + content,
                         false, "", 0L, 0L, System.currentTimeMillis(), 0,
                         Collections.emptyList(), 0, Collections.emptyList(),
@@ -227,13 +238,16 @@ static final class Result {
                         false, 0, 0, 0, 0, 0L, 0, 0, 0L, 0);
                 repositoryAddMessage.invoke(repositoryInstance, chatId, message);
                 DebugLogger.i("chat status inserted chat=" + DebugLogger.id(chatId)
-                        + " chars=" + content.length());
-                refreshChat(chatId);
+                        + " chars=" + content.length()
+                        + " refresh=local_compression_ui");
+                refreshCompressionUi();
             } catch (Throwable error) {
                 DebugLogger.e("chat status insertion failed chat=" + DebugLogger.id(chatId), error);
             }
         });
     }
+
+    // Host chat route is not reloaded for status updates; local compression UI is refreshed instead.
 
     static void postCompressionStatus(String content) {
         ScreenState screen = currentScreen;
@@ -363,11 +377,12 @@ static final class Result {
             if (previous != null && previous.loading && !loading
                     && preparedUsedForActiveResponse) {
                 Prepared value = prepared;
-                if (value != null && value.automatic && chatId.equals(value.chatId)) {
+                if (value != null && chatId.equals(value.chatId)) {
                     preparedUsedForActiveResponse = false;
                     preparedApplyCount = 0;
                     compressionUsedForPendingRequest = false;
-                    DebugLogger.i("automatic prepared context retained after response"
+                    DebugLogger.i((value.automatic ? "automatic" : "manual")
+                            + " prepared context retained after response"
                             + " baseTurns=" + value.baseTurnCount
                             + " baseTokens=" + value.baseApproxContextTokens);
                 } else {
@@ -390,8 +405,7 @@ static final class Result {
                         + " loading=" + loading + " provider=" + DebugLogger.redact(signature));
             }
             if (previous != null && previous.loading != loading && loading && preparing) {
-                resetPreparedState(true);
-                DebugLogger.i("in-flight compression invalidated: chat became loading");
+                DebugLogger.i("chat became loading while compression is preparing; keeping task state");
             }
             if (previous != null && (!chatId.equals(previous.chatId)
                     || !signature.equals(previous.providerSignature))) {
@@ -408,6 +422,34 @@ static final class Result {
 
     static boolean isPreparing() {
         return preparing;
+    }
+
+    static boolean blockSendWhilePreparing() {
+        if (!preparing) {
+            return false;
+        }
+        ScreenState screen = currentScreen;
+        long now = System.currentTimeMillis();
+        if (now - lastBlockedSendNoticeAt >= 3000L) {
+            lastBlockedSendNoticeAt = now;
+            postStatus(screen == null ? null : screen.chatId,
+                    "压缩仍在进行，已阻止本次发送；请等待压缩完成后再发送。");
+        }
+        DebugLogger.i("send blocked while compression preparing chat="
+                + (screen == null ? "none" : DebugLogger.id(screen.chatId)));
+        refreshCompressionUi();
+        return true;
+    }
+
+    static void refreshCompressionUi() {
+        MAIN_HANDLER.post(() -> {
+            try {
+                NativeChatTopBarAction.refreshPanel();
+                InjectedUiController.refreshChatCompressionOverlay();
+            } catch (Throwable error) {
+                DebugLogger.e("local compression UI refresh failed", error);
+            }
+        });
     }
 
     static boolean hasPreparedForCurrentChat() {
@@ -487,6 +529,7 @@ static final class Result {
     private static void resetPreparedState(boolean bumpGeneration) {
         prepared = null;
         preparedUsedForActiveResponse = false;
+        preparedUsageNoticePosted = false;
         preparedApplyCount = 0;
         lastMetrics = null;
         compressionUsedForPendingRequest = false;
@@ -544,16 +587,37 @@ static final class Result {
             try {
                 DebugLogger.d("compression snapshot begin chat=" + DebugLogger.id(screen.chatId));
                 Snapshot snapshot = snapshot(screen);
+                boolean incremental = false;
+                Prepared previousPrepared = prepared;
+                JSONArray compressionInput = snapshot.messages;
+                if (!automatic && previousPrepared != null
+                        && screen.chatId.equals(previousPrepared.chatId)
+                        && snapshot.providerSignature.equals(previousPrepared.providerSignature)) {
+                    compressionInput = buildIncrementalCompressionInput(snapshot.messages,
+                            previousPrepared, keepRecent);
+                    incremental = compressionInput != snapshot.messages;
+                    if (incremental) {
+                        DebugLogger.i("incremental manual compression input chat="
+                                + DebugLogger.id(screen.chatId)
+                                + " originalMessages=" + snapshot.messages.length()
+                                + " inputMessages=" + compressionInput.length());
+                    }
+                }
                 DebugLogger.d("compression snapshot ready messages=" + snapshot.messages.length()
+                        + " inputMessages=" + compressionInput.length()
+                        + " incremental=" + incremental
                         + " provider=" + DebugLogger.redact(snapshot.providerSignature));
-                postStatus(screen.chatId, "压缩进度：快照完成，输入消息 " + snapshot.messages.length()
-                        + " 条，字符 " + charLength(snapshot.messages) + "，估算 token "
-                        + approxTokenLength(snapshot.messages) + "。");
+                postStatus(screen.chatId, "压缩进度：快照完成，输入消息 " + compressionInput.length()
+                        + " 条，字符 " + charLength(compressionInput) + "，估算 token "
+                        + approxTokenLength(compressionInput) + (incremental ? "。本次使用已有摘要做增量压缩。" : "。"));
                 JSONArray compacted = ContextCompression.compact(
-                        snapshot.messages, snapshot.config, true, keepRecent,
+                        compressionInput, snapshot.config, true, keepRecent,
                         (completed, total) -> {
-                            lastProgressCompleted = completed;
-                            lastProgressTotal = total;
+                            lastResult = new Result(true,
+                        "压缩中：摘要分块 " + completed + "/" + total
+                                + " 已完成，已耗时 "
+                                + (System.currentTimeMillis() - compressionStartedAt) + " ms。",
+                        screen.messageCount, 0);
                             String progress = "压缩进度：摘要分块 " + completed + "/" + total
                                     + " 已完成。当前已耗时 "
                                     + (System.currentTimeMillis() - compressionStartedAt) + " ms。";
@@ -572,6 +636,7 @@ static final class Result {
                         snapshot.messages, compacted, automatic,
                         screen.turnCount, screen.approxContextTokens);
                 preparedUsedForActiveResponse = false;
+                preparedUsageNoticePosted = false;
                 preparedApplyCount = 0;
                 CompressionMetrics metrics = CompressionMetrics.measure(snapshot.messages, compacted,
                         System.currentTimeMillis() - compressionStartedAt, 0);
@@ -581,9 +646,9 @@ static final class Result {
                         + metrics.compactedChars + "；UTF-8 字节 " + metrics.originalBytes + " -> "
                         + metrics.compactedBytes + "；估算 token " + metrics.originalApproxTokens
                         + " -> " + metrics.compactedApproxTokens + "；压缩率 " + metrics.ratioPercent()
-                        + "%；耗时 " + metrics.durationMs + " ms。摘要已准备，将在下一次发送使用。");
+                        + "%；耗时 " + metrics.durationMs + " ms。摘要已作为本会话长期基线，后续发送会持续复用，直到切换对话或 Provider。摘要后的新增内容会进行增量压缩。");
                 result = new Result(true,
-                        "摘要已就绪，将用于下一次发送。原始 "
+                        "摘要已就绪并将持续用于本会话。原始 "
                                 + snapshot.messages.length() + " 条，压缩后 "
                                 + compacted.length() + " 条，保留最近 " + keepRecent + " 条。",
                         snapshot.messages.length(), compacted.length(), metrics);
@@ -613,6 +678,48 @@ static final class Result {
 
     private static JSONArray stripEnhancerStatuses(JSONArray messages) throws Exception {
         return withoutEnhancerStatuses(messages);
+    }
+
+    private static JSONArray buildIncrementalCompressionInput(JSONArray currentSource,
+            Prepared previous, int keepRecent) throws Exception {
+        if (currentSource == null || previous == null || previous.source == null
+                || previous.compacted == null) {
+            return currentSource;
+        }
+        int currentSystemCount = countLeadingSystemMessages(currentSource);
+        int previousSystemCount = countLeadingSystemMessages(previous.source);
+        int previousHistoryCount = previous.source.length() - previousSystemCount;
+        if (currentSource.length() - currentSystemCount <= previousHistoryCount) {
+            return currentSource;
+        }
+        for (int index = 0; index < previousHistoryCount; index++) {
+            Object oldItem = previous.source.get(previousSystemCount + index);
+            Object currentItem = currentSource.get(currentSystemCount + index);
+            if (!String.valueOf(oldItem).equals(String.valueOf(currentItem))) {
+                DebugLogger.w("incremental compression skipped: source prefix changed");
+                return currentSource;
+            }
+        }
+        JSONArray input = new JSONArray();
+        for (int index = 0; index < currentSystemCount; index++) {
+            input.put(currentSource.get(index));
+        }
+        int compactedSystemCount = countLeadingSystemMessages(previous.compacted);
+        for (int index = compactedSystemCount; index < previous.compacted.length(); index++) {
+            input.put(previous.compacted.get(index));
+        }
+        int tailStart = currentSystemCount + previousHistoryCount;
+        for (int index = tailStart; index < currentSource.length(); index++) {
+            input.put(currentSource.get(index));
+        }
+        if (input.length() >= currentSource.length()) {
+            return currentSource;
+        }
+        DebugLogger.i("incremental compression assembled previousSource="
+                + previous.source.length() + " previousCompacted=" + previous.compacted.length()
+                + " current=" + currentSource.length() + " input=" + input.length()
+                + " keepRecent=" + keepRecent);
+        return input;
     }
 
     static JSONArray applyPrepared(JSONArray actualMessages, Object config) {
@@ -668,12 +775,13 @@ static final class Result {
             lastMetrics = metrics;
             DebugLogger.i("manual prepared context applied chat=" + DebugLogger.id(value.chatId)
                     + " applyCount=" + applyIndex + " " + metrics.describe());
-            if (applyIndex == 1) {
-                postStatus(value.chatId, "本轮请求已使用压缩上下文：消息 " + metrics.originalMessages
+            if (!preparedUsageNoticePosted) {
+                preparedUsageNoticePosted = true;
+                postStatus(value.chatId, "本会话已启用压缩基线：消息 " + metrics.originalMessages
                         + " -> " + metrics.compactedMessages + "；字符 " + metrics.originalChars + " -> "
                         + metrics.compactedChars + "；估算 token " + metrics.originalApproxTokens + " -> "
                         + metrics.compactedApproxTokens + "；压缩率 " + metrics.ratioPercent()
-                        + "%。本轮回复结束前，后续工具/阶段请求会继续复用该压缩上下文。");
+                        + "%。该摘要会作为本会话长期基线持续复用。新增内容达到阈值后可增量压缩。");
             }
             return result;
         } catch (Throwable error) {

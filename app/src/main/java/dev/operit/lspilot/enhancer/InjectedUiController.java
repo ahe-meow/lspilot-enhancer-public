@@ -114,6 +114,60 @@ final class InjectedUiController {
         return null;
     }
 
+    static void refreshChatCompressionOverlay() {
+        Activity activity = currentChatActivity();
+        if (!isActivityUsable(activity)) return;
+        activity.runOnUiThread(() -> {
+            if (!isActivityUsable(activity) || !chatRouteVisible) return;
+            FrameLayout frame = ensureOverlay(activity);
+            if (frame == null) return;
+            View panel = frame.findViewWithTag("lspilot-enhancer-chat-compress-panel");
+            if (panel == null) {
+                if (ManualCompressionManager.isPreparing()) {
+                    showInlineCompressionPanel(activity);
+                }
+                return;
+            }
+            ManualCompressionManager.ScreenState state =
+                    ManualCompressionManager.getCurrentScreen();
+            boolean prepared = ManualCompressionManager.hasPreparedForCurrentChat();
+            int keepRecent = ModuleSettings.getManualKeepRecent();
+            TextView title = panel.findViewWithTag("lspilot-enhancer-chat-compress-title");
+            TextView body = panel.findViewWithTag("lspilot-enhancer-chat-compress-body");
+            Button start = panel.findViewWithTag("lspilot-enhancer-chat-compress-start");
+            if (title != null) {
+                title.setText(ManualCompressionManager.isPreparing()
+                        ? "正在压缩上下文" : (prepared ? "上下文摘要已就绪" : "手动压缩上下文"));
+            }
+            if (body != null) {
+                body.setText(compressionPanelBody(state, prepared, keepRecent));
+            }
+            if (start != null) {
+                start.setText(ManualCompressionManager.isPreparing()
+                        ? "压缩中" : (prepared ? "增量更新" : "开始压缩"));
+                start.setEnabled(!ManualCompressionManager.isPreparing());
+            }
+            panel.bringToFront();
+        });
+    }
+
+    private static String compressionPanelBody(ManualCompressionManager.ScreenState state,
+            boolean prepared, int keepRecent) {
+        if (ManualCompressionManager.isPreparing()) {
+            ManualCompressionManager.Result result = ManualCompressionManager.getLastResult();
+            return result == null
+                    ? "压缩任务正在后台运行，发送消息已暂时阻止。进度会在此面板更新。"
+                    : result.message;
+        }
+        ManualCompressionManager.Result result = ManualCompressionManager.getLastResult();
+        if (result != null) return result.message;
+        if (state == null) return "正在读取当前对话。保留最近 " + keepRecent + " 条消息。";
+        return prepared
+                ? "摘要已准备完成，将作为本会话长期基线持续复用。原始聊天记录不会被修改。"
+                : "当前共 " + state.messageCount + " 条消息。将使用当前模型压缩较早消息，保留最近 "
+                + keepRecent + " 条。此操作不会修改原始聊天记录。";
+    }
+
     static void showChatCompressionDialog() {
         Activity activity = findResumedChatActivity();
         if (!isActivityUsable(activity)) {
@@ -334,6 +388,7 @@ final class InjectedUiController {
         if (Build.VERSION.SDK_INT >= 21) panel.setElevation(dp(activity, 32));
 
         TextView title = new TextView(activity);
+        title.setTag("lspilot-enhancer-chat-compress-title");
         title.setText(prepared ? "上下文摘要已就绪" : "手动压缩上下文");
         title.setTextColor(dark ? Color.WHITE : Color.rgb(32, 33, 36));
         title.setTypeface(Typeface.DEFAULT_BOLD);
@@ -341,12 +396,8 @@ final class InjectedUiController {
         panel.addView(title, matchWrap());
 
         TextView body = new TextView(activity);
-        body.setText(state == null
-                ? "正在读取当前对话。保留最近 " + keepRecent + " 条消息。"
-                : (prepared
-                ? "摘要已准备完成，将在下一次发送时使用。原始聊天记录不会被修改。"
-                : "当前共 " + state.messageCount + " 条消息。将使用当前模型压缩较早消息，保留最近 "
-                + keepRecent + " 条。此操作会产生一次额外模型请求，但不会修改原始聊天记录。"));
+        body.setTag("lspilot-enhancer-chat-compress-body");
+        body.setText(compressionPanelBody(state, prepared, keepRecent));
         body.setTextColor(dark ? Color.rgb(210, 210, 210) : Color.rgb(80, 80, 80));
         body.setTextSize(14);
         body.setPadding(0, dp(activity, 8), 0, dp(activity, 12));
@@ -361,7 +412,9 @@ final class InjectedUiController {
         close.setOnClickListener(v -> frame.removeView(panel));
         row.addView(close, new LinearLayout.LayoutParams(dp(activity, 76), dp(activity, 40)));
         Button start = new Button(activity);
-        start.setText(prepared ? "重新生成" : "开始压缩");
+        start.setTag("lspilot-enhancer-chat-compress-start");
+        start.setText(ManualCompressionManager.isPreparing() ? "压缩中" : (prepared ? "增量更新" : "开始压缩"));
+        start.setEnabled(!ManualCompressionManager.isPreparing());
         start.setAllCaps(false);
         start.setOnClickListener(v -> {
             Log.i(TAG, "inline compression start clicked");
@@ -396,7 +449,7 @@ final class InjectedUiController {
             message = "正在读取当前对话。保留最近 " + keepRecent + " 条消息。";
         } else {
             message = prepared
-                    ? "摘要已准备完成，将在下一次发送时使用。原始聊天记录不会被修改。"
+                    ? "摘要已准备完成，将作为本会话长期基线持续复用。原始聊天记录不会被修改。"
                     : "当前共 " + state.messageCount + " 条消息。将使用当前模型压缩较早消息，"
                     + "保留最近 " + keepRecent
                     + " 条。此操作会产生一次额外模型请求，但不会修改原始聊天记录。";
@@ -417,7 +470,7 @@ final class InjectedUiController {
             builder.setNeutralButton("保留 " + keepRecent + " 条", (dialog, which) ->
                     chooseKeepRecent(activity, button));
         }
-        builder.setPositiveButton(prepared ? "重新生成" : "开始压缩", (dialog, which) ->
+        builder.setPositiveButton(prepared ? "增量更新" : "开始压缩", (dialog, which) ->
                 startManualCompression(activity, button));
         AlertDialog dialog = builder.create();
         dialog.setOnShowListener(ignored -> applyChatDialogTheme(activity, dialog));
@@ -461,7 +514,6 @@ final class InjectedUiController {
     }
 
     private static void startManualCompression(Activity activity, Button button) {
-        ManualCompressionManager.clearPrepared();
         if (button != null) {
             button.setEnabled(false);
             button.setText("压缩中");
