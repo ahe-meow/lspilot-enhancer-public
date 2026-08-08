@@ -24,14 +24,18 @@ final class ManualCompressionManager {
         final String chatId;
         final Object uiState;
         final int messageCount;
+        final int turnCount;
+        final int approxContextTokens;
         final boolean loading;
         final String providerSignature;
 
-        ScreenState(String chatId, Object uiState, int messageCount, boolean loading,
-                String providerSignature) {
+        ScreenState(String chatId, Object uiState, int messageCount, int turnCount,
+                int approxContextTokens, boolean loading, String providerSignature) {
             this.chatId = chatId;
             this.uiState = uiState;
             this.messageCount = messageCount;
+            this.turnCount = turnCount;
+            this.approxContextTokens = approxContextTokens;
             this.loading = loading;
             this.providerSignature = providerSignature;
         }
@@ -353,7 +357,7 @@ static final class Result {
         }
         try {
             List<?> messages = (List<?>) invoke(uiState, "getMessages");
-            int effectiveMessageCount = countHostMessages(messages);
+            MessageStats stats = measureHostMessages(messages);
             boolean loading = Boolean.TRUE.equals(invoke(uiState, "isLoading"));
             ScreenState previous = currentScreen;
             if (previous != null && previous.loading && !loading
@@ -365,10 +369,14 @@ static final class Result {
             Object config = invoke(uiState, "getSelectedProvider");
             String signature = config == null ? "unknown" : providerSignature(config);
             currentScreen = new ScreenState(chatId, uiState,
-                    effectiveMessageCount, loading, signature);
+                    stats.messageCount, stats.turnCount, stats.approxContextTokens,
+                    loading, signature);
             if (ModuleSettings.isVerboseDebugLogEnabled()) {
                 DebugLogger.d("screen update chat=" + DebugLogger.id(chatId)
                         + " messages=" + (messages == null ? 0 : messages.size())
+                        + " effectiveMessages=" + stats.messageCount
+                        + " turns=" + stats.turnCount
+                        + " approxTokens=" + stats.approxContextTokens
                         + " loading=" + loading + " provider=" + DebugLogger.redact(signature));
             }
             if (previous != null && previous.loading != loading && loading && preparing) {
@@ -380,7 +388,7 @@ static final class Result {
                 resetPreparedState(true);
             }
         } catch (Throwable ignored) {
-            currentScreen = new ScreenState(chatId, uiState, 0, false, "unknown");
+            currentScreen = new ScreenState(chatId, uiState, 0, 0, 0, false, "unknown");
         }
     }
 
@@ -400,13 +408,35 @@ static final class Result {
 
     static boolean shouldAutoCompressBeforeSend() {
         ScreenState screen = currentScreen;
-        return ModuleSettings.isEnabled()
-                && ModuleSettings.isContextCompressionEnabled()
-                && screen != null
-                && !screen.loading
-                && !preparing
-                && !hasPreparedForCurrentChat()
-                && screen.messageCount > ModuleSettings.getManualKeepRecent();
+        if (!ModuleSettings.isEnabled()
+                || !ModuleSettings.isContextCompressionEnabled()
+                || screen == null
+                || screen.loading
+                || preparing
+                || hasPreparedForCurrentChat()
+                || screen.messageCount <= ModuleSettings.getManualKeepRecent()) {
+            return false;
+        }
+        int triggerTurns = ModuleSettings.getAutoTriggerTurns();
+        int triggerTokens = ModuleSettings.getAutoContextTokens();
+        boolean turnsExceeded = screen.turnCount >= triggerTurns;
+        boolean tokensExceeded = screen.approxContextTokens >= triggerTokens;
+        if (turnsExceeded || tokensExceeded) {
+            DebugLogger.i("auto compression trigger chat=" + DebugLogger.id(screen.chatId)
+                    + " turns=" + screen.turnCount + "/" + triggerTurns
+                    + " approxTokens=" + screen.approxContextTokens + "/" + triggerTokens
+                    + " messages=" + screen.messageCount
+                    + " keepRecent=" + ModuleSettings.getManualKeepRecent());
+            return true;
+        }
+        if (ModuleSettings.isVerboseDebugLogEnabled()) {
+            DebugLogger.d("auto compression skipped thresholds chat="
+                    + DebugLogger.id(screen.chatId)
+                    + " turns=" + screen.turnCount + "/" + triggerTurns
+                    + " approxTokens=" + screen.approxContextTokens + "/" + triggerTokens
+                    + " messages=" + screen.messageCount);
+        }
+        return false;
     }
 
     static void clearPrepared() {
@@ -639,18 +669,41 @@ static final class Result {
                 new JSONArray(cleanSerialized.toString()));
     }
 
-    private static int countHostMessages(List<?> messages) {
-        if (messages == null) return 0;
-        int count = 0;
+    private static MessageStats measureHostMessages(List<?> messages) {
+        if (messages == null) return new MessageStats(0, 0, 0);
+        int messageCount = 0;
+        int userMessages = 0;
+        int charCount = 0;
+        int byteCount = 0;
         for (Object message : messages) {
             try {
                 String content = String.valueOf(invoke(message, "getContent"));
-                if (!content.startsWith(ENHANCER_MARKER)) count++;
+                if (content.startsWith(ENHANCER_MARKER)) continue;
+                messageCount++;
+                if (isUserMessage(message)) userMessages++;
+                charCount += content.length();
+                byteCount += content.getBytes(StandardCharsets.UTF_8).length;
             } catch (Throwable ignored) {
-                count++;
+                messageCount++;
             }
         }
-        return count;
+        int turnCount = userMessages > 0 ? userMessages : Math.max(1, (messageCount + 1) / 2);
+        int approxTokens = Math.max(0, Math.round((charCount + byteCount / 3f) / 3f));
+        return new MessageStats(messageCount, turnCount, approxTokens);
+    }
+
+    private static boolean isUserMessage(Object message) {
+        String role = invokeStringOrNull(message, "getRole");
+        return role != null && "user".equalsIgnoreCase(role);
+    }
+
+    private static String invokeStringOrNull(Object target, String methodName) {
+        try {
+            Object value = invoke(target, methodName);
+            return value == null ? null : String.valueOf(value);
+        } catch (Throwable ignored) {
+            return null;
+        }
     }
 
     private static int charLength(JSONArray messages) {
@@ -693,6 +746,18 @@ static final class Result {
         String message = current.getMessage();
         return message == null || message.trim().isEmpty()
                 ? current.getClass().getSimpleName() : message;
+    }
+
+    private static final class MessageStats {
+        final int messageCount;
+        final int turnCount;
+        final int approxContextTokens;
+
+        MessageStats(int messageCount, int turnCount, int approxContextTokens) {
+            this.messageCount = messageCount;
+            this.turnCount = turnCount;
+            this.approxContextTokens = approxContextTokens;
+        }
     }
 
     private static final class Snapshot {

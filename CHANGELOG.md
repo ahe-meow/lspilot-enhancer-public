@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.7.4
+
+- Add project settings for automatic context compression thresholds: trigger by conversation turns or estimated context tokens.
+- Apply the configured thresholds before replaying `sendMessage()`, while still requiring enough messages to keep the recent-message tail intact.
+- Show editable numeric settings in the injected settings dialog with clamped valid ranges and default reset behavior.
+
 ## 1.7.3
 
 - Keep a prepared compression result active for every provider request in the same model response, instead of consuming it on the first request only.

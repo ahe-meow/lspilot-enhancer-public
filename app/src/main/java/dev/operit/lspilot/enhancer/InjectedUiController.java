@@ -19,8 +19,10 @@ import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
+import android.text.InputType;
 import android.widget.FrameLayout;
 import android.widget.Button;
+import android.widget.EditText;
 import android.widget.ImageButton;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -583,8 +585,16 @@ final class InjectedUiController {
         Switch usage = addSwitch(content, activity, "请求缓存用量统计",
                 "让流式响应返回 cached_tokens 等 usage 信息", ModuleSettings.KEY_INCLUDE_USAGE, ModuleSettings.isIncludeUsageEnabled());
         Switch compression = addSwitch(content, activity, "上下文压缩",
-                "超过 40 条消息时保留最近 32 条，并在请求中加入旧消息摘录",
+                "发送前自动压缩，可按对话轮次或上下文用量触发",
                 ModuleSettings.KEY_CONTEXT_COMPRESSION, ModuleSettings.isContextCompressionEnabled());
+        TextView autoTurns = addNumberSetting(content, activity, "自动压缩触发轮次",
+                "当前对话达到该轮次时，在发送前先准备摘要",
+                ModuleSettings::getAutoTriggerTurns, ModuleSettings.MIN_AUTO_TRIGGER_TURNS,
+                ModuleSettings.MAX_AUTO_TRIGGER_TURNS, "轮", ModuleSettings::setAutoTriggerTurns);
+        TextView autoTokens = addNumberSetting(content, activity, "自动压缩上下文用量",
+                "当前请求估算上下文达到该 token 数时触发自动压缩",
+                ModuleSettings::getAutoContextTokens, ModuleSettings.MIN_AUTO_CONTEXT_TOKENS,
+                ModuleSettings.MAX_AUTO_CONTEXT_TOKENS, "token", ModuleSettings::setAutoContextTokens);
         Switch debug = addSwitch(content, activity, "诊断日志",
                 "记录压缩与请求 Hook 的阶段信息，不记录消息正文或密钥",
                 ModuleSettings.KEY_DEBUG_LOG, ModuleSettings.isDebugLogEnabled());
@@ -598,7 +608,12 @@ final class InjectedUiController {
         reset.setOnClickListener(view -> {
             ModuleSettings.resetPolicy();
             master.setChecked(true); cacheKey.setChecked(true); retention.setChecked(true);
-            usage.setChecked(true); debug.setChecked(false); verboseDebug.setChecked(false);
+            usage.setChecked(true); compression.setChecked(false);
+            debug.setChecked(false); verboseDebug.setChecked(false);
+            autoTurns.setText(numberSettingText("自动压缩触发轮次",
+                    ModuleSettings.getAutoTriggerTurns(), "轮"));
+            autoTokens.setText(numberSettingText("自动压缩上下文用量",
+                    ModuleSettings.getAutoContextTokens(), "token"));
             Toast.makeText(activity, "已恢复默认策略", Toast.LENGTH_SHORT).show();
         });
         LinearLayout.LayoutParams resetParams = matchWrap();
@@ -700,6 +715,63 @@ final class InjectedUiController {
         item.setOnCheckedChangeListener((button, value) -> ModuleSettings.putBoolean(key, value));
         parent.addView(item, matchWrap());
         return item;
+    }
+
+    private interface IntSettingWriter {
+        void set(int value);
+    }
+
+    private interface IntSettingReader {
+        int get();
+    }
+
+    private static TextView addNumberSetting(LinearLayout parent, Activity activity, String title,
+            String summary, IntSettingReader reader, int minValue, int maxValue,
+            String unit, IntSettingWriter writer) {
+        TextView item = new TextView(activity);
+        item.setText(numberSettingText(title, reader.get(), unit));
+        item.setTextSize(15);
+        item.setPadding(0, dp(activity, 9), 0, dp(activity, 9));
+        item.setOnClickListener(view -> showNumberSettingDialog(activity, item, title, summary,
+                reader.get(), minValue, maxValue, unit, writer));
+        parent.addView(item, matchWrap());
+        return item;
+    }
+
+    private static void showNumberSettingDialog(Activity activity, TextView item, String title,
+            String summary, int currentValue, int minValue, int maxValue, String unit,
+            IntSettingWriter writer) {
+        EditText input = new EditText(activity);
+        input.setInputType(InputType.TYPE_CLASS_NUMBER);
+        input.setText(String.valueOf(currentValue));
+        input.setSelectAllOnFocus(true);
+        input.setPadding(dp(activity, 18), 0, dp(activity, 18), 0);
+        new AlertDialog.Builder(activity)
+                .setTitle(title)
+                .setMessage(summary + "\n范围：" + minValue + " - " + maxValue + " " + unit)
+                .setView(input)
+                .setNegativeButton("取消", null)
+                .setPositiveButton("保存", (dialog, which) -> {
+                    int value = parseClampedInt(input.getText().toString(),
+                            currentValue, minValue, maxValue);
+                    writer.set(value);
+                    item.setText(numberSettingText(title, value, unit));
+                    Toast.makeText(activity, "已设置为 " + value + " " + unit,
+                            Toast.LENGTH_SHORT).show();
+                })
+                .show();
+    }
+
+    private static String numberSettingText(String title, int value, String unit) {
+        return title + "\n当前：" + value + " " + unit;
+    }
+
+    private static int parseClampedInt(String text, int fallback, int minValue, int maxValue) {
+        try {
+            return Math.max(minValue, Math.min(Integer.parseInt(text.trim()), maxValue));
+        } catch (Throwable ignored) {
+            return fallback;
+        }
     }
 
     private static LinearLayout.LayoutParams matchWrap() {

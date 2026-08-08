@@ -16,6 +16,15 @@ final class ModuleSettings {
     static final String KEY_VERBOSE_DEBUG_LOG = "verbose_debug_log_enabled";
     static final String KEY_SUCCESS_NOTICE = "hook_success_notice_v2";
     static final String KEY_MANUAL_KEEP_RECENT = "manual_keep_recent";
+    static final String KEY_AUTO_TRIGGER_TURNS = "auto_trigger_turns";
+    static final String KEY_AUTO_CONTEXT_TOKENS = "auto_context_tokens";
+
+    static final int DEFAULT_AUTO_TRIGGER_TURNS = 20;
+    static final int MIN_AUTO_TRIGGER_TURNS = 1;
+    static final int MAX_AUTO_TRIGGER_TURNS = 200;
+    static final int DEFAULT_AUTO_CONTEXT_TOKENS = 16_000;
+    static final int MIN_AUTO_CONTEXT_TOKENS = 1_000;
+    static final int MAX_AUTO_CONTEXT_TOKENS = 512_000;
 
     private static volatile Context applicationContext;
 
@@ -93,6 +102,26 @@ final class ModuleSettings {
         }
     }
 
+    static int getAutoTriggerTurns() {
+        return getInt(KEY_AUTO_TRIGGER_TURNS, DEFAULT_AUTO_TRIGGER_TURNS,
+                MIN_AUTO_TRIGGER_TURNS, MAX_AUTO_TRIGGER_TURNS);
+    }
+
+    static void setAutoTriggerTurns(int value) {
+        putClampedInt(KEY_AUTO_TRIGGER_TURNS, value,
+                MIN_AUTO_TRIGGER_TURNS, MAX_AUTO_TRIGGER_TURNS);
+    }
+
+    static int getAutoContextTokens() {
+        return getInt(KEY_AUTO_CONTEXT_TOKENS, DEFAULT_AUTO_CONTEXT_TOKENS,
+                MIN_AUTO_CONTEXT_TOKENS, MAX_AUTO_CONTEXT_TOKENS);
+    }
+
+    static void setAutoContextTokens(int value) {
+        putClampedInt(KEY_AUTO_CONTEXT_TOKENS, value,
+                MIN_AUTO_CONTEXT_TOKENS, MAX_AUTO_CONTEXT_TOKENS);
+    }
+
     static void putBoolean(String key, boolean value) {
         SharedPreferences preferences = preferences();
         if (preferences != null) {
@@ -111,5 +140,22 @@ final class ModuleSettings {
     private static boolean getBoolean(String key, boolean defaultValue) {
         SharedPreferences preferences = preferences();
         return preferences == null ? defaultValue : preferences.getBoolean(key, defaultValue);
+    }
+
+    private static int getInt(String key, int defaultValue, int minValue, int maxValue) {
+        SharedPreferences preferences = preferences();
+        int value = preferences == null ? defaultValue : preferences.getInt(key, defaultValue);
+        return clamp(value, minValue, maxValue);
+    }
+
+    private static void putClampedInt(String key, int value, int minValue, int maxValue) {
+        SharedPreferences preferences = preferences();
+        if (preferences != null) {
+            preferences.edit().putInt(key, clamp(value, minValue, maxValue)).apply();
+        }
+    }
+
+    private static int clamp(int value, int minValue, int maxValue) {
+        return Math.max(minValue, Math.min(value, maxValue));
     }
 }
