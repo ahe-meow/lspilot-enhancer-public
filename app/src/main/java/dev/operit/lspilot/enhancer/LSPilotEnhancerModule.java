@@ -57,7 +57,7 @@ public final class LSPilotEnhancerModule extends XposedModule {
         installChatViewModelHook(loader);
         installSendBeforeCompressionHook(loader);
         installChatButtonHook(loader);
-        log(Log.INFO, TAG, "LSPilotEnhancer loaded version=1.7.3 active-response-compression");
+        log(Log.INFO, TAG, "LSPilotEnhancer loaded version=1.7.4 auto-compression-baseline");
         // Disable the experimental Compose TopAppBar injection. The reliable entry is
         // the Activity-owned native overlay button installed from SubScreenActivity hooks.
         // installNativeChatTopBarActionHook(loader);
@@ -380,7 +380,7 @@ public final class LSPilotEnhancerModule extends XposedModule {
                 }
                 Object viewModel = chain.getThisObject();
                 log(Log.INFO, TAG, "sendMessage paused for pre-send compression");
-                ManualCompressionManager.prepareCurrent(ModuleSettings.getManualKeepRecent(), result ->
+                ManualCompressionManager.prepareCurrentAutomatic(ModuleSettings.getManualKeepRecent(), result ->
                         new Handler(Looper.getMainLooper()).post(() -> {
                             try {
                                 log(result.success ? Log.INFO : Log.WARN, TAG,

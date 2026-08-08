@@ -3,6 +3,8 @@
 ## 1.7.4
 
 - Add project settings for automatic context compression thresholds: trigger by conversation turns or estimated context tokens.
+- Preserve `assistant.tool_calls` / `tool` message adjacency when choosing compression boundaries, and reject compacted requests with invalid tool-message ordering before sending.
+- Retain automatic prepared summaries as a rolling baseline after each response, so subsequent sends only retrigger compression after newly added turns or estimated tokens exceed the configured thresholds.
 - Apply the configured thresholds before replaying `sendMessage()`, while still requiring enough messages to keep the recent-message tail intact.
 - Show editable numeric settings in the injected settings dialog with clamped valid ranges and default reset behavior.
 

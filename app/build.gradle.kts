@@ -11,8 +11,8 @@ android {
         applicationId = "dev.operit.lspilot.cache"
         minSdk = 26
         targetSdk = 29
-        versionCode = 36
-        versionName = "1.7.3"
+        versionCode = 37
+        versionName = "1.7.4"
     }
 
     buildTypes {

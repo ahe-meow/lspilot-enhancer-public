@@ -362,9 +362,19 @@ static final class Result {
             ScreenState previous = currentScreen;
             if (previous != null && previous.loading && !loading
                     && preparedUsedForActiveResponse) {
-                DebugLogger.i("prepared context cleared after response finished applyCount="
-                        + preparedApplyCount);
-                resetPreparedState(true);
+                Prepared value = prepared;
+                if (value != null && value.automatic && chatId.equals(value.chatId)) {
+                    preparedUsedForActiveResponse = false;
+                    preparedApplyCount = 0;
+                    compressionUsedForPendingRequest = false;
+                    DebugLogger.i("automatic prepared context retained after response"
+                            + " baseTurns=" + value.baseTurnCount
+                            + " baseTokens=" + value.baseApproxContextTokens);
+                } else {
+                    DebugLogger.i("prepared context cleared after response finished applyCount="
+                            + preparedApplyCount);
+                    resetPreparedState(true);
+                }
             }
             Object config = invoke(uiState, "getSelectedProvider");
             String signature = config == null ? "unknown" : providerSignature(config);
@@ -413,9 +423,24 @@ static final class Result {
                 || screen == null
                 || screen.loading
                 || preparing
-                || hasPreparedForCurrentChat()
                 || screen.messageCount <= ModuleSettings.getManualKeepRecent()) {
             return false;
+        }
+        if (hasManualPreparedForCurrentChat()) {
+            return false;
+        }
+        Prepared value = prepared;
+        if (value != null && value.automatic && screen.chatId.equals(value.chatId)) {
+            if (!screen.providerSignature.equals(value.providerSignature)) {
+                resetPreparedState(true);
+            } else if (!hasEnoughNewContextForRecompression(screen, value)) {
+                DebugLogger.i("auto compression skipped; reusing prepared baseline chat="
+                        + DebugLogger.id(screen.chatId)
+                        + " newTurns=" + Math.max(0, screen.turnCount - value.baseTurnCount)
+                        + " newTokens=" + Math.max(0,
+                        screen.approxContextTokens - value.baseApproxContextTokens));
+                return false;
+            }
         }
         int triggerTurns = ModuleSettings.getAutoTriggerTurns();
         int triggerTokens = ModuleSettings.getAutoContextTokens();
@@ -439,6 +464,22 @@ static final class Result {
         return false;
     }
 
+    private static boolean hasManualPreparedForCurrentChat() {
+        ScreenState screen = currentScreen;
+        Prepared value = prepared;
+        return screen != null && value != null && !value.automatic
+                && screen.chatId.equals(value.chatId);
+    }
+
+    private static boolean hasEnoughNewContextForRecompression(ScreenState screen,
+            Prepared value) {
+        int newTurns = Math.max(0, screen.turnCount - value.baseTurnCount);
+        int newTokens = Math.max(0,
+                screen.approxContextTokens - value.baseApproxContextTokens);
+        return newTurns >= ModuleSettings.getAutoTriggerTurns()
+                || newTokens >= ModuleSettings.getAutoContextTokens();
+    }
+
     static void clearPrepared() {
         resetPreparedState(true);
     }
@@ -455,6 +496,14 @@ static final class Result {
     }
 
     static void prepareCurrent(int keepRecent, Callback callback) {
+        prepareCurrent(keepRecent, false, callback);
+    }
+
+    static void prepareCurrentAutomatic(int keepRecent, Callback callback) {
+        prepareCurrent(keepRecent, true, callback);
+    }
+
+    private static void prepareCurrent(int keepRecent, boolean automatic, Callback callback) {
         lastKeepRecent = keepRecent;
         lastResult = null;
         ScreenState screen = currentScreen;
@@ -520,7 +569,8 @@ static final class Result {
                     throw new IllegalStateException("对话已切换，压缩结果已丢弃");
                 }
                 prepared = new Prepared(screen.chatId, snapshot.providerSignature,
-                        snapshot.messages, compacted);
+                        snapshot.messages, compacted, automatic,
+                        screen.turnCount, screen.approxContextTokens);
                 preparedUsedForActiveResponse = false;
                 preparedApplyCount = 0;
                 CompressionMetrics metrics = CompressionMetrics.measure(snapshot.messages, compacted,
@@ -609,6 +659,11 @@ static final class Result {
             preparedUsedForActiveResponse = true;
             int applyIndex = ++preparedApplyCount;
             compressionUsedForPendingRequest = true;
+            if (!isValidToolCallSequence(result)) {
+                DebugLogger.w("prepared context rejected: invalid tool call sequence after compaction");
+                resetPreparedState(true);
+                return null;
+            }
             CompressionMetrics metrics = CompressionMetrics.measure(cleanActual, result, 0L, 0);
             lastMetrics = metrics;
             DebugLogger.i("manual prepared context applied chat=" + DebugLogger.id(value.chatId)
@@ -626,6 +681,28 @@ static final class Result {
             resetPreparedState(true);
             return null;
         }
+    }
+
+    private static boolean isValidToolCallSequence(JSONArray messages) {
+        boolean awaitingToolResult = false;
+        for (int index = 0; index < messages.length(); index++) {
+            JSONObject message = messages.optJSONObject(index);
+            if (message == null) continue;
+            String role = message.optString("role");
+            if ("tool".equals(role)) {
+                if (!awaitingToolResult) return false;
+                continue;
+            }
+            awaitingToolResult = "assistant".equals(role) && hasToolCalls(message);
+        }
+        return true;
+    }
+
+    private static boolean hasToolCalls(JSONObject message) {
+        if (message == null || !message.has("tool_calls")) return false;
+        Object value = message.opt("tool_calls");
+        if (value instanceof JSONArray) return ((JSONArray) value).length() > 0;
+        return value != null && !JSONObject.NULL.equals(value);
     }
 
     private static Snapshot snapshot(ScreenState screen) throws Exception {
@@ -777,13 +854,20 @@ static final class Result {
         final String providerSignature;
         final JSONArray source;
         final JSONArray compacted;
+        final boolean automatic;
+        final int baseTurnCount;
+        final int baseApproxContextTokens;
 
         Prepared(String chatId, String providerSignature, JSONArray source,
-                JSONArray compacted) {
+                JSONArray compacted, boolean automatic, int baseTurnCount,
+                int baseApproxContextTokens) {
             this.chatId = chatId;
             this.providerSignature = providerSignature;
             this.source = source;
             this.compacted = compacted;
+            this.automatic = automatic;
+            this.baseTurnCount = baseTurnCount;
+            this.baseApproxContextTokens = baseApproxContextTokens;
         }
     }
 }

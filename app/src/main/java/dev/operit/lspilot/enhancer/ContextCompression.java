@@ -84,7 +84,8 @@ final class ContextCompression {
         }
 
         int oldStart = leadingSystemCount;
-        int oldEnd = findTurnBoundary(messages, oldStart + oldCount, messages.length());
+        int oldEnd = findSafeCompressionBoundary(messages, oldStart + oldCount,
+                oldStart, messages.length());
         if (oldEnd <= oldStart) {
             return messages;
         }
@@ -109,6 +110,55 @@ final class ContextCompression {
             result.put(messages.get(index));
         }
         return result;
+    }
+
+    private static int findSafeCompressionBoundary(JSONArray messages, int preferred,
+            int start, int end) {
+        int candidate = findTurnBoundary(messages, preferred, end);
+        while (candidate > start && !isSafeBoundary(messages, candidate, end)) {
+            candidate = findTurnBoundary(messages, candidate - 1, end);
+        }
+        return candidate;
+    }
+
+    private static boolean isSafeBoundary(JSONArray messages, int boundary, int end) {
+        JSONObject firstTail = messages.optJSONObject(boundary);
+        if (firstTail != null && "tool".equals(firstTail.optString("role"))) {
+            return false;
+        }
+        JSONObject previous = boundary <= 0 ? null : messages.optJSONObject(boundary - 1);
+        if (previous != null && hasToolCalls(previous)) {
+            return false;
+        }
+        for (int index = boundary; index < end; index++) {
+            JSONObject message = messages.optJSONObject(index);
+            if (message == null) continue;
+            if ("tool".equals(message.optString("role"))) {
+                return hasPrecedingToolCalls(messages, boundary, index);
+            }
+            if (hasToolCalls(message)) {
+                return true;
+            }
+        }
+        return true;
+    }
+
+    private static boolean hasPrecedingToolCalls(JSONArray messages, int start, int toolIndex) {
+        for (int index = toolIndex - 1; index >= start; index--) {
+            JSONObject message = messages.optJSONObject(index);
+            if (message == null) continue;
+            String role = message.optString("role");
+            if ("tool".equals(role)) continue;
+            return "assistant".equals(role) && hasToolCalls(message);
+        }
+        return false;
+    }
+
+    private static boolean hasToolCalls(JSONObject message) {
+        if (message == null || !message.has("tool_calls")) return false;
+        Object value = message.opt("tool_calls");
+        if (value instanceof JSONArray) return ((JSONArray) value).length() > 0;
+        return value != null && !JSONObject.NULL.equals(value);
     }
 
     private static int findTurnBoundary(JSONArray messages, int preferred, int end) {
