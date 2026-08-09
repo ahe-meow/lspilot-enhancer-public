@@ -49,33 +49,44 @@ public final class LSPilotEnhancerModule extends XposedModule {
             return;
         }
 
+        try {
+            ModuleSettings.useRemotePreferences(getRemotePreferences(ModuleSettings.PREFS_NAME));
+            log(Log.INFO, TAG, "Legacy settings migration source connected");
+        } catch (Throwable error) {
+            log(Log.WARN, TAG, "Legacy settings migration source unavailable", error);
+        }
+
         ClassLoader loader = param.getClassLoader();
-        installRequestHook(loader);
-        installSseUsageHook(loader);
+        HostAbi abi;
+        try {
+            abi = HostAbi.resolve(loader);
+            ManualCompressionManager.configure(abi);
+            log(Log.INFO, TAG, "Resolved LSPilot host ABI minified=" + abi.minified);
+        } catch (Throwable error) {
+            log(Log.ERROR, TAG, "Failed to resolve LSPilot host ABI", error);
+            return;
+        }
+        installRequestHook(loader, abi);
+        installSseUsageHook(loader, abi);
         installUiHooks(loader);
-        installChatRouteHook(loader);
-        installChatViewModelHook(loader);
-        installSendBeforeCompressionHook(loader);
+        installChatRouteHook(loader, abi);
+        installChatViewModelHook(loader, abi);
+        installSendBeforeCompressionHook(loader, abi);
         installChatButtonHook(loader);
-        log(Log.INFO, TAG, "LSPilotEnhancer loaded version=1.7.4 local-window-compression");
+        log(Log.INFO, TAG, "LSPilotEnhancer loaded version=1.7.4-preview.9 local-window-compression");
         // Disable the experimental Compose TopAppBar injection. The reliable entry is
         // the Activity-owned native overlay button installed from SubScreenActivity hooks.
         // installNativeChatTopBarActionHook(loader);
     }
 
-    private void installRequestHook(ClassLoader loader) {
+    private void installRequestHook(ClassLoader loader, HostAbi abi) {
+        if (abi.minified) {
+            installMinifiedStreamHook(abi);
+            return;
+        }
         try {
-            Class<?> providerClass = Class.forName(PROVIDER_CLASS, false, loader);
-            Class<?> configClass = Class.forName(CONFIG_CLASS, false, loader);
-            Method buildRequest = providerClass.getDeclaredMethod(
-                    "buildOpenAiRequestBody",
-                    configClass,
-                    List.class,
-                    String.class,
-                    boolean.class
-            );
+            Method buildRequest = abi.buildRequestMethod;
             buildRequest.setAccessible(true);
-            ManualCompressionManager.configure(loader, buildRequest);
 
             hook(buildRequest).intercept(chain -> {
                 Object originalResult = chain.proceed();
@@ -96,7 +107,7 @@ public final class LSPilotEnhancerModule extends XposedModule {
                     }
                     Object config = chain.getArg(0);
                     String systemPrompt = (String) chain.getArg(2);
-                    String model = readModelName(config);
+                    String model = abi.modelName(config);
                     JSONObject body = new JSONObject(originalBody);
                     JSONArray messages = body.optJSONArray("messages");
                     JSONArray requestMessages = ManualCompressionManager.sanitizeRequestMessages(messages);
@@ -169,7 +180,37 @@ public final class LSPilotEnhancerModule extends XposedModule {
         }
     }
 
-    private void installSseUsageHook(ClassLoader loader) {
+    private void installMinifiedStreamHook(HostAbi abi) {
+        try {
+            Method streamMessages = abi.streamMessagesMethod;
+            hook(streamMessages).intercept(chain -> {
+                Object config = chain.getArg(0);
+                Object rawMessages = chain.getArg(1);
+                if (!(rawMessages instanceof List)) return chain.proceed();
+                List<?> messages = (List<?>) rawMessages;
+                List<Object> compacted = ManualCompressionManager.applyPreparedToHostMessages(
+                        messages, config, abi);
+                if (compacted == null) return chain.proceed();
+                Object[] args = chain.getArgs().toArray();
+                args[1] = compacted;
+                log(Log.INFO, TAG, "minified stream context applied originalMessages="
+                        + messages.size() + " compactedMessages=" + compacted.size());
+                return chain.proceed(args);
+            });
+            InjectedUiController.setRequestHookInstalled(true);
+            log(Log.INFO, TAG, "Adaptive stream hook installed for "
+                    + streamMessages.getDeclaringClass().getName() + "#" + streamMessages.getName());
+        } catch (Throwable error) {
+            InjectedUiController.setRequestHookInstalled(false);
+            log(Log.ERROR, TAG, "Failed to install minified stream hook", error);
+        }
+    }
+
+    private void installSseUsageHook(ClassLoader loader, HostAbi abi) {
+        if (abi.minified) {
+            log(Log.INFO, TAG, "Raw SSE usage hook unavailable on minified stream ABI");
+            return;
+        }
         try {
             Class<?> providerClass = Class.forName(PROVIDER_CLASS, false, loader);
             Class<?> function1Class = Class.forName(
@@ -314,7 +355,11 @@ public final class LSPilotEnhancerModule extends XposedModule {
         }
     }
 
-    private void installChatRouteHook(ClassLoader loader) {
+    private void installChatRouteHook(ClassLoader loader, HostAbi abi) {
+        if (abi.minified) {
+            installMinifiedMainRouteHooks(loader);
+            return;
+        }
         try {
             Class<?> activityClass = Class.forName(SUB_SCREEN_ACTIVITY_CLASS, false, loader);
             Class<?> routeClass = Class.forName(
@@ -342,22 +387,68 @@ public final class LSPilotEnhancerModule extends XposedModule {
         }
     }
 
-    private void installChatViewModelHook(ClassLoader loader) {
+    private void installMinifiedMainRouteHooks(ClassLoader loader) {
+        int installed = 0;
+        for (char suffix = 'a'; suffix <= 'x'; suffix++) {
+            try {
+                Class<?> contentClass = Class.forName(
+                        MAIN_ACTIVITY_CLASS + "$" + suffix, false, loader);
+                Method invoke = findFunction1Invoke(contentClass);
+                boolean aiChat = suffix == 'j';
+                hook(invoke).intercept(chain -> {
+                    InjectedUiController.onMainRouteComposed(aiChat);
+                    return chain.proceed();
+                });
+                installed++;
+            } catch (ClassNotFoundException | NoSuchMethodException ignored) {
+                // Not every compiler-generated MainActivity class is a route content lambda.
+            } catch (Throwable error) {
+                log(Log.ERROR, TAG, "Failed to hook MainActivity route lambda $" + suffix, error);
+            }
+        }
+        if (installed == 0) {
+            log(Log.ERROR, TAG, "No minified MainActivity route content hooks installed");
+        } else {
+            log(Log.INFO, TAG, "Minified MainActivity route content hooks installed=" + installed);
+        }
+    }
+
+    private static Method findFunction1Invoke(Class<?> owner) throws NoSuchMethodException {
+        Method fallback = null;
+        for (Method method : owner.getDeclaredMethods()) {
+            Class<?>[] parameters = method.getParameterTypes();
+            if (!"invoke".equals(method.getName()) || parameters.length != 1
+                    || method.getReturnType() == void.class) {
+                continue;
+            }
+            method.setAccessible(true);
+            if (parameters[0] == Object.class && method.getReturnType() == Object.class) {
+                return method;
+            }
+            fallback = method;
+        }
+        if (fallback != null) {
+            return fallback;
+        }
+        throw new NoSuchMethodException("Function1 invoke not found on " + owner.getName());
+    }
+
+    private void installChatViewModelHook(ClassLoader loader, HostAbi abi) {
         try {
-            Class<?> viewModelClass = Class.forName(
-                    "me.yun.lspilot.ui.viewmodel.AiChatViewModel", false, loader);
-            Class<?> contextClass = Class.forName("android.content.Context", false, loader);
-            Method loadSession = viewModelClass.getDeclaredMethod(
-                    "loadSession", String.class, String.class, contextClass);
-            loadSession.setAccessible(true);
+            Method loadSession = abi.loadSessionMethod;
             hook(loadSession).intercept(chain -> {
                 Object viewModel = chain.getThisObject();
-                String packageName = (String) chain.getArg(0);
                 String chatId = (String) chain.getArg(1);
-                Object context = chain.getArg(2);
-                ManualCompressionManager.captureViewModel(viewModel, packageName, context);
+                Object packageName = chain.getArg(0);
+                ManualCompressionManager.captureViewModel(viewModel, chatId,
+                        packageName == null ? null : String.valueOf(packageName), chain.getArg(2));
                 ManualCompressionManager.enterChat(chatId);
-                return chain.proceed();
+                Object result = chain.proceed();
+                if (abi.minified) {
+                    ManualCompressionManager.updateMinifiedScreen(chatId, viewModel);
+                    InjectedUiController.onChatSessionLoaded();
+                }
+                return result;
             });
             log(Log.INFO, TAG, "AiChatViewModel.loadSession hook installed");
         } catch (Throwable error) {
@@ -365,13 +456,19 @@ public final class LSPilotEnhancerModule extends XposedModule {
         }
     }
 
-    private void installSendBeforeCompressionHook(ClassLoader loader) {
+    private void installSendBeforeCompressionHook(ClassLoader loader, HostAbi abi) {
         try {
-            Class<?> viewModelClass = Class.forName(
-                    "me.yun.lspilot.ui.viewmodel.AiChatViewModel", false, loader);
-            Method sendMessage = viewModelClass.getDeclaredMethod("sendMessage");
-            sendMessage.setAccessible(true);
+            Method sendMessage = abi.sendMessageMethod;
             hook(sendMessage).intercept(chain -> {
+                if (abi.minified) {
+                    Object viewModel = chain.getThisObject();
+                    String chatId = abi.currentChatId(viewModel);
+                    if (chatId != null) {
+                        ManualCompressionManager.enterChat(chatId);
+                        ManualCompressionManager.updateMinifiedScreen(chatId, viewModel);
+                        InjectedUiController.onChatSessionLoaded();
+                    }
+                }
                 if (Boolean.TRUE.equals(AUTO_REPLAY_SEND.get())) {
                     return chain.proceed();
                 }
@@ -390,8 +487,16 @@ public final class LSPilotEnhancerModule extends XposedModule {
                                 log(result.success ? Log.INFO : Log.WARN, TAG,
                                         "pre-send compression finished success=" + result.success
                                                 + " original=" + result.originalCount
-                                                + " compacted=" + result.compactedCount
-                                                + "; replaying sendMessage");
+                                                + " compacted=" + result.compactedCount);
+                                if (!result.success) {
+                                    log(Log.WARN, TAG,
+                                            "pre-send compression failed; send not replayed"
+                                                    + " to avoid uncompressed fallback");
+                                    ManualCompressionManager.postCompressionStatus(
+                                            "自动压缩失败，本次发送已取消，未回退发送完整历史。"
+                                                    + "请检查压缩状态后重试；需要放行原始历史时请先关闭上下文压缩。");
+                                    return;
+                                }
                                 AUTO_REPLAY_SEND.set(Boolean.TRUE);
                                 try {
                                     sendMessage.invoke(viewModel);
@@ -484,7 +589,7 @@ public final class LSPilotEnhancerModule extends XposedModule {
             // row is rendered, replay the exact same valid argument set while changing only
             // title, summary and click action. This preserves the host's colors, icon, padding,
             // Composer flags and Kotlin default mask instead of guessing their ABI.
-            Class<?> arrowClass = Class.forName(ARROW_PREFERENCE_CLASS, false, loader);
+            Class<?> arrowClass = findArrowPreferenceClass(loader);
             Method arrowPreference = findArrowPreferenceMethod(arrowClass);
             arrowPreference.setAccessible(true);
             final Method nativeArrowPreference = arrowPreference;
@@ -542,18 +647,33 @@ public final class LSPilotEnhancerModule extends XposedModule {
         }
     }
 
+    private static Class<?> findArrowPreferenceClass(ClassLoader loader)
+            throws ClassNotFoundException {
+        ClassNotFoundException last = null;
+        String[] candidates = {ARROW_PREFERENCE_CLASS, "ex"};
+        for (String candidate : candidates) {
+            try {
+                return Class.forName(candidate, false, loader);
+            } catch (ClassNotFoundException error) {
+                last = error;
+            }
+        }
+        throw last == null ? new ClassNotFoundException(ARROW_PREFERENCE_CLASS) : last;
+    }
+
     private static Method findArrowPreferenceMethod(Class<?> arrowClass)
             throws NoSuchMethodException {
         StringBuilder candidates = new StringBuilder();
         for (Method method : arrowClass.getDeclaredMethods()) {
-            if (!"ArrowPreference".equals(method.getName())) {
+            boolean compatible = matchesArrowPreferenceAbi(method);
+            if (!"ArrowPreference".equals(method.getName()) && !compatible) {
                 continue;
             }
             if (candidates.length() > 0) {
                 candidates.append("; ");
             }
             candidates.append(describeMethod(method));
-            if (matchesArrowPreferenceAbi(method)) {
+            if (compatible) {
                 return method;
             }
         }
@@ -569,21 +689,14 @@ public final class LSPilotEnhancerModule extends XposedModule {
         Class<?>[] types = method.getParameterTypes();
         return types.length == 16
                 && typeNameEquals(types[0], "java.lang.String")
-                && typeNameEquals(types[1], "androidx.compose.ui.Modifier")
-                && typeNameEquals(types[2],
-                "top.yukonga.miuix.kmp.basic.BasicComponentColors")
                 && typeNameEquals(types[3], "java.lang.String")
-                && typeNameEquals(types[4],
-                "top.yukonga.miuix.kmp.basic.BasicComponentColors")
                 && typeNameEquals(types[5], "kotlin.jvm.functions.Function2")
                 && typeNameEquals(types[6], "kotlin.jvm.functions.Function3")
                 && typeNameEquals(types[7], "kotlin.jvm.functions.Function2")
-                && typeNameEquals(types[8],
-                "androidx.compose.foundation.layout.PaddingValues")
                 && typeNameEquals(types[9], "kotlin.jvm.functions.Function0")
                 && types[10] == boolean.class
                 && types[11] == boolean.class
-                && typeNameEquals(types[12], "androidx.compose.runtime.Composer")
+                && !types[12].isPrimitive()
                 && types[13] == int.class
                 && types[14] == int.class
                 && types[15] == int.class;
@@ -625,20 +738,6 @@ public final class LSPilotEnhancerModule extends XposedModule {
     private static String requestHookSummary() {
         return "OpenAI Prompt Cache 策略";
     }
-
-    private static String readModelName(Object config) {
-        if (config == null) {
-            return "unknown";
-        }
-        try {
-            Method getter = config.getClass().getMethod("getModelName");
-            Object value = getter.invoke(config);
-            return normalize(value == null ? "unknown" : value.toString());
-        } catch (Throwable ignored) {
-            return "unknown";
-        }
-    }
-
     private static String buildCacheKey(String model, String systemPrompt) {
         String prompt = systemPrompt == null ? "" : systemPrompt;
         return CACHE_NAMESPACE + sha256Prefix(normalize(model) + "\n" + prompt);

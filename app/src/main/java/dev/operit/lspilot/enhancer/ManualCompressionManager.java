@@ -2,19 +2,23 @@ package dev.operit.lspilot.enhancer;
 
 import android.os.Handler;
 import android.os.Looper;
+import android.util.Log;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-import java.lang.reflect.Constructor;
-import java.lang.reflect.Field;
+import java.lang.ref.WeakReference;
 import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
-import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
 /** Coordinates chat-scoped manual compression without mutating host state. */
@@ -94,6 +98,20 @@ final class ManualCompressionManager {
             return originalChars <= 0 ? 0 : Math.round(compactedChars * 100f / originalChars);
         }
 
+        boolean reducesContext() {
+            return originalApproxTokens > 0
+                    && compactedApproxTokens > 0
+                    && compactedApproxTokens < originalApproxTokens
+                    && compactedChars < originalChars
+                    && compactedBytes < originalBytes;
+        }
+
+        String notReducedMessage() {
+            return "压缩结果没有降低上下文长度（估算 token "
+                    + originalApproxTokens + " -> " + compactedApproxTokens
+                    + "，字符 " + originalChars + " -> " + compactedChars + "）";
+        }
+
         String describe() {
             return "messages=" + originalMessages + "->" + compactedMessages
                     + " chars=" + originalChars + "->" + compactedChars
@@ -136,35 +154,47 @@ static final class Result {
         thread.setDaemon(true);
         return thread;
     });
+    private static final ScheduledExecutorService WATCHDOG = Executors.newSingleThreadScheduledExecutor(runnable -> {
+        Thread thread = new Thread(runnable, "LSPilotCompressionWatchdog");
+        thread.setDaemon(true);
+        return thread;
+    });
     private static final AtomicLong GENERATION = new AtomicLong();
     private static final AtomicLong STATUS_SEQUENCE = new AtomicLong();
+    private static final AtomicBoolean PREPARING = new AtomicBoolean(false);
     private static final ThreadLocal<Boolean> INTERNAL_BUILD = new ThreadLocal<>();
 
+    private static final long COMPRESSION_TIMEOUT_MS = 60_000L;
+    private static final long STATUS_MIN_INTERVAL_MS = 1_500L;
+    private static final int METHOD_CACHE_MAX_ENTRIES = 64;
+    private static final Map<String, Method> NO_ARG_METHOD_CACHE =
+            new LinkedHashMap<String, Method>(METHOD_CACHE_MAX_ENTRIES, 0.75f, true) {
+                @Override
+                protected boolean removeEldestEntry(Map.Entry<String, Method> eldest) {
+                    return size() > METHOD_CACHE_MAX_ENTRIES;
+                }
+            };
     private static final String ENHANCER_MARKER = "[系统提示 · 上下文压缩]";
     private static final String ENHANCER_ROLE = "system";
     private static final String TAG = "LSPilotEnhancer";
     private static volatile Method buildRequestMethod;
-    private static volatile Object providerManager;
-    private static volatile Method getProviderMethod;
-    private static volatile ClassLoader hostLoader;
-    private static volatile Object repositoryInstance;
-    private static volatile Method repositoryAddMessage;
-    private static volatile Constructor<?> hostMessageConstructor;
-    private static volatile Object viewModelInstance;
-    private static volatile Method viewModelLoadSession;
-    private static volatile String viewModelPackageName;
-    private static volatile Object viewModelContext;
+    private static volatile HostAbi hostAbi;
     private static volatile long compressionStartedAt;
     private static volatile CompressionMetrics lastMetrics;
     private static volatile boolean compressionUsedForPendingRequest;
     private static volatile int lastProgressCompleted;
     private static volatile int lastProgressTotal;
     private static volatile long lastBlockedSendNoticeAt;
+    private static volatile long lastStatusPostAt;
+    private static volatile String lastStatusFingerprint;
     private static final Handler MAIN_HANDLER = new Handler(Looper.getMainLooper());
 
     private static volatile ScreenState currentScreen;
+    private static volatile WeakReference<Object> viewModelRef = new WeakReference<>(null);
+    private static volatile WeakReference<Object> viewModelContextRef = new WeakReference<>(null);
+    private static volatile String viewModelChatId;
+    private static volatile String viewModelPackageName;
     private static volatile Prepared prepared;
-    private static volatile boolean preparing;
     private static volatile Result lastResult;
     private static volatile int lastKeepRecent;
     private static volatile boolean preparedUsedForActiveResponse;
@@ -182,72 +212,101 @@ static final class Result {
     private ManualCompressionManager() {
     }
 
-    static void configure(ClassLoader loader, Method buildRequest) throws Exception {
-        hostLoader = loader;
-        buildRequestMethod = buildRequest;
-        DebugLogger.i("compression manager configured; buildMethod="
-                + buildRequest.getDeclaringClass().getName() + "#" + buildRequest.getName());
-        Class<?> managerClass = Class.forName(
-                "me.yun.lspilot.data.provider.ProviderManager", false, loader);
-        Field instanceField = managerClass.getField("INSTANCE");
-        providerManager = instanceField.get(null);
-        getProviderMethod = managerClass.getMethod("getProvider", String.class);
-        configureHostMessageBridge(loader);
+    static void configure(HostAbi abi) {
+        hostAbi = abi;
+        buildRequestMethod = abi.buildRequestMethod;
+        DebugLogger.i("compression manager configured; minified=" + abi.minified
+                + " buildMethod=" + (abi.buildRequestMethod == null ? "none"
+                : abi.buildRequestMethod.getDeclaringClass().getName()
+                + "#" + abi.buildRequestMethod.getName()));
     }
 
-    private static void configureHostMessageBridge(ClassLoader loader) {
-        try {
-            Class<?> repositoryClass = Class.forName(
-                    "me.yun.lspilot.data.repository.AiChatRepository", false, loader);
-            repositoryInstance = repositoryClass.getField("INSTANCE").get(null);
-            Class<?> messageClass = Class.forName(
-                    "me.yun.lspilot.data.model.AiChatMessage", false, loader);
-            repositoryAddMessage = repositoryClass.getMethod("addMessage", String.class, messageClass);
-            hostMessageConstructor = messageClass.getConstructor(
-                    String.class, String.class, String.class, boolean.class, String.class,
-                    long.class, long.class, long.class, int.class, List.class, int.class,
-                    List.class, List.class, String.class, List.class, boolean.class,
-                    int.class, int.class, int.class, int.class, long.class, int.class,
-                    int.class, long.class, int.class);
-            DebugLogger.i("host message bridge ready: AiChatRepository.addMessage");
-        } catch (Throwable error) {
-            repositoryInstance = null;
-            repositoryAddMessage = null;
-            hostMessageConstructor = null;
-            DebugLogger.e("host message bridge unavailable; chat status messages disabled", error);
-        }
+    static HostAbi hostAbi() {
+        return hostAbi;
     }
-
     private static void postStatus(String chatId, String content) {
-        if (chatId == null || content == null || repositoryAddMessage == null
-                || hostMessageConstructor == null || repositoryInstance == null) {
+        HostAbi abi = hostAbi;
+        if (chatId == null || content == null || abi == null
+                || abi.repositoryAddMessageMethod == null) {
             DebugLogger.w("chat status skipped chat=" + DebugLogger.id(chatId)
-                    + " bridgeReady=" + (repositoryAddMessage != null
-                    && hostMessageConstructor != null && repositoryInstance != null));
+                    + " bridgeReady=" + (abi != null && abi.repositoryAddMessageMethod != null));
+            return;
+        }
+        if (shouldDropStatus(content)) {
+            DebugLogger.d("chat status throttled chat=" + DebugLogger.id(chatId)
+                    + " prefix=" + DebugLogger.redact(content));
             return;
         }
         STATUS_EXECUTOR.execute(() -> {
             try {
-                Object message = hostMessageConstructor.newInstance(
+                Object message = abi.newStatusMessage(
                         "lspilot-enhancer-" + System.currentTimeMillis()
                                 + "-" + STATUS_SEQUENCE.incrementAndGet(), ENHANCER_ROLE,
-                        ENHANCER_MARKER + "\n" + content,
-                        false, "", 0L, 0L, System.currentTimeMillis(), 0,
-                        Collections.emptyList(), 0, Collections.emptyList(),
-                        Collections.emptyList(), "", Collections.singletonList("content"),
-                        false, 0, 0, 0, 0, 0L, 0, 0, 0L, 0);
-                repositoryAddMessage.invoke(repositoryInstance, chatId, message);
+                        ENHANCER_MARKER + "\n" + content, System.currentTimeMillis());
+                Object repository = HostAbi.singletonInstance(abi.repositoryClass);
+                abi.repositoryAddMessageMethod.invoke(repository, chatId, message);
+                boolean reloadChat = shouldReloadChat(content);
                 DebugLogger.i("chat status inserted chat=" + DebugLogger.id(chatId)
                         + " chars=" + content.length()
-                        + " refresh=local_compression_ui");
-                refreshCompressionUi();
+                        + " refresh=" + (reloadChat ? "chat_session" : "local_compression_ui"));
+                if (reloadChat) reloadCurrentSession(chatId);
+                else refreshCompressionUi();
             } catch (Throwable error) {
                 DebugLogger.e("chat status insertion failed chat=" + DebugLogger.id(chatId), error);
             }
         });
     }
 
-    // Host chat route is not reloaded for status updates; local compression UI is refreshed instead.
+    private static boolean shouldDropStatus(String content) {
+        String fingerprint = statusFingerprint(content);
+        long now = System.currentTimeMillis();
+        synchronized (ManualCompressionManager.class) {
+            if (fingerprint.equals(lastStatusFingerprint)
+                    && now - lastStatusPostAt < STATUS_MIN_INTERVAL_MS) {
+                return true;
+            }
+            lastStatusFingerprint = fingerprint;
+            lastStatusPostAt = now;
+            return false;
+        }
+    }
+
+    private static String statusFingerprint(String content) {
+        if (content.startsWith("压缩进度：摘要分块 ")
+                || content.startsWith("压缩中：摘要分块 ")) {
+            return "compression-progress";
+        }
+        return content;
+    }
+
+    private static boolean shouldReloadChat(String content) {
+        return content.startsWith("压缩完成：")
+                || content.startsWith("压缩失败：")
+                || content.startsWith("压缩超时：");
+    }
+
+    private static void reloadCurrentSession(String chatId) {
+        HostAbi abi = hostAbi;
+        Object viewModel = viewModelRef.get();
+        Object context = viewModelContextRef.get();
+        String packageName = viewModelPackageName;
+        if (abi == null || abi.loadSessionMethod == null || viewModel == null || context == null
+                || packageName == null || !chatId.equals(viewModelChatId)) {
+            DebugLogger.w("chat status reload skipped chat=" + DebugLogger.id(chatId));
+            refreshCompressionUi();
+            return;
+        }
+        MAIN_HANDLER.post(() -> {
+            try {
+                abi.loadSessionMethod.invoke(viewModel, packageName, chatId, context);
+                DebugLogger.i("chat status reload completed chat=" + DebugLogger.id(chatId));
+            } catch (Throwable error) {
+                DebugLogger.e("chat status reload failed chat=" + DebugLogger.id(chatId), error);
+            } finally {
+                refreshCompressionUi();
+            }
+        });
+    }
 
     static void postCompressionStatus(String content) {
         ScreenState screen = currentScreen;
@@ -282,6 +341,11 @@ static final class Result {
     static void recordAutomaticCompression(JSONArray before, JSONArray after) {
         if (before == null || after == null || before == after) return;
         CompressionMetrics metrics = CompressionMetrics.measure(before, after, 0L, 0);
+        if (!metrics.reducesContext()) {
+            Log.w(TAG, "automatic compression ignored: result is not smaller "
+                    + metrics.describe());
+            return;
+        }
         lastMetrics = metrics;
         compressionUsedForPendingRequest = true;
         DebugLogger.i("automatic compression applied chat="
@@ -309,34 +373,36 @@ static final class Result {
         }
         return result;
     }
-    static void captureViewModel(Object viewModel, String packageName, Object context) {
-        if (viewModel == null || packageName == null || context == null) return;
+
+    static void captureViewModel(Object viewModel, String chatId, String packageName, Object context) {
+        if (viewModel == null || chatId == null) return;
+        viewModelRef = new WeakReference<>(viewModel);
+        viewModelContextRef = new WeakReference<>(context);
+        viewModelChatId = chatId;
+        viewModelPackageName = packageName;
+        DebugLogger.i("chat ViewModel captured class=" + viewModel.getClass().getName()
+                + " chat=" + DebugLogger.id(chatId));
+    }
+
+    static void updateMinifiedScreen(String chatId, Object viewModel) {
+        HostAbi abi = hostAbi;
+        if (abi == null || !abi.minified || chatId == null || viewModel == null) return;
+        viewModelRef = new WeakReference<>(viewModel);
+        viewModelChatId = chatId;
         try {
-            Class<?> viewModelClass = viewModel.getClass();
-            viewModelInstance = viewModel;
-            viewModelPackageName = packageName;
-            viewModelContext = context;
-            viewModelLoadSession = viewModelClass.getMethod(
-                    "loadSession", String.class, String.class,
-                    Class.forName("android.content.Context", false, hostLoader));
-            DebugLogger.i("chat ViewModel refresh bridge ready class=" + viewModelClass.getName());
+            Object state = abi.currentState(viewModel);
+            if (state != null) updateScreen(chatId, state);
         } catch (Throwable error) {
-            DebugLogger.e("chat ViewModel refresh bridge unavailable", error);
+            DebugLogger.e("minified chat state capture failed", error);
         }
     }
 
-    private static void refreshChat(String chatId) {
-        Object viewModel = viewModelInstance;
-        Method loadSession = viewModelLoadSession;
-        String packageName = viewModelPackageName;
-        Object context = viewModelContext;
-        if (viewModel == null || loadSession == null || packageName == null || context == null) return;
-        try {
-            loadSession.invoke(viewModel, packageName, chatId, context);
-            DebugLogger.i("chat UI refresh requested chat=" + DebugLogger.id(chatId));
-        } catch (Throwable error) {
-            DebugLogger.e("chat UI refresh failed chat=" + DebugLogger.id(chatId), error);
-        }
+    static void refreshCurrentScreen() {
+        HostAbi abi = hostAbi;
+        Object viewModel = viewModelRef.get();
+        String chatId = viewModelChatId;
+        if (abi == null || !abi.minified || viewModel == null || chatId == null) return;
+        updateMinifiedScreen(chatId, viewModel);
     }
 
     static JSONArray sanitizeRequestMessages(JSONArray messages) {
@@ -347,6 +413,29 @@ static final class Result {
         } catch (Throwable error) {
             DebugLogger.e("request message sanitization failed", error);
             return messages;
+        }
+    }
+
+    static List<Object> applyPreparedToHostMessages(List<?> messages, Object config, HostAbi abi) {
+        if (messages == null || config == null || abi == null) return null;
+        try {
+            JSONArray serialized = abi.serializeMessages(messages);
+            JSONArray clean = sanitizeRequestMessages(serialized);
+            JSONArray source = clean == null ? serialized : clean;
+            JSONArray compacted = applyPrepared(source, config);
+            if (compacted != null && compacted != source) {
+                return abi.materializeMessages(compacted, messages);
+            }
+            if (source != serialized) {
+                DebugLogger.i("removed enhancer status messages from minified stream request"
+                        + " originalMessages=" + serialized.length()
+                        + " cleanMessages=" + source.length());
+                return abi.materializeMessages(source, messages);
+            }
+            return null;
+        } catch (Throwable error) {
+            DebugLogger.e("prepared host message apply failed", error);
+            return null;
         }
     }
 
@@ -370,9 +459,12 @@ static final class Result {
             return;
         }
         try {
-            List<?> messages = (List<?>) invoke(uiState, "getMessages");
+            HostAbi abi = requireHostAbi();
+            List<?> messages = abi.minified ? abi.stateMessages(uiState)
+                    : (List<?>) invoke(uiState, "getMessages");
             MessageStats stats = measureHostMessages(messages);
-            boolean loading = Boolean.TRUE.equals(invoke(uiState, "isLoading"));
+            boolean loading = abi.minified ? abi.stateLoading(uiState)
+                    : Boolean.TRUE.equals(invoke(uiState, "isLoading"));
             ScreenState previous = currentScreen;
             if (previous != null && previous.loading && !loading
                     && preparedUsedForActiveResponse) {
@@ -391,8 +483,9 @@ static final class Result {
                     resetPreparedState(true);
                 }
             }
-            Object config = invoke(uiState, "getSelectedProvider");
-            String signature = config == null ? "unknown" : providerSignature(config);
+            Object config = abi.minified ? abi.stateConfig(uiState)
+                    : invoke(uiState, "getSelectedProvider");
+            String signature = config == null ? "unknown" : abi.providerSignature(config);
             currentScreen = new ScreenState(chatId, uiState,
                     stats.messageCount, stats.turnCount, stats.approxContextTokens,
                     loading, signature);
@@ -404,7 +497,7 @@ static final class Result {
                         + " approxTokens=" + stats.approxContextTokens
                         + " loading=" + loading + " provider=" + DebugLogger.redact(signature));
             }
-            if (previous != null && previous.loading != loading && loading && preparing) {
+            if (previous != null && previous.loading != loading && loading && PREPARING.get()) {
                 DebugLogger.i("chat became loading while compression is preparing; keeping task state");
             }
             if (previous != null && (!chatId.equals(previous.chatId)
@@ -421,11 +514,11 @@ static final class Result {
     }
 
     static boolean isPreparing() {
-        return preparing;
+        return PREPARING.get();
     }
 
     static boolean blockSendWhilePreparing() {
-        if (!preparing) {
+        if (!PREPARING.get()) {
             return false;
         }
         ScreenState screen = currentScreen;
@@ -459,13 +552,23 @@ static final class Result {
     }
 
     static boolean shouldAutoCompressBeforeSend() {
+        refreshCurrentScreen();
         ScreenState screen = currentScreen;
+        int keepRecent = ModuleSettings.getManualKeepRecent();
+        int triggerTokens = ModuleSettings.getAutoContextTokens();
         if (!ModuleSettings.isEnabled()
                 || !ModuleSettings.isContextCompressionEnabled()
                 || screen == null
                 || screen.loading
-                || preparing
-                || screen.messageCount <= ModuleSettings.getManualKeepRecent()) {
+                || PREPARING.get()) {
+            return false;
+        }
+        if (screen.messageCount <= keepRecent) {
+            Log.i(TAG, "auto compression skipped: insufficient messages chat="
+                    + DebugLogger.id(screen.chatId)
+                    + " approxTokens=" + screen.approxContextTokens + "/" + triggerTokens
+                    + " messages=" + screen.messageCount
+                    + " keepRecent=" + keepRecent);
             return false;
         }
         if (hasManualPreparedForCurrentChat()) {
@@ -475,34 +578,28 @@ static final class Result {
         if (value != null && value.automatic && screen.chatId.equals(value.chatId)) {
             if (!screen.providerSignature.equals(value.providerSignature)) {
                 resetPreparedState(true);
-            } else if (!hasEnoughNewContextForRecompression(screen, value)) {
-                DebugLogger.i("auto compression skipped; reusing prepared baseline chat="
+            } else if (!hasEnoughNewContextForRecompression(screen, value, triggerTokens)) {
+                int newTokens = Math.max(0,
+                        screen.approxContextTokens - value.baseApproxContextTokens);
+                Log.i(TAG, "auto compression skipped: reusing prepared baseline chat="
                         + DebugLogger.id(screen.chatId)
-                        + " newTurns=" + Math.max(0, screen.turnCount - value.baseTurnCount)
-                        + " newTokens=" + Math.max(0,
-                        screen.approxContextTokens - value.baseApproxContextTokens));
+                        + " newTokens=" + newTokens + "/" + triggerTokens
+                        + " approxTokens=" + screen.approxContextTokens);
                 return false;
             }
         }
-        int triggerTurns = ModuleSettings.getAutoTriggerTurns();
-        int triggerTokens = ModuleSettings.getAutoContextTokens();
-        boolean turnsExceeded = screen.turnCount >= triggerTurns;
-        boolean tokensExceeded = screen.approxContextTokens >= triggerTokens;
-        if (turnsExceeded || tokensExceeded) {
-            DebugLogger.i("auto compression trigger chat=" + DebugLogger.id(screen.chatId)
-                    + " turns=" + screen.turnCount + "/" + triggerTurns
+        if (screen.approxContextTokens >= triggerTokens) {
+            Log.i(TAG, "auto compression trigger chat=" + DebugLogger.id(screen.chatId)
                     + " approxTokens=" + screen.approxContextTokens + "/" + triggerTokens
                     + " messages=" + screen.messageCount
-                    + " keepRecent=" + ModuleSettings.getManualKeepRecent());
+                    + " keepRecent=" + keepRecent);
             return true;
         }
-        if (ModuleSettings.isVerboseDebugLogEnabled()) {
-            DebugLogger.d("auto compression skipped thresholds chat="
-                    + DebugLogger.id(screen.chatId)
-                    + " turns=" + screen.turnCount + "/" + triggerTurns
-                    + " approxTokens=" + screen.approxContextTokens + "/" + triggerTokens
-                    + " messages=" + screen.messageCount);
-        }
+        Log.i(TAG, "auto compression skipped: below threshold chat="
+                + DebugLogger.id(screen.chatId)
+                + " approxTokens=" + screen.approxContextTokens + "/" + triggerTokens
+                + " messages=" + screen.messageCount
+                + " keepRecent=" + keepRecent);
         return false;
     }
 
@@ -514,12 +611,10 @@ static final class Result {
     }
 
     private static boolean hasEnoughNewContextForRecompression(ScreenState screen,
-            Prepared value) {
-        int newTurns = Math.max(0, screen.turnCount - value.baseTurnCount);
+            Prepared value, int triggerTokens) {
         int newTokens = Math.max(0,
                 screen.approxContextTokens - value.baseApproxContextTokens);
-        return newTurns >= ModuleSettings.getAutoTriggerTurns()
-                || newTokens >= ModuleSettings.getAutoContextTokens();
+        return newTokens >= triggerTokens;
     }
 
     static void clearPrepared() {
@@ -547,6 +642,7 @@ static final class Result {
     }
 
     private static void prepareCurrent(int keepRecent, boolean automatic, Callback callback) {
+        refreshCurrentScreen();
         lastKeepRecent = keepRecent;
         lastResult = null;
         ScreenState screen = currentScreen;
@@ -556,10 +652,6 @@ static final class Result {
                 + " loading=" + (screen != null && screen.loading));
         if (screen == null) {
             finish(callback, new Result(false, "当前没有可用的对话", 0, 0));
-            return;
-        }
-        if (preparing) {
-            finish(callback, new Result(false, "压缩任务正在运行", screen.messageCount, 0));
             return;
         }
         if (screen.loading) {
@@ -573,15 +665,37 @@ static final class Result {
                     screen.messageCount, screen.messageCount));
             return;
         }
+        if (!PREPARING.compareAndSet(false, true)) {
+            finish(callback, new Result(false, "压缩任务正在运行", screen.messageCount, 0));
+            return;
+        }
 
         long generation = GENERATION.incrementAndGet();
-        preparing = true;
         lastProgressCompleted = 0;
         lastProgressTotal = 0;
         compressionStartedAt = System.currentTimeMillis();
         postStatus(screen.chatId, "压缩开始：正在读取当前对话，原始消息 "
                 + screen.messageCount + " 条，保留最近 " + keepRecent + " 条。\n"
                 + "上下文长度统计将在每个摘要分块完成后更新。");
+        AtomicBoolean finished = new AtomicBoolean(false);
+        ScheduledFuture<?> watchdogFuture = WATCHDOG.schedule(() -> {
+            if (!finished.compareAndSet(false, true)) {
+                return;
+            }
+            long elapsed = System.currentTimeMillis() - compressionStartedAt;
+            GENERATION.compareAndSet(generation, generation + 1);
+            PREPARING.set(false);
+            Result timeout = new Result(false, "压缩超时已强制结束，本次发送已取消。",
+                    screen.messageCount, 0);
+            DebugLogger.w("compression watchdog fired chat=" + DebugLogger.id(screen.chatId)
+                    + " elapsedMs=" + elapsed
+                    + " progress=" + lastProgressCompleted + "/" + lastProgressTotal
+                    + " automatic=" + automatic);
+            postStatus(screen.chatId, "压缩超时：已强制结束本次压缩，未发送本次消息，避免回退到未压缩历史。已耗时 "
+                    + elapsed + " ms。");
+            refreshCompressionUi();
+            finish(callback, timeout);
+        }, COMPRESSION_TIMEOUT_MS, TimeUnit.MILLISECONDS);
         EXECUTOR.execute(() -> {
             Result result;
             try {
@@ -613,6 +727,8 @@ static final class Result {
                 JSONArray compacted = ContextCompression.compact(
                         compressionInput, snapshot.config, true, keepRecent,
                         (completed, total) -> {
+                            lastProgressCompleted = completed;
+                            lastProgressTotal = total;
                             lastResult = new Result(true,
                         "压缩中：摘要分块 " + completed + "/" + total
                                 + " 已完成，已耗时 "
@@ -629,8 +745,18 @@ static final class Result {
                         || compacted.length() >= snapshot.messages.length()) {
                     throw new IllegalStateException("没有可压缩的完整历史轮次");
                 }
+                CompressionMetrics metrics = CompressionMetrics.measure(snapshot.messages, compacted,
+                        System.currentTimeMillis() - compressionStartedAt, 0);
+                if (!metrics.reducesContext()) {
+                    Log.w(TAG, "compression rejected: result is not smaller "
+                            + metrics.describe());
+                    throw new IllegalStateException(metrics.notReducedMessage());
+                }
                 if (generation != GENERATION.get()) {
                     throw new IllegalStateException("对话已切换，压缩结果已丢弃");
+                }
+                if (finished.get()) {
+                    throw new IllegalStateException("压缩已超时，结果已丢弃");
                 }
                 prepared = new Prepared(screen.chatId, snapshot.providerSignature,
                         snapshot.messages, compacted, automatic,
@@ -638,8 +764,6 @@ static final class Result {
                 preparedUsedForActiveResponse = false;
                 preparedUsageNoticePosted = false;
                 preparedApplyCount = 0;
-                CompressionMetrics metrics = CompressionMetrics.measure(snapshot.messages, compacted,
-                        System.currentTimeMillis() - compressionStartedAt, 0);
                 lastMetrics = metrics;
                 postStatus(screen.chatId, "压缩完成：消息 " + metrics.originalMessages + " -> "
                         + metrics.compactedMessages + "；字符 " + metrics.originalChars + " -> "
@@ -662,9 +786,15 @@ static final class Result {
                         + (System.currentTimeMillis() - compressionStartedAt) + " ms。");
                 result = new Result(false, readableError(error), screen.messageCount, 0);
             } finally {
-                preparing = false;
+                watchdogFuture.cancel(false);
             }
-            finish(callback, result);
+            if (finished.compareAndSet(false, true)) {
+                PREPARING.set(false);
+                finish(callback, result);
+            } else {
+                DebugLogger.w("compression result ignored after watchdog chat="
+                        + DebugLogger.id(screen.chatId) + " success=" + result.success);
+            }
         });
     }
 
@@ -763,15 +893,32 @@ static final class Result {
             for (int index = tailStart; index < cleanActual.length(); index++) {
                 result.put(cleanActual.get(index));
             }
-            preparedUsedForActiveResponse = true;
-            int applyIndex = ++preparedApplyCount;
-            compressionUsedForPendingRequest = true;
-            if (!isValidToolCallSequence(result)) {
-                DebugLogger.w("prepared context rejected: invalid tool call sequence after compaction");
+            int invalidToolIndex = ContextCompression.firstInvalidToolCallIndex(result);
+            if (invalidToolIndex >= 0) {
+                JSONObject invalid = result.optJSONObject(invalidToolIndex);
+                JSONObject previous = invalidToolIndex <= 0
+                        ? null : result.optJSONObject(invalidToolIndex - 1);
+                DebugLogger.w("prepared context rejected: invalid tool call sequence"
+                        + " index=" + invalidToolIndex
+                        + " role=" + (invalid == null ? "null" : invalid.optString("role"))
+                        + " toolCallId=" + (invalid == null ? ""
+                        : DebugLogger.redact(invalid.optString("_lspilot_tool_call_id")))
+                        + " previousRole=" + (previous == null ? "none"
+                        : previous.optString("role"))
+                        + " previousHasToolCalls=" + ContextCompression.hasToolCalls(previous));
                 resetPreparedState(true);
                 return null;
             }
             CompressionMetrics metrics = CompressionMetrics.measure(cleanActual, result, 0L, 0);
+            if (!metrics.reducesContext()) {
+                Log.w(TAG, "prepared context rejected: result is not smaller "
+                        + metrics.describe());
+                resetPreparedState(true);
+                return null;
+            }
+            preparedUsedForActiveResponse = true;
+            int applyIndex = ++preparedApplyCount;
+            compressionUsedForPendingRequest = true;
             lastMetrics = metrics;
             DebugLogger.i("manual prepared context applied chat=" + DebugLogger.id(value.chatId)
                     + " applyCount=" + applyIndex + " " + metrics.describe());
@@ -791,95 +938,67 @@ static final class Result {
         }
     }
 
-    private static boolean isValidToolCallSequence(JSONArray messages) {
-        boolean awaitingToolResult = false;
-        for (int index = 0; index < messages.length(); index++) {
-            JSONObject message = messages.optJSONObject(index);
-            if (message == null) continue;
-            String role = message.optString("role");
-            if ("tool".equals(role)) {
-                if (!awaitingToolResult) return false;
-                continue;
-            }
-            awaitingToolResult = "assistant".equals(role) && hasToolCalls(message);
-        }
-        return true;
-    }
-
-    private static boolean hasToolCalls(JSONObject message) {
-        if (message == null || !message.has("tool_calls")) return false;
-        Object value = message.opt("tool_calls");
-        if (value instanceof JSONArray) return ((JSONArray) value).length() > 0;
-        return value != null && !JSONObject.NULL.equals(value);
-    }
-
     private static Snapshot snapshot(ScreenState screen) throws Exception {
+        HostAbi abi = requireHostAbi();
         Object uiState = screen.uiState;
-        Object config = invoke(uiState, "getSelectedProvider");
+        Object config = abi.minified ? abi.stateConfig(uiState)
+                : invoke(uiState, "getSelectedProvider");
         if (config == null) {
             throw new IllegalStateException("当前对话没有选择 Provider");
         }
-        Object selectedModel = invoke(uiState, "getSelectedModel");
-        if (selectedModel instanceof String && !((String) selectedModel).trim().isEmpty()) {
-            Method copyDefault = config.getClass().getMethod(
-                    "copy$default", config.getClass(), String.class, String.class,
-                    String.class, String.class, String.class, String.class,
-                    List.class, int.class, Object.class);
-            config = copyDefault.invoke(null, config, null, null, null, null, null,
-                    null, Collections.singletonList(selectedModel), 0x3f, null);
-        }
-        List<?> messages = (List<?>) invoke(uiState, "getMessages");
+        String selectedModel = abi.minified ? abi.stateSelectedModel(uiState)
+                : invokeStringOrNull(uiState, "getSelectedModel");
+        config = abi.copyConfigWithSingleModel(config, selectedModel);
+        List<?> messages = abi.minified ? abi.stateMessages(uiState)
+                : (List<?>) invoke(uiState, "getMessages");
         if (messages == null || messages.isEmpty()) {
             throw new IllegalStateException("当前对话没有消息");
         }
-        String providerId = String.valueOf(invoke(config, "getProviderId"));
-        Object provider = getProviderMethod.invoke(providerManager, providerId);
-        if (provider == null || !provider.getClass().getName().endsWith("OpenAiApiProvider")) {
-            throw new IllegalStateException("手动压缩目前仅支持 OpenAI-compatible Provider");
-        }
 
-        INTERNAL_BUILD.set(Boolean.TRUE);
-        String body;
-        try {
-            body = (String) buildRequestMethod.invoke(provider, config, messages, "", false);
-        } finally {
-            INTERNAL_BUILD.remove();
+        JSONArray serialized;
+        if (abi.minified) {
+            serialized = abi.serializeMessages(messages);
+        } else {
+            Object provider = findNamedProvider(abi, config);
+            INTERNAL_BUILD.set(Boolean.TRUE);
+            String body;
+            try {
+                body = (String) buildRequestMethod.invoke(provider, config, messages, "", false);
+            } finally {
+                INTERNAL_BUILD.remove();
+            }
+            serialized = new JSONObject(body).optJSONArray("messages");
         }
-        JSONArray serialized = new JSONObject(body).optJSONArray("messages");
-        if (serialized == null) {
+        if (serialized == null || serialized.length() == 0) {
             throw new IllegalStateException("无法序列化当前对话消息");
         }
         JSONArray cleanSerialized = withoutEnhancerStatuses(serialized);
-        return new Snapshot(config, providerSignature(config),
+        return new Snapshot(config, abi.providerSignature(config),
                 new JSONArray(cleanSerialized.toString()));
     }
 
     private static MessageStats measureHostMessages(List<?> messages) {
         if (messages == null) return new MessageStats(0, 0, 0);
+        HostAbi abi = hostAbi;
         int messageCount = 0;
         int userMessages = 0;
         int charCount = 0;
         int byteCount = 0;
         for (Object message : messages) {
-            try {
-                String content = String.valueOf(invoke(message, "getContent"));
-                if (content.startsWith(ENHANCER_MARKER)) continue;
+            String content = abi == null ? null : abi.messageContent(message);
+            if (content == null) {
                 messageCount++;
-                if (isUserMessage(message)) userMessages++;
-                charCount += content.length();
-                byteCount += content.getBytes(StandardCharsets.UTF_8).length;
-            } catch (Throwable ignored) {
-                messageCount++;
+                continue;
             }
+            if (content.startsWith(ENHANCER_MARKER)) continue;
+            messageCount++;
+            if ("user".equalsIgnoreCase(abi.messageRole(message))) userMessages++;
+            charCount += content.length();
+            byteCount += content.getBytes(StandardCharsets.UTF_8).length;
         }
         int turnCount = userMessages > 0 ? userMessages : Math.max(1, (messageCount + 1) / 2);
         int approxTokens = Math.max(0, Math.round((charCount + byteCount / 3f) / 3f));
         return new MessageStats(messageCount, turnCount, approxTokens);
-    }
-
-    private static boolean isUserMessage(Object message) {
-        String role = invokeStringOrNull(message, "getRole");
-        return role != null && "user".equalsIgnoreCase(role);
     }
 
     private static String invokeStringOrNull(Object target, String methodName) {
@@ -903,8 +1022,26 @@ static final class Result {
     }
 
     private static String providerSignature(Object config) throws Exception {
-        return String.valueOf(invoke(config, "getFullApiUrl")) + "\n"
-                + String.valueOf(invoke(config, "getModelName"));
+        return requireHostAbi().providerSignature(config);
+    }
+
+    private static HostAbi requireHostAbi() {
+        HostAbi abi = hostAbi;
+        if (abi == null) throw new IllegalStateException("Host ABI unavailable");
+        return abi;
+    }
+
+    private static Object findNamedProvider(HostAbi abi, Object config) throws Exception {
+        ClassLoader loader = config.getClass().getClassLoader();
+        Class<?> managerClass = Class.forName(
+                "me.yun.lspilot.data.provider.ProviderManager", false, loader);
+        Object manager = HostAbi.singletonInstance(managerClass);
+        Method getProvider = managerClass.getMethod("getProvider", String.class);
+        Object provider = getProvider.invoke(manager, abi.providerId(config));
+        if (!abi.isProvider(provider)) {
+            throw new IllegalStateException("手动压缩目前仅支持 OpenAI-compatible Provider");
+        }
+        return provider;
     }
 
     private static int countLeadingSystemMessages(JSONArray messages) {
@@ -920,7 +1057,25 @@ static final class Result {
     }
 
     private static Object invoke(Object target, String methodName) throws Exception {
-        return target.getClass().getMethod(methodName).invoke(target);
+        if (target == null) {
+            throw new NullPointerException("target");
+        }
+        Method method = cachedNoArgMethod(target.getClass(), methodName);
+        return method.invoke(target);
+    }
+
+    private static Method cachedNoArgMethod(Class<?> targetClass, String methodName)
+            throws NoSuchMethodException {
+        String key = targetClass.getName() + '#' + methodName;
+        synchronized (NO_ARG_METHOD_CACHE) {
+            Method cached = NO_ARG_METHOD_CACHE.get(key);
+            if (cached != null && cached.getDeclaringClass().isAssignableFrom(targetClass)) {
+                return cached;
+            }
+            Method method = targetClass.getMethod(methodName);
+            NO_ARG_METHOD_CACHE.put(key, method);
+            return method;
+        }
     }
 
     private static String readableError(Throwable error) {

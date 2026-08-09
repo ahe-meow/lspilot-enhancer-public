@@ -18,7 +18,16 @@ Context compression is designed to avoid mutating an active model response:
 
 - If the user sends a message and compression is needed, the module pauses the send, compresses while the chat is idle, then replays the same send.
 - During provider request construction, the module only applies a previously prepared summary or sends the sanitized original messages.
-- A prepared summary remains active for every provider request in the same model response, then clears when the chat leaves loading state.
+- A prepared summary remains the chat baseline across responses until the chat or provider changes, or the baseline is explicitly cleared.
+
+## Design References
+
+The context-compression workflow was informed by the mature Android AI-agent patterns in:
+
+- [AAswordman/Operit](https://github.com/AAswordman/Operit), particularly model-assisted conversation summaries and structured context handoff.
+- [AAAelina/rikkahub-agent](https://github.com/AAAelina/rikkahub-agent), an extended fork of [ExTV/rikkahub-agent](https://github.com/ExTV/rikkahub-agent), particularly configurable compression prompts, context budgeting, recent-tail retention, and tool-transaction boundaries.
+
+These are architectural and behavioral references, not copied source. The current deterministic local window/excerpt implementation in `ContextCompression.java` is an independent Java adaptation for LSPilot's runtime request path.
 
 ## Build
 

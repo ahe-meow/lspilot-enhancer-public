@@ -10,12 +10,20 @@ import java.io.StringWriter;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 
 /** Toggleable, redacted diagnostics for the injected target-app code. */
 final class DebugLogger {
     private static final String TAG = "LSPilotEnhancer";
     private static final long MAX_FILE_BYTES = 512L * 1024L;
     private static final Object LOCK = new Object();
+    private static final ExecutorService FILE_EXECUTOR = Executors.newSingleThreadExecutor(runnable -> {
+        Thread thread = new Thread(runnable, "LSPilotDebugLogger");
+        thread.setDaemon(true);
+        return thread;
+    });
     private static final ThreadLocal<SimpleDateFormat> FORMAT =
             new ThreadLocal<SimpleDateFormat>() {
                 @Override protected SimpleDateFormat initialValue() {
@@ -75,6 +83,16 @@ final class DebugLogger {
     private static void append(String message, Throwable error) {
         Context context = ModuleSettings.applicationContextForLogging();
         if (context == null) return;
+        try {
+            Context appContext = context.getApplicationContext();
+            FILE_EXECUTOR.execute(() -> appendOnBackground(
+                    appContext == null ? context : appContext, message, error));
+        } catch (RejectedExecutionException ignored) {
+            Log.w(TAG, "Debug log queue rejected write");
+        }
+    }
+
+    private static void appendOnBackground(Context context, String message, Throwable error) {
         synchronized (LOCK) {
             try {
                 File file = new File(context.getFilesDir(), "lspilot-enhancer-debug.log");

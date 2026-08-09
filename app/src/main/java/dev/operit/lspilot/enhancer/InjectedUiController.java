@@ -14,6 +14,8 @@ import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.RippleDrawable;
 import android.os.Build;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Log;
 import android.view.Gravity;
 import android.view.MotionEvent;
@@ -31,14 +33,15 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import java.lang.ref.WeakReference;
-import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
-import java.util.Map;
 
 /** Safe integration: only appends a normal item to LSPilot's settings LazyColumn. */
 final class InjectedUiController {
     private static final String TAG = "LSPilotEnhancer";
+    private static final Handler MAIN_HANDLER = new Handler(Looper.getMainLooper());
+    private static final long ROUTE_SETTLE_DELAY_MS = 250L;
+    private static volatile long routeGeneration;
     private static volatile WeakReference<Activity> activityRef = new WeakReference<>(null);
     private static volatile WeakReference<Activity> dialogActivityRef =
             new WeakReference<>(null);
@@ -66,6 +69,21 @@ final class InjectedUiController {
             ModuleSettings.initialize(activity);
             DebugLogger.d("active activity=" + activity.getClass().getName());
         }
+    }
+
+    static void onMainRouteComposed(boolean aiChat) {
+        Activity activity = activityRef.get();
+        if (!isChatHostActivity(activity) || !isActivityUsable(activity)) return;
+        long generation = ++routeGeneration;
+        if (aiChat) {
+            setChatRouteVisible(activity, true);
+            return;
+        }
+        MAIN_HANDLER.postDelayed(() -> {
+            if (routeGeneration == generation && isActivityUsable(activity)) {
+                setChatRouteVisible(activity, false);
+            }
+        }, ROUTE_SETTLE_DELAY_MS);
     }
 
     static void setChatRouteVisible(Activity activity, boolean visible) {
@@ -107,11 +125,17 @@ final class InjectedUiController {
         Activity activity = findResumedChatActivity();
         if (isActivityUsable(activity)) return activity;
         Activity fallback = activityRef.get();
-        if (fallback != null && "me.yun.lspilot.ui.SubScreenActivity".equals(fallback.getClass().getName())
-                && isActivityUsable(fallback)) {
-            return fallback;
+        return isChatHostActivity(fallback) && isActivityUsable(fallback) ? fallback : null;
+    }
+
+    static void onChatSessionLoaded() {
+        if (!chatRouteVisible) {
+            return;
         }
-        return null;
+        Activity activity = currentChatActivity();
+        if (isActivityUsable(activity)) {
+            scheduleFloatingChatButton(activity);
+        }
     }
 
     static void refreshChatCompressionOverlay() {
@@ -172,9 +196,7 @@ final class InjectedUiController {
         Activity activity = findResumedChatActivity();
         if (!isActivityUsable(activity)) {
             Activity fallback = activityRef.get();
-            if (fallback != null && "me.yun.lspilot.ui.SubScreenActivity".equals(fallback.getClass().getName())) {
-                activity = fallback;
-            }
+            if (isChatHostActivity(fallback)) activity = fallback;
         }
         if (!isActivityUsable(activity)) {
             DebugLogger.w("compression dialog rejected: no usable chat Activity");
@@ -210,8 +232,7 @@ final class InjectedUiController {
     }
 
     private static void attachFloatingChatButton(Activity activity) {
-        if (!chatRouteVisible || !isActivityUsable(activity)
-                || !"me.yun.lspilot.ui.SubScreenActivity".equals(activity.getClass().getName())) {
+        if (!chatRouteVisible || !isActivityUsable(activity) || !isChatHostActivity(activity)) {
             Log.i(TAG, "chat icon attach skipped: route hidden or Activity unusable");
             return;
         }
@@ -238,10 +259,20 @@ final class InjectedUiController {
         button.setOnTouchListener((view, event) -> {
             if (event.getActionMasked() == MotionEvent.ACTION_DOWN) {
                 Log.i(TAG, "chat compression icon touch down");
-            } else if (event.getActionMasked() == MotionEvent.ACTION_UP) {
-                Log.i(TAG, "chat compression icon touch up");
+                view.setPressed(true);
+                return true;
             }
-            return false;
+            if (event.getActionMasked() == MotionEvent.ACTION_UP) {
+                Log.i(TAG, "chat compression icon touch up");
+                view.setPressed(false);
+                view.performClick();
+                return true;
+            }
+            if (event.getActionMasked() == MotionEvent.ACTION_CANCEL) {
+                view.setPressed(false);
+                return true;
+            }
+            return true;
         });
         button.setOnClickListener(view -> {
             Log.i(TAG, "chat compression icon clicked");
@@ -367,6 +398,7 @@ final class InjectedUiController {
 
     private static void showInlineCompressionPanel(Activity activity) {
         if (!isActivityUsable(activity)) return;
+        ManualCompressionManager.refreshCurrentScreen();
         FrameLayout frame = ensureOverlay(activity);
         if (frame == null) {
             Log.i(TAG, "inline compression panel skipped: no overlay");
@@ -637,12 +669,8 @@ final class InjectedUiController {
         Switch usage = addSwitch(content, activity, "请求缓存用量统计",
                 "让流式响应返回 cached_tokens 等 usage 信息", ModuleSettings.KEY_INCLUDE_USAGE, ModuleSettings.isIncludeUsageEnabled());
         Switch compression = addSwitch(content, activity, "上下文压缩",
-                "发送前自动压缩，可按对话轮次或上下文用量触发",
+                "发送前按估算上下文 token 用量自动压缩",
                 ModuleSettings.KEY_CONTEXT_COMPRESSION, ModuleSettings.isContextCompressionEnabled());
-        TextView autoTurns = addNumberSetting(content, activity, "自动压缩触发轮次",
-                "当前对话达到该轮次时，在发送前先准备摘要",
-                ModuleSettings::getAutoTriggerTurns, ModuleSettings.MIN_AUTO_TRIGGER_TURNS,
-                ModuleSettings.MAX_AUTO_TRIGGER_TURNS, "轮", ModuleSettings::setAutoTriggerTurns);
         TextView autoTokens = addNumberSetting(content, activity, "自动压缩上下文用量",
                 "当前请求估算上下文达到该 token 数时触发自动压缩",
                 ModuleSettings::getAutoContextTokens, ModuleSettings.MIN_AUTO_CONTEXT_TOKENS,
@@ -662,8 +690,6 @@ final class InjectedUiController {
             master.setChecked(true); cacheKey.setChecked(true); retention.setChecked(true);
             usage.setChecked(true); compression.setChecked(false);
             debug.setChecked(false); verboseDebug.setChecked(false);
-            autoTurns.setText(numberSettingText("自动压缩触发轮次",
-                    ModuleSettings.getAutoTriggerTurns(), "轮"));
             autoTokens.setText(numberSettingText("自动压缩上下文用量",
                     ModuleSettings.getAutoContextTokens(), "token"));
             Toast.makeText(activity, "已恢复默认策略", Toast.LENGTH_SHORT).show();
@@ -691,41 +717,15 @@ final class InjectedUiController {
     }
 
     private static Activity findResumedChatActivity() {
-        Activity activity = findResumedActivity();
-        if (activity != null && "me.yun.lspilot.ui.SubScreenActivity".equals(activity.getClass().getName())) {
-            return activity;
-        }
-        return null;
+        Activity activity = activityRef.get();
+        return isChatHostActivity(activity) && isActivityUsable(activity) ? activity : null;
     }
 
-    private static Activity findResumedActivity() {
-        try {
-            Class<?> threadClass = Class.forName("android.app.ActivityThread");
-            Method current = threadClass.getDeclaredMethod("currentActivityThread");
-            current.setAccessible(true);
-            Object thread = current.invoke(null);
-            Field activitiesField = threadClass.getDeclaredField("mActivities");
-            activitiesField.setAccessible(true);
-            Object records = activitiesField.get(thread);
-            if (!(records instanceof Map)) return null;
-            for (Object record : ((Map<?, ?>) records).values()) {
-                Field paused = record.getClass().getDeclaredField("paused");
-                paused.setAccessible(true);
-                Field destroyed = record.getClass().getDeclaredField("destroyed");
-                destroyed.setAccessible(true);
-                if (paused.getBoolean(record) || destroyed.getBoolean(record)) continue;
-                Field activity = record.getClass().getDeclaredField("activity");
-                activity.setAccessible(true);
-                Object value = activity.get(record);
-                if (value instanceof Activity && isActivityUsable((Activity) value)) {
-                    DebugLogger.d("resumed activity probe=" + value.getClass().getName());
-                    return (Activity) value;
-                }
-            }
-        } catch (Throwable error) {
-            DebugLogger.d("resumed activity probe unavailable: " + error.getClass().getSimpleName());
-        }
-        return null;
+    private static boolean isChatHostActivity(Activity activity) {
+        if (activity == null) return false;
+        String name = activity.getClass().getName();
+        return "me.yun.lspilot.ui.SubScreenActivity".equals(name)
+                || "me.yun.lspilot.ui.MainActivity".equals(name);
     }
 
     private static boolean isActivityUsable(Activity activity) {

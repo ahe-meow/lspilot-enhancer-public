@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.7.4-preview.9
+
+- Add a versioned host ABI resolver for named and minified LSPilot builds, including request, chat-state, session reload, and repository bridges.
+- Keep configuration exclusively in the injected LSPilot settings dialog and persist it directly in the host process; remove the standalone settings app and cross-process synchronization.
+- Trigger automatic compression by estimated context tokens only, and make manual/automatic startup atomic to prevent overlapping tasks.
+- Move diagnostic file writes to a daemon queue, throttle duplicate status updates, and cache hot-path reflection lookups.
+- Remove the unused model-summary HTTP path; compression now uses deterministic local windows and bounded excerpts without an extra provider request.
+- Preserve valid tool-call sequences, ignore empty tool-call metadata, and omit duplicate assistant `toolCallResults` from compression input.
+- Reload the active chat after terminal compression statuses so completion, failure, and timeout notices become visible immediately.
+- Cancel a pending send when automatic compression fails or times out instead of silently replaying the full uncompressed history.
+- Keep prepared summaries as persistent per-chat baselines and support incremental compression of newly appended history.
+- Disable unsupported module hot reload until static executors and host references have an explicit lifecycle cleanup protocol.
+- Allow release builds to retain the host-compatible target SDK without failing Google Play's app-distribution lint check.
+- Add an Android-runtime tool-sequence regression check, an API 102 integration audit, and public design-reference attribution.
+
 ## 1.7.4-preview.8
 
 - Replace model-backed manual summarization with deterministic local window compression, eliminating the extra compression model request and its token cost.

@@ -1,24 +1,14 @@
 package dev.operit.lspilot.enhancer;
 
 import org.json.JSONArray;
-import org.json.JSONException;
 import org.json.JSONObject;
 
-import java.io.BufferedReader;
-import java.io.InputStream;
-import java.io.InputStreamReader;
-import java.io.OutputStream;
-import java.lang.reflect.Method;
-import java.net.HttpURLConnection;
-import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 
-/** Model-backed request compaction. The host conversation database is never modified. */
+/** Deterministic local request compaction. The host conversation database is never modified. */
 final class ContextCompression {
     static final int KEEP_RECENT_MESSAGES = 32;
     static final int TRIGGER_MESSAGE_COUNT = 40;
@@ -26,24 +16,6 @@ final class ContextCompression {
     private static final int MAX_CHUNK_CHARS = 80_000;
     private static final int MAX_TRANSCRIPT_MESSAGE_CHARS = 8_000;
     private static final int MAX_TRANSCRIPT_TOOL_CHARS = 3_000;
-    private static final int MIN_RETRY_CHUNK_MESSAGES = 8;
-    private static final int CONNECT_TIMEOUT_MS = 20_000;
-    private static final int READ_TIMEOUT_MS = 120_000;
-    private static final int MAX_CACHE_ENTRIES = 24;
-
-    private static final String SUMMARY_PROMPT =
-            "Summarize the conversation provided below. Preserve key facts, user requirements, "
-                    + "decisions, constraints, unresolved tasks, code identifiers, file paths, and "
-                    + "important tool results. Keep the original language. Do not invent facts. "
-                    + "Return only the summary, starting with [Summary of previous conversation].";
-
-    private static final Map<String, String> SUMMARY_CACHE =
-            new LinkedHashMap<String, String>(MAX_CACHE_ENTRIES, 0.75f, true) {
-                @Override
-                protected boolean removeEldestEntry(Map.Entry<String, String> eldest) {
-                    return size() > MAX_CACHE_ENTRIES;
-                }
-            };
 
     private ContextCompression() {
     }
@@ -155,8 +127,9 @@ final class ContextCompression {
         Object content = message.opt("content");
         length += compactedLength(content == null ? message.toString() : String.valueOf(content),
                 MAX_TRANSCRIPT_MESSAGE_CHARS);
-        if (message.has("tool_calls")) {
-            length += compactedLength(String.valueOf(message.opt("tool_calls")),
+        Object toolCalls = toolCalls(message);
+        if (toolCalls != null) {
+            length += compactedLength(String.valueOf(toolCalls),
                     MAX_TRANSCRIPT_TOOL_CHARS) + 12;
         }
         return length + 1;
@@ -208,11 +181,35 @@ final class ContextCompression {
         return false;
     }
 
-    private static boolean hasToolCalls(JSONObject message) {
-        if (message == null || !message.has("tool_calls")) return false;
-        Object value = message.opt("tool_calls");
+    static boolean hasToolCalls(JSONObject message) {
+        Object value = toolCalls(message);
         if (value instanceof JSONArray) return ((JSONArray) value).length() > 0;
+        if (value instanceof String) {
+            String text = ((String) value).trim();
+            return !text.isEmpty() && !"[]".equals(text) && !"null".equals(text);
+        }
         return value != null && !JSONObject.NULL.equals(value);
+    }
+
+    static int firstInvalidToolCallIndex(JSONArray messages) {
+        boolean awaitingToolResult = false;
+        for (int index = 0; index < messages.length(); index++) {
+            JSONObject message = messages.optJSONObject(index);
+            if (message == null) continue;
+            String role = message.optString("role");
+            if ("tool".equals(role)) {
+                if (!awaitingToolResult) return index;
+                continue;
+            }
+            awaitingToolResult = "assistant".equals(role) && hasToolCalls(message);
+        }
+        return -1;
+    }
+
+    private static Object toolCalls(JSONObject message) {
+        if (message == null) return null;
+        return message.has("tool_calls") ? message.opt("tool_calls")
+                : message.opt("_lspilot_tool_calls");
     }
 
     private static int findTurnBoundary(JSONArray messages, int preferred, int end) {
@@ -258,10 +255,10 @@ final class ContextCompression {
             if (shouldKeepLocalExcerpt(role, text, index, start, end)) {
                 excerpts.append(role).append(" #").append(index - start + 1).append(": ")
                         .append(compactTranscriptText(text, excerptLimit(role))).append('\n');
-                if (message != null && message.has("tool_calls")) {
+                Object toolCalls = toolCalls(message);
+                if (toolCalls != null) {
                     excerpts.append("tool_calls: ").append(compactTranscriptText(
-                            String.valueOf(message.opt("tool_calls")), MAX_TRANSCRIPT_TOOL_CHARS))
-                            .append('\n');
+                            String.valueOf(toolCalls), MAX_TRANSCRIPT_TOOL_CHARS)).append('\n');
                 }
             }
         }
@@ -302,99 +299,6 @@ final class ContextCompression {
         return 3_200;
     }
 
-    private static String summarizeChunkAdaptive(JSONArray messages, int start, int end,
-            Object providerConfig) throws Exception {
-        try {
-            return summarizeChunk(messages, start, end, providerConfig);
-        } catch (Exception error) {
-            if (!isRetryableSocketFailure(error) || end - start <= MIN_RETRY_CHUNK_MESSAGES) {
-                throw error;
-            }
-            int middle = findTurnBoundary(messages, start + Math.max(1, (end - start) / 2), end);
-            if (middle <= start || middle >= end) {
-                middle = start + Math.max(1, (end - start) / 2);
-            }
-            String first = summarizeChunkAdaptive(messages, start, middle, providerConfig);
-            String second = summarizeChunkAdaptive(messages, middle, end, providerConfig);
-            return first + "\n" + second;
-        }
-    }
-
-    private static boolean isRetryableSocketFailure(Throwable error) {
-        Throwable current = error;
-        while (current != null) {
-            String message = current.getMessage();
-            String name = current.getClass().getName();
-            if (name.contains("SocketTimeoutException") || name.contains("SocketException")
-                    || name.contains("EOFException")
-                    || (message != null && (message.contains("Socket closed")
-                    || message.contains("timeout") || message.contains("Connection reset")))) {
-                return true;
-            }
-            current = current.getCause();
-        }
-        return false;
-    }
-
-    private static String summarizeChunk(JSONArray messages, int start, int end,
-            Object providerConfig) throws Exception {
-        String model = invokeString(providerConfig, "getModelName");
-        String endpoint = invokeString(providerConfig, "getFullApiUrl");
-        String apiKey = invokeString(providerConfig, "getApiKey");
-        String transcript = buildTranscript(messages, start, end);
-        String cacheKey = sha256(endpoint + "\n" + model + "\n" + transcript);
-
-        synchronized (SUMMARY_CACHE) {
-            String cached = SUMMARY_CACHE.get(cacheKey);
-            if (cached != null) {
-                return cached;
-            }
-        }
-
-        JSONObject request = new JSONObject();
-        request.put("model", model);
-        request.put("stream", false);
-        request.put("temperature", 0.2);
-        JSONArray requestMessages = new JSONArray();
-        requestMessages.put(new JSONObject().put("role", "system")
-                .put("content", SUMMARY_PROMPT));
-        requestMessages.put(new JSONObject().put("role", "user")
-                .put("content", transcript));
-        request.put("messages", requestMessages);
-
-        String summary = executeSummaryRequest(endpoint, apiKey, request.toString());
-        if (summary == null || summary.trim().isEmpty()) {
-            throw new JSONException("Compression model returned an empty summary");
-        }
-        summary = summary.trim();
-        synchronized (SUMMARY_CACHE) {
-            SUMMARY_CACHE.put(cacheKey, summary);
-        }
-        return summary;
-    }
-
-    private static String buildTranscript(JSONArray messages, int start, int end)
-            throws JSONException {
-        StringBuilder transcript = new StringBuilder();
-        for (int index = start; index < end; index++) {
-            JSONObject message = messages.optJSONObject(index);
-            if (message == null) {
-                transcript.append(messages.get(index)).append('\n');
-                continue;
-            }
-            transcript.append(message.optString("role", "unknown")).append(": ");
-            Object content = message.opt("content");
-            transcript.append(content == null ? message.toString()
-                    : compactTranscriptText(String.valueOf(content), MAX_TRANSCRIPT_MESSAGE_CHARS));
-            if (message.has("tool_calls")) {
-                transcript.append("\ntool_calls: ").append(compactTranscriptText(
-                        String.valueOf(message.opt("tool_calls")), MAX_TRANSCRIPT_TOOL_CHARS));
-            }
-            transcript.append('\n');
-        }
-        return transcript.toString();
-    }
-
     private static String compactTranscriptText(String text, int maxChars) {
         if (text == null || text.length() <= maxChars) {
             return text;
@@ -415,43 +319,6 @@ final class ContextCompression {
         }
     }
 
-    private static String executeSummaryRequest(String endpoint, String apiKey, String body)
-            throws Exception {
-        HttpURLConnection connection = (HttpURLConnection) new URL(endpoint).openConnection();
-        try {
-            connection.setConnectTimeout(CONNECT_TIMEOUT_MS);
-            connection.setReadTimeout(READ_TIMEOUT_MS);
-            connection.setRequestMethod("POST");
-            connection.setDoOutput(true);
-            connection.setRequestProperty("Authorization", "Bearer " + apiKey);
-            connection.setRequestProperty("Accept", "application/json");
-            connection.setRequestProperty("Content-Type", "application/json; charset=utf-8");
-
-            byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
-            connection.setFixedLengthStreamingMode(bytes.length);
-            try (OutputStream output = connection.getOutputStream()) {
-                output.write(bytes);
-            }
-
-            int status = connection.getResponseCode();
-            InputStream stream = status >= 200 && status < 300
-                    ? connection.getInputStream() : connection.getErrorStream();
-            String response = readAll(stream);
-            if (status < 200 || status >= 300) {
-                throw new IllegalStateException("Compression request failed with HTTP " + status);
-            }
-            JSONObject root = new JSONObject(response);
-            JSONArray choices = root.optJSONArray("choices");
-            if (choices == null || choices.length() == 0) {
-                throw new JSONException("Compression response has no choices");
-            }
-            JSONObject message = choices.getJSONObject(0).optJSONObject("message");
-            return message == null ? null : message.optString("content", null);
-        } finally {
-            connection.disconnect();
-        }
-    }
-
     private static final class Chunk {
         final int start;
         final int end;
@@ -460,30 +327,6 @@ final class ContextCompression {
             this.start = start;
             this.end = end;
         }
-    }
-
-    private static String readAll(InputStream stream) throws Exception {
-        if (stream == null) {
-            return "";
-        }
-        StringBuilder result = new StringBuilder();
-        try (BufferedReader reader = new BufferedReader(
-                new InputStreamReader(stream, StandardCharsets.UTF_8))) {
-            String line;
-            while ((line = reader.readLine()) != null) {
-                result.append(line);
-            }
-        }
-        return result.toString();
-    }
-
-    private static String invokeString(Object target, String methodName) throws Exception {
-        Method method = target.getClass().getMethod(methodName);
-        Object value = method.invoke(target);
-        if (value == null || value.toString().trim().isEmpty()) {
-            throw new IllegalStateException(methodName + " returned an empty value");
-        }
-        return value.toString();
     }
 
     private static String sha256(String value) throws Exception {

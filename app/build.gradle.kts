@@ -11,8 +11,8 @@ android {
         applicationId = "dev.operit.lspilot.cache"
         minSdk = 26
         targetSdk = 29
-        versionCode = 45
-        versionName = "1.7.4-preview.8"
+        versionCode = 46
+        versionName = "1.7.4-preview.9"
     }
 
     buildTypes {
@@ -20,6 +20,11 @@ android {
             isMinifyEnabled = false
             signingConfig = signingConfigs.getByName("debug")
         }
+    }
+
+    // targetSdk 29 is retained for host compatibility; this module is not distributed through Play.
+    lint {
+        disable += "ExpiredTargetSdkVersion"
     }
 
     compileOptions {
