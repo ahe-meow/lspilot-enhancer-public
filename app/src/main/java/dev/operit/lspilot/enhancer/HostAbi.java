@@ -20,10 +20,10 @@ final class HostAbi {
     private static final String NAMED_REPOSITORY = "me.yun.lspilot.data.repository.AiChatRepository";
     private static final String NAMED_MESSAGE = "me.yun.lspilot.data.model.AiChatMessage";
 
-    // LSPilot 1.1.0(11) release APK: r8-map-id-f4ff0c078b9b8367c79a039c8c0e56924d5400d4a53a7ff1bf4cf6ca982ae59c
-    private static final String MINIFIED_PROVIDER = "ss8";
-    private static final String MINIFIED_VIEW_MODEL = "bb";
-    private static final String MINIFIED_CONFIG = "ib";
+    // LSPilot 1.1.0(11) release APK: r8-map-id-2546d18ea02fa35bf26d0f869df16f1ff4c4106246dc837609bbbe09e1fa1588
+    private static final String MINIFIED_PROVIDER = "ts8";
+    private static final String MINIFIED_VIEW_MODEL = "cb";
+    private static final String MINIFIED_CONFIG = "jb";
     private static final String MINIFIED_MESSAGE = "g8";
     private static final String MINIFIED_REPOSITORY = "me.yun.lspilot.data.repository.b";
     private static final String HOST_INDEX = "_lspilot_host_index";
@@ -35,6 +35,7 @@ final class HostAbi {
     final Class<?> viewModelClass;
     final Class<?> messageClass;
     final Class<?> repositoryClass;
+    final Class<?> aiChatRouteClass;
     final boolean minified;
     final Method buildRequestMethod;
     final Method streamMessagesMethod;
@@ -48,20 +49,24 @@ final class HostAbi {
     private final Method stateConfigMethod;
     private final Method stateSelectedModelMethod;
     private final Method stateLoadingMethod;
+    private final Method stateSessionMethod;
     private final Method sessionIdMethod;
 
     private HostAbi(Class<?> providerClass, Class<?> configClass, Class<?> viewModelClass,
-            Class<?> messageClass, Class<?> repositoryClass, boolean minified,
+            Class<?> messageClass, Class<?> repositoryClass, Class<?> aiChatRouteClass,
+            boolean minified,
             Method buildRequestMethod, Method streamMessagesMethod, Method loadSessionMethod,
             Method sendMessageMethod, Method repositoryAddMessageMethod,
             Constructor<?> messageConstructor, Field viewModelStateField,
             Method stateFlowValueMethod, Method stateMessagesMethod, Method stateConfigMethod,
-            Method stateSelectedModelMethod, Method stateLoadingMethod, Method sessionIdMethod) {
+            Method stateSelectedModelMethod, Method stateLoadingMethod, Method stateSessionMethod,
+            Method sessionIdMethod) {
         this.providerClass = providerClass;
         this.configClass = configClass;
         this.viewModelClass = viewModelClass;
         this.messageClass = messageClass;
         this.repositoryClass = repositoryClass;
+        this.aiChatRouteClass = aiChatRouteClass;
         this.minified = minified;
         this.buildRequestMethod = buildRequestMethod;
         this.streamMessagesMethod = streamMessagesMethod;
@@ -75,17 +80,42 @@ final class HostAbi {
         this.stateConfigMethod = stateConfigMethod;
         this.stateSelectedModelMethod = stateSelectedModelMethod;
         this.stateLoadingMethod = stateLoadingMethod;
+        this.stateSessionMethod = stateSessionMethod;
         this.sessionIdMethod = sessionIdMethod;
     }
 
     static HostAbi resolve(ClassLoader loader) throws Exception {
+        return resolve(loader, null);
+    }
+
+    static HostAbi resolve(ClassLoader loader, String[] dexPaths) throws Exception {
         try {
             return resolveNamed(loader);
         } catch (Throwable namedError) {
-            HostAbi minified = resolveMinified110(loader);
-            DebugLogger.w("named host ABI unavailable; using minified ABI: "
-                    + namedError.getClass().getSimpleName() + ": " + namedError.getMessage());
-            return minified;
+            try {
+                HostAbi minified = resolveMinified110(loader);
+                DebugLogger.w("named host ABI unavailable; using known minified ABI: "
+                        + shortError(namedError));
+                return minified;
+            } catch (Throwable minifiedError) {
+                if (dexPaths != null && dexPaths.length > 0) {
+                    try {
+                        HostAbi scanned = DexAbiScanner.resolve(loader, dexPaths);
+                        DebugLogger.w("known minified ABI unavailable; using DEX-scanned ABI: "
+                                + shortError(minifiedError));
+                        return scanned;
+                    } catch (Throwable scanError) {
+                        NoSuchMethodException combined = new NoSuchMethodException(
+                                "host ABI unavailable; named=" + shortError(namedError)
+                                        + " minified=" + shortError(minifiedError)
+                                        + " dex=" + shortError(scanError));
+                        combined.initCause(scanError);
+                        throw combined;
+                    }
+                }
+                if (minifiedError instanceof Exception) throw (Exception) minifiedError;
+                throw new Exception(minifiedError);
+            }
         }
     }
 
@@ -160,6 +190,13 @@ final class HostAbi {
         return fullApiUrl(config) + "\n" + modelName(config);
     }
 
+    boolean hasCompressionAccessors() {
+        return hasAnyNoArg(configClass, "getModelName", "k")
+                && hasAnyNoArg(configClass, "getFullApiUrl", "i")
+                && hasAnyNoArg(messageClass, "getRole", "i")
+                && hasAnyNoArg(messageClass, "getContent", "c");
+    }
+
     String messageRole(Object message) {
         return readStringOrNull(message, "getRole", "i");
     }
@@ -200,9 +237,9 @@ final class HostAbi {
     String currentChatId(Object viewModel) {
         try {
             Object state = currentState(viewModel);
-            if (state == null) return null;
-            Object session = state.getClass().getMethod("h").invoke(state);
-            if (session == null || sessionIdMethod == null) return null;
+            if (state == null || stateSessionMethod == null || sessionIdMethod == null) return null;
+            Object session = stateSessionMethod.invoke(state);
+            if (session == null) return null;
             Object value = sessionIdMethod.invoke(session);
             return value == null ? null : String.valueOf(value);
         } catch (Throwable ignored) {
@@ -293,14 +330,17 @@ final class HostAbi {
         Class<?> messageClass = Class.forName(NAMED_MESSAGE, false, loader);
         Method buildRequest = providerClass.getDeclaredMethod("buildOpenAiRequestBody",
                 configClass, List.class, String.class, boolean.class);
+        requireReturnType(buildRequest, String.class);
         Method loadSession = findLoadSessionMethod(viewModelClass,
                 Class.forName("android.content.Context", false, loader));
         Method sendMessage = findSendMessageMethod(viewModelClass);
         Method addMessage = repositoryClass.getMethod("addMessage", String.class, messageClass);
         Constructor<?> messageConstructor = findMessageConstructor(messageClass);
+        Class<?> aiChatRouteClass = optionalClass(loader,
+                "me.yun.lspilot.ui.navigation.Route$AiChat");
         return new HostAbi(providerClass, configClass, viewModelClass, messageClass, repositoryClass,
-                false, accessible(buildRequest), null, loadSession, sendMessage,
-                accessible(addMessage), messageConstructor, null, null, null, null, null, null, null);
+                aiChatRouteClass, false, accessible(buildRequest), null, loadSession, sendMessage,
+                accessible(addMessage), messageConstructor, null, null, null, null, null, null, null, null);
     }
 
     private static HostAbi resolveMinified110(ClassLoader loader) throws Exception {
@@ -309,6 +349,9 @@ final class HostAbi {
         Class<?> viewModelClass = Class.forName(MINIFIED_VIEW_MODEL, false, loader);
         Class<?> messageClass = Class.forName(MINIFIED_MESSAGE, false, loader);
         Class<?> repositoryClass = Class.forName(MINIFIED_REPOSITORY, false, loader);
+        Method buildRequest = providerClass.getDeclaredMethod("p",
+                configClass, List.class, String.class, boolean.class);
+        requireReturnType(buildRequest, String.class);
         Method streamMessages = findMethod(viewModelClass, void.class,
                 configClass, List.class, Class.forName("kotlin.jvm.functions.Function1", false, loader));
         Method loadSession = findLoadSessionMethod(viewModelClass,
@@ -316,20 +359,44 @@ final class HostAbi {
         Method sendMessage = findSendMessageMethod(viewModelClass);
         Method addMessage = repositoryClass.getMethod("c", String.class, messageClass);
         Constructor<?> messageConstructor = findMessageConstructor(messageClass);
-        Class<?> stateClass = Class.forName("ua", false, loader);
+        Class<?> stateClass = Class.forName("va", false, loader);
         Field viewModelState = findStateField(viewModelClass, stateClass);
         Method stateFlowValue = viewModelState.getType().getMethod("getValue");
         Method stateMessages = stateClass.getMethod("d");
         Method stateConfig = stateClass.getMethod("g");
         Method stateSelectedModel = stateClass.getMethod("f");
         Method stateLoading = stateClass.getMethod("i");
-        Class<?> sessionClass = Class.forName("ta", false, loader);
+        Method stateSession = stateClass.getMethod("h");
+        Class<?> sessionClass = Class.forName("ua", false, loader);
         Method sessionId = sessionClass.getMethod("d");
+        Class<?> aiChatRouteClass = optionalClass(loader, "lka$b");
         return new HostAbi(providerClass, configClass, viewModelClass, messageClass, repositoryClass,
-                true, null, accessible(streamMessages), loadSession, sendMessage,
+                aiChatRouteClass, true, accessible(buildRequest), accessible(streamMessages), loadSession, sendMessage,
                 accessible(addMessage), messageConstructor, accessible(viewModelState),
                 accessible(stateFlowValue), accessible(stateMessages), accessible(stateConfig),
-                accessible(stateSelectedModel), accessible(stateLoading), accessible(sessionId));
+                accessible(stateSelectedModel), accessible(stateLoading), accessible(stateSession),
+                accessible(sessionId));
+    }
+
+    static HostAbi minifiedFromDex(Class<?> providerClass, Class<?> configClass,
+            Class<?> viewModelClass, Class<?> messageClass, Class<?> repositoryClass,
+            Class<?> aiChatRouteClass, Method buildRequestMethod, Method streamMessagesMethod,
+            Method repositoryAddMessageMethod, Class<?> stateClass, Method stateMessagesMethod,
+            Method stateConfigMethod, Method stateSelectedModelMethod, Method stateLoadingMethod,
+            Method stateSessionMethod, Method sessionIdMethod) throws Exception {
+        requireReturnType(buildRequestMethod, String.class);
+        Method loadSession = findLoadSessionMethod(viewModelClass,
+                Class.forName("android.content.Context", false, viewModelClass.getClassLoader()));
+        Method sendMessage = findSendMessageMethod(viewModelClass);
+        Constructor<?> messageConstructor = findMessageConstructor(messageClass);
+        Field viewModelState = findStateField(viewModelClass, stateClass);
+        Method stateFlowValue = viewModelState.getType().getMethod("getValue");
+        return new HostAbi(providerClass, configClass, viewModelClass, messageClass, repositoryClass,
+                aiChatRouteClass, true, accessible(buildRequestMethod), accessible(streamMessagesMethod),
+                loadSession, sendMessage, accessible(repositoryAddMessageMethod), messageConstructor,
+                accessible(viewModelState), accessible(stateFlowValue), accessible(stateMessagesMethod),
+                accessible(stateConfigMethod), accessible(stateSelectedModelMethod),
+                accessible(stateLoadingMethod), accessible(stateSessionMethod), accessible(sessionIdMethod));
     }
 
     private static Field findStateField(Class<?> viewModelClass, Class<?> stateClass)
@@ -385,6 +452,13 @@ final class HostAbi {
         return constructor;
     }
 
+    private static void requireReturnType(Method method, Class<?> returnType)
+            throws NoSuchMethodException {
+        if (method.getReturnType() != returnType) {
+            throw new NoSuchMethodException("unexpected return type for " + describe(method));
+        }
+    }
+
     private static Method findMethod(Class<?> owner, Class<?> returnType, Class<?>... paramTypes)
             throws NoSuchMethodException {
         List<String> candidates = new ArrayList<>();
@@ -434,6 +508,13 @@ final class HostAbi {
         } catch (Throwable ignored) {
             return null;
         }
+    }
+
+    private static boolean hasAnyNoArg(Class<?> owner, String... names) {
+        for (String name : names) {
+            if (optionalNoArg(owner, name) != null) return true;
+        }
+        return false;
     }
 
     private static Method optionalNoArg(Class<?> owner, String name) {
@@ -489,6 +570,13 @@ final class HostAbi {
             result.append(params[i].getName());
         }
         return result.append("): ").append(method.getReturnType().getName()).toString();
+    }
+
+    private static String shortError(Throwable error) {
+        if (error == null) return "none";
+        String message = error.getMessage();
+        return error.getClass().getSimpleName()
+                + (message == null || message.isEmpty() ? "" : ": " + message);
     }
 
     static Object singletonInstance(Class<?> type) throws Exception {

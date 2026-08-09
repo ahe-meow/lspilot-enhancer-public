@@ -573,6 +573,11 @@ final class InjectedUiController {
     }
 
     private static void updateChatButtonState(Button button) {
+        if (!ModuleSettings.isSettingAvailable(ModuleSettings.KEY_CONTEXT_COMPRESSION)) {
+            button.setText("压缩不可用");
+            button.setEnabled(false);
+            return;
+        }
         ManualCompressionManager.ScreenState state =
                 ManualCompressionManager.getCurrentScreen();
         if (ManualCompressionManager.isPreparing()) {
@@ -653,8 +658,12 @@ final class InjectedUiController {
         content.setPadding(padding, dp(activity, 8), padding, dp(activity, 8));
 
         TextView status = new TextView(activity);
-        status.setText(requestHookInstalled ? "状态：请求 Hook 已加载" : "状态：请求 Hook 未加载");
-        status.setTextColor(requestHookInstalled ? Color.rgb(32, 140, 74) : Color.rgb(190, 55, 55));
+        String unavailable = ModuleSettings.unavailableSummary();
+        status.setText(requestHookInstalled
+                ? (unavailable.isEmpty() ? "状态：请求 Hook 已加载" : "状态：请求 Hook 已加载，部分功能已禁用\n" + unavailable)
+                : (unavailable.isEmpty() ? "状态：请求 Hook 未加载" : "状态：请求 Hook 未加载\n" + unavailable));
+        status.setTextColor(requestHookInstalled && unavailable.isEmpty()
+                ? Color.rgb(32, 140, 74) : Color.rgb(190, 55, 55));
         status.setTypeface(Typeface.DEFAULT_BOLD);
         status.setTextSize(14);
         status.setPadding(0, 0, 0, dp(activity, 8));
@@ -675,6 +684,10 @@ final class InjectedUiController {
                 "当前请求估算上下文达到该 token 数时触发自动压缩",
                 ModuleSettings::getAutoContextTokens, ModuleSettings.MIN_AUTO_CONTEXT_TOKENS,
                 ModuleSettings.MAX_AUTO_CONTEXT_TOKENS, "token", ModuleSettings::setAutoContextTokens);
+        if (!ModuleSettings.isSettingAvailable(ModuleSettings.KEY_CONTEXT_COMPRESSION)) {
+            autoTokens.setEnabled(false);
+            autoTokens.setAlpha(0.55f);
+        }
         Switch debug = addSwitch(content, activity, "诊断日志",
                 "记录压缩与请求 Hook 的阶段信息，不记录消息正文或密钥",
                 ModuleSettings.KEY_DEBUG_LOG, ModuleSettings.isDebugLogEnabled());
@@ -687,8 +700,11 @@ final class InjectedUiController {
         reset.setAllCaps(false);
         reset.setOnClickListener(view -> {
             ModuleSettings.resetPolicy();
-            master.setChecked(true); cacheKey.setChecked(true); retention.setChecked(true);
-            usage.setChecked(true); compression.setChecked(false);
+            master.setChecked(ModuleSettings.isEnabled());
+            cacheKey.setChecked(ModuleSettings.isCacheKeyEnabled());
+            retention.setChecked(ModuleSettings.isRetentionEnabled());
+            usage.setChecked(ModuleSettings.isIncludeUsageEnabled());
+            compression.setChecked(ModuleSettings.isContextCompressionEnabled());
             debug.setChecked(false); verboseDebug.setChecked(false);
             autoTokens.setText(numberSettingText("自动压缩上下文用量",
                     ModuleSettings.getAutoContextTokens(), "token"));
@@ -760,9 +776,14 @@ final class InjectedUiController {
 
     private static Switch addSwitch(LinearLayout parent, Activity activity, String title,
                                     String summary, String key, boolean checked) {
+        boolean available = ModuleSettings.isSettingAvailable(key);
         Switch item = new Switch(activity);
-        item.setText(title + "\n" + summary);
-        item.setTextSize(15); item.setChecked(checked);
+        item.setText(title + "\n" + summary
+                + (available ? "" : "\n已禁用：" + ModuleSettings.disabledReason(key)));
+        item.setTextSize(15);
+        item.setChecked(available && checked);
+        item.setEnabled(available);
+        item.setAlpha(available ? 1f : 0.55f);
         item.setPadding(0, dp(activity, 7), 0, dp(activity, 7));
         item.setOnCheckedChangeListener((button, value) -> ModuleSettings.putBoolean(key, value));
         parent.addView(item, matchWrap());

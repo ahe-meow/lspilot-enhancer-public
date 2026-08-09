@@ -642,6 +642,12 @@ static final class Result {
     }
 
     private static void prepareCurrent(int keepRecent, boolean automatic, Callback callback) {
+        if (!ModuleSettings.isSettingAvailable(ModuleSettings.KEY_CONTEXT_COMPRESSION)) {
+            finish(callback, new Result(false,
+                    "上下文压缩不可用：" + ModuleSettings.disabledReason(
+                            ModuleSettings.KEY_CONTEXT_COMPRESSION), 0, 0));
+            return;
+        }
         refreshCurrentScreen();
         lastKeepRecent = keepRecent;
         lastResult = null;

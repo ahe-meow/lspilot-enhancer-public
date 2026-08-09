@@ -33,6 +33,7 @@ Thumbs.db
 # Local diagnostics, recovered chat data, and device snapshots
 .backup/
 out/
+reverse/latest-host/
 
 # Logs
 *.log

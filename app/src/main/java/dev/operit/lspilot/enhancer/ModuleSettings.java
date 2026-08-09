@@ -4,6 +4,9 @@ import android.content.Context;
 import android.content.SharedPreferences;
 import android.util.Log;
 
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+
 final class ModuleSettings {
     private static final String TAG = "LSPilotEnhancer";
     private static final String HOST_PACKAGE = "me.yun.lspilot";
@@ -30,6 +33,7 @@ final class ModuleSettings {
 
     private static volatile Context applicationContext;
     private static volatile SharedPreferences legacyRemotePreferences;
+    private static final Map<String, String> UNAVAILABLE_SETTINGS = new ConcurrentHashMap<>();
 
     private ModuleSettings() {
     }
@@ -42,11 +46,13 @@ final class ModuleSettings {
             }
         }
         migrateLegacyRemoteSettings();
+        persistUnavailableSettings();
     }
 
     static synchronized void useRemotePreferences(SharedPreferences preferences) {
         legacyRemotePreferences = preferences;
         migrateLegacyRemoteSettings();
+        persistUnavailableSettings();
     }
 
     static SharedPreferences preferences() {
@@ -57,23 +63,24 @@ final class ModuleSettings {
     }
 
     static boolean isEnabled() {
-        return getBoolean(KEY_ENABLED, true);
+        return isSettingAvailable(KEY_ENABLED) && getBoolean(KEY_ENABLED, true);
     }
 
     static boolean isCacheKeyEnabled() {
-        return getBoolean(KEY_CACHE_KEY, true);
+        return isSettingAvailable(KEY_CACHE_KEY) && getBoolean(KEY_CACHE_KEY, true);
     }
 
     static boolean isRetentionEnabled() {
-        return getBoolean(KEY_RETENTION, true);
+        return isSettingAvailable(KEY_RETENTION) && getBoolean(KEY_RETENTION, true);
     }
 
     static boolean isIncludeUsageEnabled() {
-        return getBoolean(KEY_INCLUDE_USAGE, true);
+        return isSettingAvailable(KEY_INCLUDE_USAGE) && getBoolean(KEY_INCLUDE_USAGE, true);
     }
 
     static boolean isContextCompressionEnabled() {
-        return getBoolean(KEY_CONTEXT_COMPRESSION, false);
+        return isSettingAvailable(KEY_CONTEXT_COMPRESSION)
+                && getBoolean(KEY_CONTEXT_COMPRESSION, false);
     }
 
     static boolean isDebugLogEnabled() {
@@ -98,6 +105,34 @@ final class ModuleSettings {
         if (preferences != null) {
             preferences.edit().putBoolean(KEY_SUCCESS_NOTICE, true).apply();
         }
+    }
+
+    static synchronized void disableSettings(String reason, String... keys) {
+        if (keys == null || keys.length == 0) return;
+        String safeReason = reason == null || reason.trim().isEmpty()
+                ? "启动探测发现宿主接口不可用" : reason.trim();
+        for (String key : keys) {
+            markUnavailable(key, safeReason);
+        }
+        persistUnavailableSettings();
+    }
+
+    static boolean isSettingAvailable(String key) {
+        return !UNAVAILABLE_SETTINGS.containsKey(key);
+    }
+
+    static String disabledReason(String key) {
+        return fallbackReason(UNAVAILABLE_SETTINGS.get(key));
+    }
+
+    static String unavailableSummary() {
+        StringBuilder result = new StringBuilder();
+        appendUnavailable(result, "总开关", KEY_ENABLED);
+        appendUnavailable(result, "缓存路由键", KEY_CACHE_KEY);
+        appendUnavailable(result, "缓存保留", KEY_RETENTION);
+        appendUnavailable(result, "用量统计", KEY_INCLUDE_USAGE);
+        appendUnavailable(result, "上下文压缩", KEY_CONTEXT_COMPRESSION);
+        return result.toString();
     }
 
     static int getManualKeepRecent() {
@@ -128,15 +163,20 @@ final class ModuleSettings {
     }
 
     static synchronized void putBoolean(String key, boolean value) {
-        SharedPreferences preferences = preferences();
+        boolean actual = isSettingAvailable(key) && value;
+        if (value && !actual) {
+            Log.w(TAG, "Host setting write forced off for unavailable key=" + key
+                    + " reason=" + disabledReason(key));
+        }
+        SharedPreferences preferences = writablePreferences();
         if (preferences == null) {
             Log.e(TAG, "Host setting write skipped without host context key=" + key);
             return;
         }
-        if (!preferences.edit().putBoolean(key, value).commit()) {
+        if (!preferences.edit().putBoolean(key, actual).commit()) {
             Log.e(TAG, "Host setting commit failed key=" + key);
         } else {
-            Log.i(TAG, "Host setting committed key=" + key + " value=" + value);
+            Log.i(TAG, "Host setting committed key=" + key + " value=" + actual);
         }
     }
 
@@ -154,11 +194,59 @@ final class ModuleSettings {
         if (!editor.commit()) {
             Log.e(TAG, "Host settings reset commit failed");
         }
+        persistUnavailableSettings();
     }
 
     private static boolean getBoolean(String key, boolean defaultValue) {
         SharedPreferences preferences = preferences();
         return preferences == null ? defaultValue : preferences.getBoolean(key, defaultValue);
+    }
+
+    private static SharedPreferences writablePreferences() {
+        SharedPreferences local = preferences();
+        return local != null ? local : legacyRemotePreferences;
+    }
+
+    private static void markUnavailable(String key, String reason) {
+        if (isManagedSetting(key)) {
+            UNAVAILABLE_SETTINGS.put(key, reason);
+        }
+    }
+
+    private static boolean isManagedSetting(String key) {
+        return KEY_ENABLED.equals(key)
+                || KEY_CACHE_KEY.equals(key)
+                || KEY_RETENTION.equals(key)
+                || KEY_INCLUDE_USAGE.equals(key)
+                || KEY_CONTEXT_COMPRESSION.equals(key);
+    }
+
+    private static String fallbackReason(String reason) {
+        return reason == null || reason.trim().isEmpty()
+                ? "启动探测发现宿主接口不可用" : reason;
+    }
+
+    private static void appendUnavailable(StringBuilder result, String label, String key) {
+        if (isSettingAvailable(key)) return;
+        if (result.length() > 0) result.append('\n');
+        result.append(label).append("：").append(disabledReason(key));
+    }
+
+    private static void persistUnavailableSettings() {
+        if (UNAVAILABLE_SETTINGS.isEmpty()) return;
+        SharedPreferences preferences = writablePreferences();
+        if (preferences == null) return;
+        try {
+            SharedPreferences.Editor editor = preferences.edit();
+            for (String key : UNAVAILABLE_SETTINGS.keySet()) {
+                editor.putBoolean(key, false);
+            }
+            if (!editor.commit()) {
+                Log.e(TAG, "Unavailable setting commit failed");
+            }
+        } catch (Throwable error) {
+            Log.e(TAG, "Unavailable setting persistence failed", error);
+        }
     }
 
     private static synchronized void putInt(String key, int value) {

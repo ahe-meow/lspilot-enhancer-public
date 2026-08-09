@@ -1,6 +1,7 @@
 package dev.operit.lspilot.enhancer;
 
 import android.app.Activity;
+import android.content.pm.ApplicationInfo;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -43,6 +44,11 @@ public final class LSPilotEnhancerModule extends XposedModule {
     private static volatile boolean publicChatEntryReported;
     private static volatile boolean chatStateCapturedReported;
 
+    private static final class StartupProbe {
+        boolean requestBody;
+        boolean compression;
+    }
+
     @Override
     public void onPackageReady(PackageReadyParam param) {
         if (!TARGET_PACKAGE.equals(param.getPackageName())) {
@@ -57,32 +63,67 @@ public final class LSPilotEnhancerModule extends XposedModule {
         }
 
         ClassLoader loader = param.getClassLoader();
+        String[] dexPaths = hostDexPaths(param.getApplicationInfo());
         HostAbi abi;
         try {
-            abi = HostAbi.resolve(loader);
+            abi = HostAbi.resolve(loader, dexPaths);
             ManualCompressionManager.configure(abi);
-            log(Log.INFO, TAG, "Resolved LSPilot host ABI minified=" + abi.minified);
+            log(Log.INFO, TAG, "Resolved LSPilot host ABI minified=" + abi.minified
+                    + " provider=" + abi.providerClass.getName()
+                    + " config=" + abi.configClass.getName()
+                    + " viewModel=" + abi.viewModelClass.getName());
         } catch (Throwable error) {
+            ModuleSettings.disableSettings("宿主 ABI 解析失败：" + shortError(error),
+                    ModuleSettings.KEY_ENABLED,
+                    ModuleSettings.KEY_CACHE_KEY,
+                    ModuleSettings.KEY_RETENTION,
+                    ModuleSettings.KEY_INCLUDE_USAGE,
+                    ModuleSettings.KEY_CONTEXT_COMPRESSION);
             log(Log.ERROR, TAG, "Failed to resolve LSPilot host ABI", error);
             return;
         }
-        installRequestHook(loader, abi);
-        installSseUsageHook(loader, abi);
-        installUiHooks(loader);
+        StartupProbe probe = installRequestHook(loader, abi);
+        if (probe.compression && !abi.hasCompressionAccessors()) {
+            probe.compression = false;
+            log(Log.ERROR, TAG, "Compression endpoint/accessor probe failed");
+        }
+        boolean sseUsageHook = installSseUsageHook(loader, abi);
+        applyStartupProbe(probe, sseUsageHook, abi);
+        installUiHooks(loader, dexPaths);
         installChatRouteHook(loader, abi);
         installChatViewModelHook(loader, abi);
         installSendBeforeCompressionHook(loader, abi);
-        installChatButtonHook(loader);
-        log(Log.INFO, TAG, "LSPilotEnhancer loaded version=1.7.4-preview.9 local-window-compression");
+        if (!abi.minified) installChatButtonHook(loader);
+        log(Log.INFO, TAG, "LSPilotEnhancer loaded version=1.7.4-preview.10 local-window-compression");
         // Disable the experimental Compose TopAppBar injection. The reliable entry is
         // the Activity-owned native overlay button installed from SubScreenActivity hooks.
         // installNativeChatTopBarActionHook(loader);
     }
 
-    private void installRequestHook(ClassLoader loader, HostAbi abi) {
+    private static String[] hostDexPaths(ApplicationInfo appInfo) {
+        java.util.ArrayList<String> result = new java.util.ArrayList<>();
+        if (appInfo != null) {
+            addDexPath(result, appInfo.sourceDir);
+            if (appInfo.splitSourceDirs != null) {
+                for (String path : appInfo.splitSourceDirs) addDexPath(result, path);
+            }
+        }
+        return result.toArray(new String[0]);
+    }
+
+    private static void addDexPath(java.util.ArrayList<String> result, String path) {
+        if (path != null && !path.trim().isEmpty() && !result.contains(path)) {
+            result.add(path);
+        }
+    }
+
+    private StartupProbe installRequestHook(ClassLoader loader, HostAbi abi) {
+        StartupProbe probe = new StartupProbe();
         if (abi.minified) {
-            installMinifiedStreamHook(abi);
-            return;
+            probe.compression = installMinifiedStreamHook(abi);
+            probe.requestBody = installMinifiedRequestBodyHook(abi);
+            InjectedUiController.setRequestHookInstalled(probe.requestBody);
+            return probe;
         }
         try {
             Method buildRequest = abi.buildRequestMethod;
@@ -107,8 +148,8 @@ public final class LSPilotEnhancerModule extends XposedModule {
                     }
                     Object config = chain.getArg(0);
                     String systemPrompt = (String) chain.getArg(2);
-                    String model = abi.modelName(config);
                     JSONObject body = new JSONObject(originalBody);
+                    String model = requestModel(body, abi, config);
                     JSONArray messages = body.optJSONArray("messages");
                     JSONArray requestMessages = ManualCompressionManager.sanitizeRequestMessages(messages);
                     if (requestMessages != null && requestMessages != messages) {
@@ -137,31 +178,7 @@ public final class LSPilotEnhancerModule extends XposedModule {
                                 + (preparedUsed ? "manual_prepared_empty" : "none")
                                 + " messages=" + (messages == null ? 0 : messages.length()));
                     }
-                    if (policyEnabled && isOpenAiModel(model)
-                            && ModuleSettings.isCacheKeyEnabled()) {
-                        body.put("prompt_cache_key", buildCacheKey(model, systemPrompt));
-                    }
-                    if (policyEnabled && isOpenAiModel(model) && ModuleSettings.isRetentionEnabled()
-                            && supportsExtendedRetention(model)) {
-                        body.put("prompt_cache_retention", "24h");
-                    }
-
-                    if (policyEnabled && ModuleSettings.isIncludeUsageEnabled()) {
-                        JSONObject streamOptions = body.optJSONObject("stream_options");
-                        if (streamOptions == null) {
-                            streamOptions = new JSONObject();
-                            body.put("stream_options", streamOptions);
-                        }
-                        streamOptions.put("include_usage", true);
-                    }
-
-                    if (ModuleSettings.isDebugLogEnabled()) {
-                        log(Log.DEBUG, TAG,
-                                "Enhanced OpenAI request: model=" + model
-                                        + ", key=" + (isOpenAiModel(model)
-                                        ? buildCacheKey(model, systemPrompt) : "not-applicable")
-                                        + ", usage=" + ModuleSettings.isIncludeUsageEnabled());
-                    }
+                    applyOpenAiRequestPolicy(body, model, systemPrompt, policyEnabled);
                     return body.toString();
                 } catch (Throwable error) {
                     log(Log.ERROR, TAG,
@@ -170,6 +187,8 @@ public final class LSPilotEnhancerModule extends XposedModule {
                 }
             });
 
+            probe.requestBody = true;
+            probe.compression = true;
             InjectedUiController.setRequestHookInstalled(true);
             log(Log.INFO, TAG,
                     "Hook installed for " + PROVIDER_CLASS
@@ -178,9 +197,86 @@ public final class LSPilotEnhancerModule extends XposedModule {
             InjectedUiController.setRequestHookInstalled(false);
             log(Log.ERROR, TAG, "Failed to install OpenAI cache hook", error);
         }
+        return probe;
     }
 
-    private void installMinifiedStreamHook(HostAbi abi) {
+    private void applyOpenAiRequestPolicy(JSONObject body, String model, String systemPrompt,
+            boolean policyEnabled) throws Exception {
+        boolean openAiModel = isOpenAiModel(model);
+        boolean cacheKeyEnabled = policyEnabled && openAiModel
+                && ModuleSettings.isCacheKeyEnabled();
+        boolean explicitCacheEnabled = cacheKeyEnabled
+                && PromptCachePolicy.supportsExplicitBreakpoints(model);
+        boolean retentionEnabled = policyEnabled && openAiModel && !explicitCacheEnabled
+                && ModuleSettings.isRetentionEnabled() && supportsExtendedRetention(model);
+        boolean usageEnabled = policyEnabled && ModuleSettings.isIncludeUsageEnabled();
+        String cacheKey = openAiModel ? buildCacheKey(model, systemPrompt) : "not-applicable";
+        int explicitBreakpoints = 0;
+
+        if (cacheKeyEnabled) {
+            body.put("prompt_cache_key", cacheKey);
+        }
+        if (explicitCacheEnabled) {
+            explicitBreakpoints = PromptCachePolicy.applyExplicitBreakpoints(body);
+        } else if (retentionEnabled) {
+            body.put("prompt_cache_retention", "24h");
+        }
+        if (usageEnabled) {
+            JSONObject streamOptions = body.optJSONObject("stream_options");
+            if (streamOptions == null) {
+                streamOptions = new JSONObject();
+                body.put("stream_options", streamOptions);
+            }
+            streamOptions.put("include_usage", true);
+        }
+
+        if (ModuleSettings.isDebugLogEnabled()) {
+            log(Log.DEBUG, TAG,
+                    "Enhanced OpenAI request: model=" + model
+                            + ", key=" + (cacheKeyEnabled ? cacheKey : "disabled")
+                            + ", explicitBreakpoints=" + explicitBreakpoints
+                            + ", retention=" + retentionEnabled
+                            + ", usage=" + usageEnabled);
+        }
+    }
+
+    private boolean installMinifiedRequestBodyHook(HostAbi abi) {
+        try {
+            Method buildRequest = abi.buildRequestMethod;
+            hook(buildRequest).intercept(chain -> {
+                Object originalResult = chain.proceed();
+                if (ManualCompressionManager.isInternalBuild()
+                        || !(originalResult instanceof String)
+                        || !ModuleSettings.isEnabled()) {
+                    return originalResult;
+                }
+
+                try {
+                    Object config = chain.getArg(0);
+                    String systemPrompt = (String) chain.getArg(2);
+                    JSONObject body = new JSONObject((String) originalResult);
+                    String model = requestModel(body, abi, config);
+                    applyOpenAiRequestPolicy(body, model, systemPrompt, ModuleSettings.isEnabled());
+                    return body.toString();
+                } catch (Throwable error) {
+                    log(Log.ERROR, TAG,
+                            "Minified request enhancement failed; using original body", error);
+                    return originalResult;
+                }
+            });
+
+            InjectedUiController.setRequestHookInstalled(true);
+            log(Log.INFO, TAG, "Cache request body hook installed for "
+                    + buildRequest.getDeclaringClass().getName() + "#" + buildRequest.getName());
+            return true;
+        } catch (Throwable error) {
+            InjectedUiController.setRequestHookInstalled(false);
+            log(Log.ERROR, TAG, "Failed to install minified cache request hook", error);
+            return false;
+        }
+    }
+
+    private boolean installMinifiedStreamHook(HostAbi abi) {
         try {
             Method streamMessages = abi.streamMessagesMethod;
             hook(streamMessages).intercept(chain -> {
@@ -200,13 +296,15 @@ public final class LSPilotEnhancerModule extends XposedModule {
             InjectedUiController.setRequestHookInstalled(true);
             log(Log.INFO, TAG, "Adaptive stream hook installed for "
                     + streamMessages.getDeclaringClass().getName() + "#" + streamMessages.getName());
+            return true;
         } catch (Throwable error) {
             InjectedUiController.setRequestHookInstalled(false);
             log(Log.ERROR, TAG, "Failed to install minified stream hook", error);
+            return false;
         }
     }
 
-    private void installSseUsageHook(ClassLoader loader, HostAbi abi) {
+    private boolean installSseUsageHook(ClassLoader loader, HostAbi abi) {
         try {
             Class<?> function1Class = Class.forName(
                     "kotlin.jvm.functions.Function1", false, loader);
@@ -225,9 +323,50 @@ public final class LSPilotEnhancerModule extends XposedModule {
             log(Log.INFO, TAG,
                     "Raw SSE usage hook installed for "
                             + scanSseData.getDeclaringClass().getName() + "#" + scanSseData.getName());
+            return true;
         } catch (Throwable error) {
             log(Log.ERROR, TAG, "Failed to install raw SSE usage hook", error);
+            return false;
         }
+    }
+
+    private void applyStartupProbe(StartupProbe probe, boolean sseUsageHook, HostAbi abi) {
+        if (probe == null) probe = new StartupProbe();
+        if (!probe.requestBody && !probe.compression) {
+            ModuleSettings.disableSettings("请求修改 Hook 接口全部失效",
+                    ModuleSettings.KEY_ENABLED);
+        }
+        if (!probe.requestBody) {
+            ModuleSettings.disableSettings("请求体 Hook 接口失效",
+                    ModuleSettings.KEY_CACHE_KEY,
+                    ModuleSettings.KEY_RETENTION,
+                    ModuleSettings.KEY_INCLUDE_USAGE);
+        }
+        if (!probe.compression) {
+            ModuleSettings.disableSettings("上下文压缩 Hook 接口失效",
+                    ModuleSettings.KEY_CONTEXT_COMPRESSION);
+        }
+        if (!sseUsageHook) {
+            ModuleSettings.disableSettings("SSE usage Hook 接口失效",
+                    ModuleSettings.KEY_INCLUDE_USAGE);
+        }
+        log(Log.INFO, TAG, "Startup hook probe: minified=" + abi.minified
+                + " requestBody=" + probe.requestBody
+                + " compression=" + probe.compression
+                + " sseUsage=" + sseUsageHook);
+    }
+
+    private static String requestModel(JSONObject body, HostAbi abi, Object config) throws Exception {
+        String model = body == null ? null : body.optString("model", null);
+        if (model != null && !model.trim().isEmpty()) return model;
+        return abi.modelName(config);
+    }
+
+    private static String shortError(Throwable error) {
+        if (error == null) return "unknown";
+        String message = error.getMessage();
+        return error.getClass().getSimpleName()
+                + (message == null || message.trim().isEmpty() ? "" : ": " + message);
     }
 
     private void recordSseUsage(String payload) {
@@ -346,6 +485,8 @@ public final class LSPilotEnhancerModule extends XposedModule {
                 return result;
             });
             log(Log.INFO, TAG, "SubScreenActivity.onCreate hook installed");
+        } catch (ClassNotFoundException ignored) {
+            log(Log.INFO, TAG, "SubScreenActivity absent; using MainActivity overlay");
         } catch (Throwable error) {
             log(Log.ERROR, TAG, "Failed to install SubScreenActivity.onCreate hook", error);
         }
@@ -353,7 +494,7 @@ public final class LSPilotEnhancerModule extends XposedModule {
 
     private void installChatRouteHook(ClassLoader loader, HostAbi abi) {
         if (abi.minified) {
-            installMinifiedMainRouteHooks(loader);
+            installMinifiedMainRouteHooks(loader, abi);
             return;
         }
         try {
@@ -383,16 +524,26 @@ public final class LSPilotEnhancerModule extends XposedModule {
         }
     }
 
-    private void installMinifiedMainRouteHooks(ClassLoader loader) {
+    private void installMinifiedMainRouteHooks(ClassLoader loader, HostAbi abi) {
         int installed = 0;
+        Class<?> aiChatRouteClass = abi.aiChatRouteClass;
+        if (aiChatRouteClass == null) {
+            try {
+                aiChatRouteClass = Class.forName("lka$b", false, loader);
+            } catch (ClassNotFoundException error) {
+                log(Log.ERROR, TAG, "Minified AiChat route class unavailable", error);
+                return;
+            }
+        }
+        final Class<?> routeClass = aiChatRouteClass;
         for (char suffix = 'a'; suffix <= 'x'; suffix++) {
             try {
                 Class<?> contentClass = Class.forName(
                         MAIN_ACTIVITY_CLASS + "$" + suffix, false, loader);
                 Method invoke = findFunction1Invoke(contentClass);
-                boolean aiChat = suffix == 'j';
                 hook(invoke).intercept(chain -> {
-                    InjectedUiController.onMainRouteComposed(aiChat);
+                    InjectedUiController.onMainRouteComposed(
+                            routeClass.isInstance(chain.getArg(0)));
                     return chain.proceed();
                 });
                 installed++;
@@ -564,7 +715,7 @@ public final class LSPilotEnhancerModule extends XposedModule {
         }
     }
 
-    private void installUiHooks(ClassLoader loader) {
+    private void installUiHooks(ClassLoader loader, String[] dexPaths) {
         try {
             Class<?> activityClass = Class.forName(MAIN_ACTIVITY_CLASS, false, loader);
             Method onCreate = activityClass.getDeclaredMethod("onCreate", Bundle.class);
@@ -585,7 +736,7 @@ public final class LSPilotEnhancerModule extends XposedModule {
             // row is rendered, replay the exact same valid argument set while changing only
             // title, summary and click action. This preserves the host's colors, icon, padding,
             // Composer flags and Kotlin default mask instead of guessing their ABI.
-            Class<?> arrowClass = findArrowPreferenceClass(loader);
+            Class<?> arrowClass = findArrowPreferenceClass(loader, dexPaths);
             Method arrowPreference = findArrowPreferenceMethod(arrowClass);
             arrowPreference.setAccessible(true);
             final Method nativeArrowPreference = arrowPreference;
@@ -643,18 +794,9 @@ public final class LSPilotEnhancerModule extends XposedModule {
         }
     }
 
-    private static Class<?> findArrowPreferenceClass(ClassLoader loader)
-            throws ClassNotFoundException {
-        ClassNotFoundException last = null;
-        String[] candidates = {ARROW_PREFERENCE_CLASS, "ex"};
-        for (String candidate : candidates) {
-            try {
-                return Class.forName(candidate, false, loader);
-            } catch (ClassNotFoundException error) {
-                last = error;
-            }
-        }
-        throw last == null ? new ClassNotFoundException(ARROW_PREFERENCE_CLASS) : last;
+    private static Class<?> findArrowPreferenceClass(ClassLoader loader, String[] dexPaths)
+            throws Exception {
+        return DexAbiScanner.findArrowPreferenceClass(loader, dexPaths);
     }
 
     private static Method findArrowPreferenceMethod(Class<?> arrowClass)

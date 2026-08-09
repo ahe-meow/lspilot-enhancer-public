@@ -1,5 +1,10 @@
 # Changelog
-
+## 1.7.4-preview.10
+- Restore request-body, stream-compression, raw SSE usage, chat-state, and repository hooks for LSPilot 1.1.0's updated minified ABI.
+- Add startup endpoint probes that disable unsupported settings when a host update breaks a required hook.
+- Add GPT-5.6 explicit prompt-cache breakpoints for the stable system anchor and recent user/tool messages.
+- Add a runtime `DexFile` fallback that rediscovers obfuscated provider, config, ViewModel, state, session, message, repository, chat-route, and ArrowPreference endpoints after host updates.
+- Restore the injected settings entry and minified AiChat route detection for the host's new obfuscation layout.
 ## 1.7.4-preview.9
 
 - Add a versioned host ABI resolver for named and minified LSPilot builds, including request, chat-state, session reload, and repository bridges.
