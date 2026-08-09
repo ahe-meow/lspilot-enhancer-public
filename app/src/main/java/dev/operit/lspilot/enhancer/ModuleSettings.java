@@ -19,6 +19,7 @@ final class ModuleSettings {
     static final String KEY_RETENTION = "retention_enabled";
     static final String KEY_INCLUDE_USAGE = "include_usage_enabled";
     static final String KEY_CONTEXT_COMPRESSION = "context_compression_enabled";
+    static final String KEY_REASONING_EFFORT = "reasoning_effort";
     static final String KEY_DEBUG_LOG = "debug_log_enabled";
     static final String KEY_VERBOSE_DEBUG_LOG = "verbose_debug_log_enabled";
     static final String KEY_SUCCESS_NOTICE = "hook_success_notice_v2";
@@ -83,6 +84,17 @@ final class ModuleSettings {
                 && getBoolean(KEY_CONTEXT_COMPRESSION, false);
     }
 
+    static String getReasoningEffort() {
+        SharedPreferences preferences = preferences();
+        Object stored = preferences == null ? null : preferences.getAll().get(KEY_REASONING_EFFORT);
+        String value = stored instanceof String ? (String) stored : ReasoningPolicy.DEFAULT_EFFORT;
+        return ReasoningPolicy.isSupportedEffort(value) ? value : ReasoningPolicy.DEFAULT_EFFORT;
+    }
+
+    static void setReasoningEffort(String value) {
+        if (ReasoningPolicy.isSupportedEffort(value)) putString(KEY_REASONING_EFFORT, value);
+    }
+
     static boolean isDebugLogEnabled() {
         return getBoolean(KEY_DEBUG_LOG, false);
     }
@@ -132,6 +144,7 @@ final class ModuleSettings {
         appendUnavailable(result, "缓存保留", KEY_RETENTION);
         appendUnavailable(result, "用量统计", KEY_INCLUDE_USAGE);
         appendUnavailable(result, "上下文压缩", KEY_CONTEXT_COMPRESSION);
+        appendUnavailable(result, "推理强度", KEY_REASONING_EFFORT);
         return result.toString();
     }
 
@@ -218,7 +231,8 @@ final class ModuleSettings {
                 || KEY_CACHE_KEY.equals(key)
                 || KEY_RETENTION.equals(key)
                 || KEY_INCLUDE_USAGE.equals(key)
-                || KEY_CONTEXT_COMPRESSION.equals(key);
+                || KEY_CONTEXT_COMPRESSION.equals(key)
+                || KEY_REASONING_EFFORT.equals(key);
     }
 
     private static String fallbackReason(String reason) {
@@ -239,7 +253,7 @@ final class ModuleSettings {
         try {
             SharedPreferences.Editor editor = preferences.edit();
             for (String key : UNAVAILABLE_SETTINGS.keySet()) {
-                editor.putBoolean(key, false);
+                if (!KEY_REASONING_EFFORT.equals(key)) editor.putBoolean(key, false);
             }
             if (!editor.commit()) {
                 Log.e(TAG, "Unavailable setting commit failed");
@@ -256,6 +270,19 @@ final class ModuleSettings {
             return;
         }
         if (!preferences.edit().putInt(key, value).commit()) {
+            Log.e(TAG, "Host setting commit failed key=" + key);
+        } else {
+            Log.i(TAG, "Host setting committed key=" + key + " value=" + value);
+        }
+    }
+
+    private static synchronized void putString(String key, String value) {
+        SharedPreferences preferences = preferences();
+        if (preferences == null) {
+            Log.e(TAG, "Host setting write skipped without host context key=" + key);
+            return;
+        }
+        if (!preferences.edit().putString(key, value).commit()) {
             Log.e(TAG, "Host setting commit failed key=" + key);
         } else {
             Log.i(TAG, "Host setting committed key=" + key + " value=" + value);
@@ -284,6 +311,7 @@ final class ModuleSettings {
             copyBoolean(remote, editor, KEY_VERBOSE_DEBUG_LOG);
             copyInt(remote, editor, KEY_MANUAL_KEEP_RECENT);
             copyInt(remote, editor, KEY_AUTO_CONTEXT_TOKENS);
+            copyString(remote, editor, KEY_REASONING_EFFORT);
             editor.putBoolean(KEY_HOST_MIGRATED, true);
             if (noticeShown) {
                 editor.putBoolean(KEY_SUCCESS_NOTICE, true);
@@ -307,7 +335,8 @@ final class ModuleSettings {
                 || preferences.contains(KEY_DEBUG_LOG)
                 || preferences.contains(KEY_VERBOSE_DEBUG_LOG)
                 || preferences.contains(KEY_MANUAL_KEEP_RECENT)
-                || preferences.contains(KEY_AUTO_CONTEXT_TOKENS);
+                || preferences.contains(KEY_AUTO_CONTEXT_TOKENS)
+                || preferences.contains(KEY_REASONING_EFFORT);
     }
 
     private static void copyBoolean(
@@ -321,6 +350,13 @@ final class ModuleSettings {
             SharedPreferences source, SharedPreferences.Editor target, String key) {
         if (source.contains(key)) {
             target.putInt(key, source.getInt(key, 0));
+        }
+    }
+
+    private static void copyString(
+            SharedPreferences source, SharedPreferences.Editor target, String key) {
+        if (source.contains(key)) {
+            target.putString(key, source.getString(key, ReasoningPolicy.DEFAULT_EFFORT));
         }
     }
 

@@ -1,4 +1,25 @@
 # Changelog
+## 1.7.4-preview.13
+
+- Stabilize GPT-5.6 explicit prompt-cache breakpoints around completed assistant prefixes instead of moving them across the changing user/tool suffix.
+- Derive cache identity from the actual system/developer prompt and rotate the cache namespace after the breakpoint policy change.
+- Prevent automatic pre-send compression status refreshes from opening the manual compression overlay.
+- Improve automatic compression threshold estimation with serialized message/tool-call JSON and pending input text, and adapt the retained tail when a large context has few messages.
+- Exclude both compression and retry status messages from context-length measurement and provider requests.
+
+## 1.7.4-preview.12
+
+- Add chat-scoped automatic response retries after provider or stream failures, with fixed delays of 5 seconds, 10 seconds, 30 seconds, 2 minutes, and 5 minutes.
+- Reuse the host's native response-regeneration path so retries do not duplicate the user's message.
+- Insert retry scheduling, progress, success, cancellation, and exhaustion notices into the conversation while filtering them from provider requests.
+- Bind pending retries to the active ViewModel and chat, and cancel them through the host's native stop action, session changes, or a new user send.
+
+## 1.7.4-preview.11
+
+- Add user-selectable GPT-5.6 sol reasoning effort levels: `low`, `medium`, `high`, `xhigh`, `max`, and `ultra`.
+- Inject the selected `reasoning_effort` into GPT-5.6 sol requests and normalize `delta.reasoning` SSE payloads for the host's native reasoning UI.
+- Extend static and DEX-scanned host ABI resolution to include the raw SSE parser endpoint.
+
 ## 1.7.4-preview.10
 - Restore request-body, stream-compression, raw SSE usage, chat-state, and repository hooks for LSPilot 1.1.0's updated minified ABI.
 - Add startup endpoint probes that disable unsupported settings when a host update breaks a required hook.

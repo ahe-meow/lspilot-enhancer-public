@@ -38,6 +38,7 @@ final class HostAbi {
     final Class<?> aiChatRouteClass;
     final boolean minified;
     final Method buildRequestMethod;
+    final Method scanSseDataMethod;
     final Method streamMessagesMethod;
     final Method loadSessionMethod;
     final Method sendMessageMethod;
@@ -55,7 +56,8 @@ final class HostAbi {
     private HostAbi(Class<?> providerClass, Class<?> configClass, Class<?> viewModelClass,
             Class<?> messageClass, Class<?> repositoryClass, Class<?> aiChatRouteClass,
             boolean minified,
-            Method buildRequestMethod, Method streamMessagesMethod, Method loadSessionMethod,
+            Method buildRequestMethod, Method scanSseDataMethod, Method streamMessagesMethod,
+            Method loadSessionMethod,
             Method sendMessageMethod, Method repositoryAddMessageMethod,
             Constructor<?> messageConstructor, Field viewModelStateField,
             Method stateFlowValueMethod, Method stateMessagesMethod, Method stateConfigMethod,
@@ -69,6 +71,7 @@ final class HostAbi {
         this.aiChatRouteClass = aiChatRouteClass;
         this.minified = minified;
         this.buildRequestMethod = buildRequestMethod;
+        this.scanSseDataMethod = scanSseDataMethod;
         this.streamMessagesMethod = streamMessagesMethod;
         this.loadSessionMethod = loadSessionMethod;
         this.sendMessageMethod = sendMessageMethod;
@@ -152,6 +155,24 @@ final class HostAbi {
         }
         throw new NoSuchMethodException("sendMessage-compatible no-arg method not found on "
                 + viewModelClass.getName());
+    }
+
+    static Method findRetryResponseMethod(Class<?> viewModelClass) {
+        return findNamedVoidNoArg(viewModelClass,
+                "retryLastResponse", "regenerateResponse", "retryResponse", "regenerate", "G");
+    }
+
+    static Method findStopGenerationMethod(Class<?> viewModelClass) {
+        return findNamedVoidNoArg(viewModelClass,
+                "stopGeneration", "stopResponse", "stop", "N");
+    }
+
+    private static Method findNamedVoidNoArg(Class<?> owner, String... names) {
+        for (String name : names) {
+            Method method = optionalDeclaredMethod(owner, name);
+            if (method != null && method.getReturnType() == void.class) return accessible(method);
+        }
+        return null;
     }
 
     Object newStatusMessage(String id, String role, String content, long timestamp) throws Exception {
@@ -331,15 +352,23 @@ final class HostAbi {
         Method buildRequest = providerClass.getDeclaredMethod("buildOpenAiRequestBody",
                 configClass, List.class, String.class, boolean.class);
         requireReturnType(buildRequest, String.class);
+        Class<?> function1Class = Class.forName(
+                "kotlin.jvm.functions.Function1", false, loader);
+        Method scanSseData = providerClass.getDeclaredMethod(
+                "scanSseData", String.class, function1Class);
+        requireReturnType(scanSseData, boolean.class);
         Method loadSession = findLoadSessionMethod(viewModelClass,
                 Class.forName("android.content.Context", false, loader));
+        Method streamMessages = findMethod(viewModelClass, void.class,
+                configClass, List.class, function1Class);
         Method sendMessage = findSendMessageMethod(viewModelClass);
         Method addMessage = repositoryClass.getMethod("addMessage", String.class, messageClass);
         Constructor<?> messageConstructor = findMessageConstructor(messageClass);
         Class<?> aiChatRouteClass = optionalClass(loader,
                 "me.yun.lspilot.ui.navigation.Route$AiChat");
         return new HostAbi(providerClass, configClass, viewModelClass, messageClass, repositoryClass,
-                aiChatRouteClass, false, accessible(buildRequest), null, loadSession, sendMessage,
+                aiChatRouteClass, false, accessible(buildRequest), accessible(scanSseData),
+                accessible(streamMessages), loadSession, sendMessage,
                 accessible(addMessage), messageConstructor, null, null, null, null, null, null, null, null);
     }
 
@@ -352,8 +381,12 @@ final class HostAbi {
         Method buildRequest = providerClass.getDeclaredMethod("p",
                 configClass, List.class, String.class, boolean.class);
         requireReturnType(buildRequest, String.class);
+        Class<?> function1Class = Class.forName(
+                "kotlin.jvm.functions.Function1", false, loader);
+        Method scanSseData = providerClass.getDeclaredMethod("t", String.class, function1Class);
+        requireReturnType(scanSseData, boolean.class);
         Method streamMessages = findMethod(viewModelClass, void.class,
-                configClass, List.class, Class.forName("kotlin.jvm.functions.Function1", false, loader));
+                configClass, List.class, function1Class);
         Method loadSession = findLoadSessionMethod(viewModelClass,
                 Class.forName("android.content.Context", false, loader));
         Method sendMessage = findSendMessageMethod(viewModelClass);
@@ -371,7 +404,8 @@ final class HostAbi {
         Method sessionId = sessionClass.getMethod("d");
         Class<?> aiChatRouteClass = optionalClass(loader, "lka$b");
         return new HostAbi(providerClass, configClass, viewModelClass, messageClass, repositoryClass,
-                aiChatRouteClass, true, accessible(buildRequest), accessible(streamMessages), loadSession, sendMessage,
+                aiChatRouteClass, true, accessible(buildRequest), accessible(scanSseData),
+                accessible(streamMessages), loadSession, sendMessage,
                 accessible(addMessage), messageConstructor, accessible(viewModelState),
                 accessible(stateFlowValue), accessible(stateMessages), accessible(stateConfig),
                 accessible(stateSelectedModel), accessible(stateLoading), accessible(stateSession),
@@ -380,11 +414,13 @@ final class HostAbi {
 
     static HostAbi minifiedFromDex(Class<?> providerClass, Class<?> configClass,
             Class<?> viewModelClass, Class<?> messageClass, Class<?> repositoryClass,
-            Class<?> aiChatRouteClass, Method buildRequestMethod, Method streamMessagesMethod,
-            Method repositoryAddMessageMethod, Class<?> stateClass, Method stateMessagesMethod,
-            Method stateConfigMethod, Method stateSelectedModelMethod, Method stateLoadingMethod,
-            Method stateSessionMethod, Method sessionIdMethod) throws Exception {
+            Class<?> aiChatRouteClass, Method buildRequestMethod, Method scanSseDataMethod,
+            Method streamMessagesMethod, Method repositoryAddMessageMethod, Class<?> stateClass,
+            Method stateMessagesMethod, Method stateConfigMethod, Method stateSelectedModelMethod,
+            Method stateLoadingMethod, Method stateSessionMethod, Method sessionIdMethod)
+            throws Exception {
         requireReturnType(buildRequestMethod, String.class);
+        requireReturnType(scanSseDataMethod, boolean.class);
         Method loadSession = findLoadSessionMethod(viewModelClass,
                 Class.forName("android.content.Context", false, viewModelClass.getClassLoader()));
         Method sendMessage = findSendMessageMethod(viewModelClass);
@@ -392,11 +428,12 @@ final class HostAbi {
         Field viewModelState = findStateField(viewModelClass, stateClass);
         Method stateFlowValue = viewModelState.getType().getMethod("getValue");
         return new HostAbi(providerClass, configClass, viewModelClass, messageClass, repositoryClass,
-                aiChatRouteClass, true, accessible(buildRequestMethod), accessible(streamMessagesMethod),
-                loadSession, sendMessage, accessible(repositoryAddMessageMethod), messageConstructor,
-                accessible(viewModelState), accessible(stateFlowValue), accessible(stateMessagesMethod),
-                accessible(stateConfigMethod), accessible(stateSelectedModelMethod),
-                accessible(stateLoadingMethod), accessible(stateSessionMethod), accessible(sessionIdMethod));
+                aiChatRouteClass, true, accessible(buildRequestMethod), accessible(scanSseDataMethod),
+                accessible(streamMessagesMethod), loadSession, sendMessage,
+                accessible(repositoryAddMessageMethod), messageConstructor, accessible(viewModelState),
+                accessible(stateFlowValue), accessible(stateMessagesMethod), accessible(stateConfigMethod),
+                accessible(stateSelectedModelMethod), accessible(stateLoadingMethod),
+                accessible(stateSessionMethod), accessible(sessionIdMethod));
     }
 
     private static Field findStateField(Class<?> viewModelClass, Class<?> stateClass)
@@ -577,6 +614,14 @@ final class HostAbi {
         String message = error.getMessage();
         return error.getClass().getSimpleName()
                 + (message == null || message.isEmpty() ? "" : ": " + message);
+    }
+
+    public static void main(String[] args) throws Exception {
+        HostAbi abi = resolve(HostAbi.class.getClassLoader(), args);
+        assert abi.streamMessagesMethod != null;
+        assert findRetryResponseMethod(abi.viewModelClass) != null;
+        assert findStopGenerationMethod(abi.viewModelClass) != null;
+        assert abi.repositoryAddMessageMethod != null;
     }
 
     static Object singletonInstance(Class<?> type) throws Exception {

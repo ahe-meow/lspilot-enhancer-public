@@ -27,6 +27,7 @@ final class DexAbiScanner {
 
         for (BuildRequestCandidate request : buildRequests) {
             try {
+                Method scanSseData = findSseData(request.owner, function1Class);
                 StreamCandidate stream = findStreamMessages(classes, request.configClass, function1Class);
                 StateCandidate state = findState(classes, stream.owner, request.configClass);
                 Class<?> aiChatRouteClass = findAiChatRouteClass(loader, classNames);
@@ -38,8 +39,8 @@ final class DexAbiScanner {
                         + " repository=" + repository.owner.getName());
                 return HostAbi.minifiedFromDex(
                         request.owner, request.configClass, stream.owner, messageClass,
-                        repository.owner, aiChatRouteClass, request.method, stream.method,
-                        repository.method, state.stateClass, state.messagesMethod,
+                        repository.owner, aiChatRouteClass, request.method, scanSseData,
+                        stream.method, repository.method, state.stateClass, state.messagesMethod,
                         state.configMethod, state.selectedModelMethod, state.loadingMethod,
                         state.sessionMethod, state.sessionIdMethod);
             } catch (Throwable error) {
@@ -131,6 +132,21 @@ final class DexAbiScanner {
             throw new NoSuchMethodException("OpenAI request body method not found by DEX scan");
         }
         return result;
+    }
+
+    private static Method findSseData(Class<?> owner, Class<?> function1Class)
+            throws NoSuchMethodException {
+        for (Method method : declaredMethods(owner)) {
+            Class<?>[] types = method.getParameterTypes();
+            if (method.getReturnType() == boolean.class
+                    && types.length == 2
+                    && types[0] == String.class
+                    && types[1] == function1Class) {
+                method.setAccessible(true);
+                return method;
+            }
+        }
+        throw new NoSuchMethodException("SSE parser method not found on " + owner.getName());
     }
 
     private static StreamCandidate findStreamMessages(

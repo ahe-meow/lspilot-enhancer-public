@@ -36,13 +36,14 @@ public final class LSPilotEnhancerModule extends XposedModule {
     private static final String ARROW_PREFERENCE_CLASS =
             "top.yukonga.miuix.kmp.preference.ArrowPreferenceKt";
 
-    private static final String CACHE_NAMESPACE = "lspilot:v2:";
+    private static final String CACHE_NAMESPACE = "lspilot:v3:";
     private static final ThreadLocal<Boolean> SETTINGS_ENTRY_REPLAYING = new ThreadLocal<>();
     private static final ThreadLocal<Boolean> AUTO_REPLAY_SEND = new ThreadLocal<>();
     private static volatile boolean settingsEntryRenderReported;
     private static volatile boolean aboutPreferenceObservedReported;
     private static volatile boolean publicChatEntryReported;
     private static volatile boolean chatStateCapturedReported;
+    private static volatile boolean reasoningDeltaNormalizedReported;
 
     private static final class StartupProbe {
         boolean requestBody;
@@ -78,7 +79,8 @@ public final class LSPilotEnhancerModule extends XposedModule {
                     ModuleSettings.KEY_CACHE_KEY,
                     ModuleSettings.KEY_RETENTION,
                     ModuleSettings.KEY_INCLUDE_USAGE,
-                    ModuleSettings.KEY_CONTEXT_COMPRESSION);
+                    ModuleSettings.KEY_CONTEXT_COMPRESSION,
+                    ModuleSettings.KEY_REASONING_EFFORT);
             log(Log.ERROR, TAG, "Failed to resolve LSPilot host ABI", error);
             return;
         }
@@ -87,14 +89,16 @@ public final class LSPilotEnhancerModule extends XposedModule {
             probe.compression = false;
             log(Log.ERROR, TAG, "Compression endpoint/accessor probe failed");
         }
-        boolean sseUsageHook = installSseUsageHook(loader, abi);
+        boolean sseUsageHook = installSseUsageHook(abi);
         applyStartupProbe(probe, sseUsageHook, abi);
         installUiHooks(loader, dexPaths);
         installChatRouteHook(loader, abi);
         installChatViewModelHook(loader, abi);
+        installAutoRetryHooks(abi);
         installSendBeforeCompressionHook(loader, abi);
         if (!abi.minified) installChatButtonHook(loader);
-        log(Log.INFO, TAG, "LSPilotEnhancer loaded version=1.7.4-preview.10 local-window-compression");
+        log(Log.INFO, TAG,
+                "LSPilotEnhancer loaded version=1.7.4-preview.13 reasoning-cache-compression-fix");
         // Disable the experimental Compose TopAppBar injection. The reliable entry is
         // the Activity-owned native overlay button installed from SubScreenActivity hooks.
         // installNativeChatTopBarActionHook(loader);
@@ -203,6 +207,8 @@ public final class LSPilotEnhancerModule extends XposedModule {
     private void applyOpenAiRequestPolicy(JSONObject body, String model, String systemPrompt,
             boolean policyEnabled) throws Exception {
         boolean openAiModel = isOpenAiModel(model);
+        boolean reasoningApplied = policyEnabled && ReasoningPolicy.applyRequest(
+                body, model, ModuleSettings.getReasoningEffort());
         boolean cacheKeyEnabled = policyEnabled && openAiModel
                 && ModuleSettings.isCacheKeyEnabled();
         boolean explicitCacheEnabled = cacheKeyEnabled
@@ -210,7 +216,8 @@ public final class LSPilotEnhancerModule extends XposedModule {
         boolean retentionEnabled = policyEnabled && openAiModel && !explicitCacheEnabled
                 && ModuleSettings.isRetentionEnabled() && supportsExtendedRetention(model);
         boolean usageEnabled = policyEnabled && ModuleSettings.isIncludeUsageEnabled();
-        String cacheKey = openAiModel ? buildCacheKey(model, systemPrompt) : "not-applicable";
+        String cacheKey = openAiModel
+                ? buildCacheKey(model, cacheIdentity(body, systemPrompt)) : "not-applicable";
         int explicitBreakpoints = 0;
 
         if (cacheKeyEnabled) {
@@ -230,9 +237,14 @@ public final class LSPilotEnhancerModule extends XposedModule {
             streamOptions.put("include_usage", true);
         }
 
+        if (reasoningApplied) {
+            log(Log.INFO, TAG, "GPT-5.6 sol reasoning effort applied="
+                    + ModuleSettings.getReasoningEffort());
+        }
         if (ModuleSettings.isDebugLogEnabled()) {
             log(Log.DEBUG, TAG,
                     "Enhanced OpenAI request: model=" + model
+                            + ", reasoning=" + body.optString("reasoning_effort", "disabled")
                             + ", key=" + (cacheKeyEnabled ? cacheKey : "disabled")
                             + ", explicitBreakpoints=" + explicitBreakpoints
                             + ", retention=" + retentionEnabled
@@ -280,52 +292,132 @@ public final class LSPilotEnhancerModule extends XposedModule {
         try {
             Method streamMessages = abi.streamMessagesMethod;
             hook(streamMessages).intercept(chain -> {
+                Object viewModel = chain.getThisObject();
+                String chatId = abi.currentChatId(viewModel);
                 Object config = chain.getArg(0);
                 Object rawMessages = chain.getArg(1);
-                if (!(rawMessages instanceof List)) return chain.proceed();
-                List<?> messages = (List<?>) rawMessages;
-                List<Object> compacted = ManualCompressionManager.applyPreparedToHostMessages(
-                        messages, config, abi);
-                if (compacted == null) return chain.proceed();
                 Object[] args = chain.getArgs().toArray();
-                args[1] = compacted;
-                log(Log.INFO, TAG, "minified stream context applied originalMessages="
-                        + messages.size() + " compactedMessages=" + compacted.size());
+                args[2] = AutoRetryManager.wrapStreamCallback(
+                        chain.getArg(2), viewModel, chatId);
+                if (rawMessages instanceof List) {
+                    List<?> messages = (List<?>) rawMessages;
+                    List<Object> compacted = ManualCompressionManager.applyPreparedToHostMessages(
+                            messages, config, abi);
+                    if (compacted != null) {
+                        args[1] = compacted;
+                        log(Log.INFO, TAG, "minified stream context applied originalMessages="
+                                + messages.size() + " compactedMessages=" + compacted.size());
+                    }
+                }
                 return chain.proceed(args);
             });
             InjectedUiController.setRequestHookInstalled(true);
-            log(Log.INFO, TAG, "Adaptive stream hook installed for "
+            log(Log.INFO, TAG, "Adaptive stream/retry hook installed for "
                     + streamMessages.getDeclaringClass().getName() + "#" + streamMessages.getName());
             return true;
         } catch (Throwable error) {
             InjectedUiController.setRequestHookInstalled(false);
-            log(Log.ERROR, TAG, "Failed to install minified stream hook", error);
+            log(Log.ERROR, TAG, "Failed to install minified stream/retry hook", error);
             return false;
         }
     }
 
-    private boolean installSseUsageHook(ClassLoader loader, HostAbi abi) {
+    private void installAutoRetryHooks(HostAbi abi) {
+        Method retryResponse = HostAbi.findRetryResponseMethod(abi.viewModelClass);
+        Method stopGeneration = HostAbi.findStopGenerationMethod(abi.viewModelClass);
+        AutoRetryManager.configure(retryResponse);
+
+        if (!abi.minified) installNamedStreamRetryHook(abi);
+        if (retryResponse == null || stopGeneration == null) {
+            log(Log.ERROR, TAG, "Auto retry control ABI unavailable retry="
+                    + (retryResponse != null) + " stop=" + (stopGeneration != null));
+            return;
+        }
+
         try {
-            Class<?> function1Class = Class.forName(
-                    "kotlin.jvm.functions.Function1", false, loader);
-            Method scanSseData = abi.providerClass.getDeclaredMethod(
-                    abi.minified ? "t" : "scanSseData", String.class, function1Class);
+            hook(retryResponse).intercept(chain -> {
+                if (!AutoRetryManager.isInternalRetry()) {
+                    Object viewModel = chain.getThisObject();
+                    String chatId = currentChatId(abi, viewModel);
+                    AutoRetryManager.beginTurn(viewModel, chatId);
+                    AutoRetryManager.setRetryMethod(viewModel, retryResponse);
+                }
+                return chain.proceed();
+            });
+            hook(stopGeneration).intercept(chain -> {
+                Object viewModel = chain.getThisObject();
+                AutoRetryManager.cancelForStop(viewModel, currentChatId(abi, viewModel));
+                return chain.proceed();
+            });
+            hook(abi.repositoryAddMessageMethod).intercept(chain -> {
+                String chatId = String.valueOf(chain.getArg(0));
+                Object message = chain.getArg(1);
+                Object result = chain.proceed();
+                AutoRetryManager.onRepositoryMessage(chatId,
+                        abi.messageRole(message), abi.messageContent(message));
+                return result;
+            });
+            log(Log.INFO, TAG, "Auto retry hooks installed retry="
+                    + retryResponse.getName() + " stop=" + stopGeneration.getName()
+                    + " delays=5s,10s,30s,2m,5m");
+        } catch (Throwable error) {
+            log(Log.ERROR, TAG, "Failed to install auto retry control hooks", error);
+        }
+    }
+
+    private boolean installNamedStreamRetryHook(HostAbi abi) {
+        try {
+            Method streamMessages = abi.streamMessagesMethod;
+            hook(streamMessages).intercept(chain -> {
+                Object viewModel = chain.getThisObject();
+                Object[] args = chain.getArgs().toArray();
+                args[2] = AutoRetryManager.wrapStreamCallback(
+                        chain.getArg(2), viewModel, currentChatId(abi, viewModel));
+                return chain.proceed(args);
+            });
+            log(Log.INFO, TAG, "Named stream retry hook installed for "
+                    + streamMessages.getDeclaringClass().getName() + "#" + streamMessages.getName());
+            return true;
+        } catch (Throwable error) {
+            log(Log.ERROR, TAG, "Failed to install named stream retry hook", error);
+            return false;
+        }
+    }
+
+    private static String currentChatId(HostAbi abi, Object viewModel) {
+        String chatId = abi.currentChatId(viewModel);
+        if (chatId != null && !chatId.trim().isEmpty()) return chatId;
+        ManualCompressionManager.ScreenState screen = ManualCompressionManager.getCurrentScreen();
+        return screen == null ? null : screen.chatId;
+    }
+
+    private boolean installSseUsageHook(HostAbi abi) {
+        try {
+            Method scanSseData = abi.scanSseDataMethod;
             scanSseData.setAccessible(true);
 
             hook(scanSseData).intercept(chain -> {
                 Object payload = chain.getArg(0);
-                if (payload instanceof String) {
-                    recordSseUsage((String) payload);
+                if (!(payload instanceof String)) return chain.proceed();
+                String original = (String) payload;
+                recordSseUsage(original);
+                String normalized = ReasoningPolicy.normalizeSseDelta(original);
+                if (original.equals(normalized)) return chain.proceed();
+                if (!reasoningDeltaNormalizedReported) {
+                    reasoningDeltaNormalizedReported = true;
+                    log(Log.INFO, TAG, "SSE delta.reasoning normalized to reasoning_content");
                 }
-                return chain.proceed();
+                Object[] args = chain.getArgs().toArray();
+                args[0] = normalized;
+                return chain.proceed(args);
             });
 
             log(Log.INFO, TAG,
-                    "Raw SSE usage hook installed for "
+                    "Raw SSE usage/reasoning hook installed for "
                             + scanSseData.getDeclaringClass().getName() + "#" + scanSseData.getName());
             return true;
         } catch (Throwable error) {
-            log(Log.ERROR, TAG, "Failed to install raw SSE usage hook", error);
+            log(Log.ERROR, TAG, "Failed to install raw SSE usage/reasoning hook", error);
             return false;
         }
     }
@@ -340,7 +432,8 @@ public final class LSPilotEnhancerModule extends XposedModule {
             ModuleSettings.disableSettings("请求体 Hook 接口失效",
                     ModuleSettings.KEY_CACHE_KEY,
                     ModuleSettings.KEY_RETENTION,
-                    ModuleSettings.KEY_INCLUDE_USAGE);
+                    ModuleSettings.KEY_INCLUDE_USAGE,
+                    ModuleSettings.KEY_REASONING_EFFORT);
         }
         if (!probe.compression) {
             ModuleSettings.disableSettings("上下文压缩 Hook 接口失效",
@@ -394,14 +487,17 @@ public final class LSPilotEnhancerModule extends XposedModule {
                         + " prefix=" + DebugLogger.redact(payload));
             }
             long totalTokens = usage.optLong("total_tokens", -1L);
+            long cacheWriteTokens = firstLong(
+                    usage.optLong("cache_write_tokens", -1L),
+                    usage.optLong("cached_write_tokens", -1L));
             ManualCompressionManager.onProviderUsage(
                     inputTokens, outputTokens, cachedTokens, totalTokens);
             log(Log.INFO, TAG,
                     "OpenAI cache usage: input_tokens=" + displayTokenCount(inputTokens)
                             + ", output_tokens=" + displayTokenCount(outputTokens)
-                            + ", total_tokens="
-                            + displayTokenCount(totalTokens)
-                            + ", cached_tokens=" + displayTokenCount(cachedTokens));
+                            + ", total_tokens=" + displayTokenCount(totalTokens)
+                            + ", cached_tokens=" + displayTokenCount(cachedTokens)
+                            + ", cache_write_tokens=" + displayTokenCount(cacheWriteTokens));
         } catch (Throwable error) {
             if (ModuleSettings.isDebugLogEnabled()) {
                 log(Log.DEBUG, TAG, "Ignored non-JSON SSE data event", error);
@@ -587,6 +683,7 @@ public final class LSPilotEnhancerModule extends XposedModule {
                 Object viewModel = chain.getThisObject();
                 String chatId = (String) chain.getArg(1);
                 Object packageName = chain.getArg(0);
+                AutoRetryManager.onChatLoaded(viewModel, chatId);
                 ManualCompressionManager.captureViewModel(viewModel, chatId,
                         packageName == null ? null : String.valueOf(packageName), chain.getArg(2));
                 ManualCompressionManager.enterChat(chatId);
@@ -619,6 +716,9 @@ public final class LSPilotEnhancerModule extends XposedModule {
                 if (Boolean.TRUE.equals(AUTO_REPLAY_SEND.get())) {
                     return chain.proceed();
                 }
+                Object retryViewModel = chain.getThisObject();
+                AutoRetryManager.onUserSend(
+                        retryViewModel, currentChatId(abi, retryViewModel));
                 if (ManualCompressionManager.blockSendWhilePreparing()) {
                     log(Log.INFO, TAG, "sendMessage blocked while compression is preparing");
                     return null;
@@ -639,7 +739,7 @@ public final class LSPilotEnhancerModule extends XposedModule {
                                     log(Log.WARN, TAG,
                                             "pre-send compression failed; send not replayed"
                                                     + " to avoid uncompressed fallback");
-                                    ManualCompressionManager.postCompressionStatus(
+                                    ManualCompressionManager.postCompressionStatusQuiet(
                                             "自动压缩失败，本次发送已取消，未回退发送完整历史。"
                                                     + "请检查压缩状态后重试；需要放行原始历史时请先关闭上下文压缩。");
                                     return;
@@ -760,7 +860,7 @@ public final class LSPilotEnhancerModule extends XposedModule {
                         for (int index = 0; index < copiedArgs.length; index++) {
                             copiedArgs[index] = chain.getArg(index);
                         }
-                        copiedArgs[0] = "模型缓存增强";
+                        copiedArgs[0] = "模型请求增强";
                         copiedArgs[3] = requestHookSummary();
                         copiedArgs[9] = settingsClickAction;
 
@@ -874,10 +974,29 @@ public final class LSPilotEnhancerModule extends XposedModule {
     }
 
     private static String requestHookSummary() {
-        return "OpenAI Prompt Cache 策略";
+        return "推理强度、Prompt Cache 与上下文策略";
     }
-    private static String buildCacheKey(String model, String systemPrompt) {
-        String prompt = systemPrompt == null ? "" : systemPrompt;
+    private static String cacheIdentity(JSONObject body, String fallback) {
+        if (body != null) {
+            JSONArray messages = body.optJSONArray("messages");
+            if (messages != null) {
+                for (int index = 0; index < messages.length(); index++) {
+                    JSONObject message = messages.optJSONObject(index);
+                    if (message == null) continue;
+                    String role = message.optString("role", "");
+                    if (!"system".equals(role) && !"developer".equals(role)) continue;
+                    Object content = message.opt("content");
+                    if (content != null && !JSONObject.NULL.equals(content)) {
+                        return String.valueOf(content);
+                    }
+                }
+            }
+        }
+        return fallback == null ? "" : fallback;
+    }
+
+    private static String buildCacheKey(String model, String cacheIdentity) {
+        String prompt = cacheIdentity == null ? "" : cacheIdentity;
         return CACHE_NAMESPACE + sha256Prefix(normalize(model) + "\n" + prompt);
     }
 

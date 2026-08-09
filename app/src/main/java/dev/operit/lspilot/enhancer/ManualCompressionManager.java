@@ -91,7 +91,7 @@ final class ManualCompressionManager {
         }
 
         private static int approxTokens(int chars, int bytes) {
-            return Math.max(0, Math.round((chars + bytes / 3f) / 3f));
+            return Math.max(0, Math.max(Math.round(chars / 4f), Math.round(bytes / 3f)));
         }
 
         int ratioPercent() {
@@ -175,6 +175,7 @@ static final class Result {
                 }
             };
     private static final String ENHANCER_MARKER = "[系统提示 · 上下文压缩]";
+    static final String RETRY_STATUS_MARKER = "[系统提示 · 自动重试]";
     private static final String ENHANCER_ROLE = "system";
     private static final String TAG = "LSPilotEnhancer";
     private static volatile Method buildRequestMethod;
@@ -200,6 +201,7 @@ static final class Result {
     private static volatile boolean preparedUsedForActiveResponse;
     private static volatile boolean preparedUsageNoticePosted;
     private static volatile int preparedApplyCount;
+    private static volatile boolean automaticCompressionSession;
 
     static Result getLastResult() {
         return lastResult;
@@ -225,6 +227,19 @@ static final class Result {
         return hostAbi;
     }
     private static void postStatus(String chatId, String content) {
+        postStatus(chatId, ENHANCER_MARKER, content, !automaticCompressionSession);
+    }
+
+    static void postChatStatus(String chatId, String content) {
+        postStatus(chatId, RETRY_STATUS_MARKER, content, false);
+    }
+
+    private static void postStatus(String chatId, String marker, String content) {
+        postStatus(chatId, marker, content, !automaticCompressionSession);
+    }
+
+    private static void postStatus(String chatId, String marker, String content,
+            boolean allowPanel) {
         HostAbi abi = hostAbi;
         if (chatId == null || content == null || abi == null
                 || abi.repositoryAddMessageMethod == null) {
@@ -242,7 +257,7 @@ static final class Result {
                 Object message = abi.newStatusMessage(
                         "lspilot-enhancer-" + System.currentTimeMillis()
                                 + "-" + STATUS_SEQUENCE.incrementAndGet(), ENHANCER_ROLE,
-                        ENHANCER_MARKER + "\n" + content, System.currentTimeMillis());
+                        marker + "\n" + content, System.currentTimeMillis());
                 Object repository = HostAbi.singletonInstance(abi.repositoryClass);
                 abi.repositoryAddMessageMethod.invoke(repository, chatId, message);
                 boolean reloadChat = shouldReloadChat(content);
@@ -250,7 +265,7 @@ static final class Result {
                         + " chars=" + content.length()
                         + " refresh=" + (reloadChat ? "chat_session" : "local_compression_ui"));
                 if (reloadChat) reloadCurrentSession(chatId);
-                else refreshCompressionUi();
+                else refreshCompressionUi(allowPanel);
             } catch (Throwable error) {
                 DebugLogger.e("chat status insertion failed chat=" + DebugLogger.id(chatId), error);
             }
@@ -282,7 +297,10 @@ static final class Result {
     private static boolean shouldReloadChat(String content) {
         return content.startsWith("压缩完成：")
                 || content.startsWith("压缩失败：")
-                || content.startsWith("压缩超时：");
+                || content.startsWith("压缩超时：")
+                || content.startsWith("自动重试")
+                || content.startsWith("对话出错")
+                || content.startsWith("已按宿主停止");
     }
 
     private static void reloadCurrentSession(String chatId) {
@@ -309,8 +327,16 @@ static final class Result {
     }
 
     static void postCompressionStatus(String content) {
+        postCompressionStatus(content, true);
+    }
+
+    static void postCompressionStatusQuiet(String content) {
+        postCompressionStatus(content, false);
+    }
+
+    private static void postCompressionStatus(String content, boolean allowPanel) {
         ScreenState screen = currentScreen;
-        if (screen != null) postStatus(screen.chatId, content);
+        if (screen != null) postStatus(screen.chatId, ENHANCER_MARKER, content, allowPanel);
     }
 
     static void onProviderUsage(long inputTokens, long outputTokens, long cachedTokens,
@@ -358,10 +384,15 @@ static final class Result {
                 + " 本次请求已使用压缩上下文。");
     }
 
+    private static boolean isEnhancerStatusContent(String content) {
+        return content != null && (content.startsWith(ENHANCER_MARKER)
+                || content.startsWith(RETRY_STATUS_MARKER));
+    }
+
     private static boolean isEnhancerStatus(Object message) {
         return message instanceof JSONObject
                 && ((JSONObject) message).optString("role").equals(ENHANCER_ROLE)
-                && ((JSONObject) message).optString("content").startsWith(ENHANCER_MARKER);
+                && isEnhancerStatusContent(((JSONObject) message).optString("content"));
     }
 
     private static JSONArray withoutEnhancerStatuses(JSONArray messages) throws Exception {
@@ -450,6 +481,7 @@ static final class Result {
         ScreenState previous = currentScreen;
         if (previous != null && !chatId.equals(previous.chatId)) {
             currentScreen = null;
+            automaticCompressionSession = false;
             resetPreparedState(true);
         }
     }
@@ -463,6 +495,14 @@ static final class Result {
             List<?> messages = abi.minified ? abi.stateMessages(uiState)
                     : (List<?>) invoke(uiState, "getMessages");
             MessageStats stats = measureHostMessages(messages);
+            String pendingInput = abi.minified
+                    ? invokeStringOrNull(uiState, "c")
+                    : invokeStringOrNull(uiState, "getInputText");
+            if (pendingInput != null && !pendingInput.trim().isEmpty()) {
+                int pendingBytes = pendingInput.getBytes(StandardCharsets.UTF_8).length;
+                stats = new MessageStats(stats.messageCount, stats.turnCount,
+                        stats.approxContextTokens + approxTokens(pendingInput.length(), pendingBytes));
+            }
             boolean loading = abi.minified ? abi.stateLoading(uiState)
                     : Boolean.TRUE.equals(invoke(uiState, "isLoading"));
             ScreenState previous = currentScreen;
@@ -535,10 +575,14 @@ static final class Result {
     }
 
     static void refreshCompressionUi() {
+        refreshCompressionUi(!automaticCompressionSession);
+    }
+
+    private static void refreshCompressionUi(boolean allowPanel) {
         MAIN_HANDLER.post(() -> {
             try {
-                NativeChatTopBarAction.refreshPanel();
-                InjectedUiController.refreshChatCompressionOverlay();
+                NativeChatTopBarAction.refreshPanel(allowPanel);
+                InjectedUiController.refreshChatCompressionOverlay(allowPanel);
             } catch (Throwable error) {
                 DebugLogger.e("local compression UI refresh failed", error);
             }
@@ -563,8 +607,8 @@ static final class Result {
                 || PREPARING.get()) {
             return false;
         }
-        if (screen.messageCount <= keepRecent) {
-            Log.i(TAG, "auto compression skipped: insufficient messages chat="
+        if (screen.messageCount <= keepRecent && screen.approxContextTokens < triggerTokens) {
+            Log.i(TAG, "auto compression skipped: insufficient messages and below token threshold chat="
                     + DebugLogger.id(screen.chatId)
                     + " approxTokens=" + screen.approxContextTokens + "/" + triggerTokens
                     + " messages=" + screen.messageCount
@@ -610,6 +654,12 @@ static final class Result {
                 && screen.chatId.equals(value.chatId);
     }
 
+    private static int adaptiveKeepRecent(int messageCount, int configuredKeepRecent) {
+        if (messageCount > configuredKeepRecent) return configuredKeepRecent;
+        int candidate = Math.max(4, messageCount / 2);
+        return Math.min(configuredKeepRecent, candidate);
+    }
+
     private static boolean hasEnoughNewContextForRecompression(ScreenState screen,
             Prepared value, int triggerTokens) {
         int newTokens = Math.max(0,
@@ -648,13 +698,18 @@ static final class Result {
                             ModuleSettings.KEY_CONTEXT_COMPRESSION), 0, 0));
             return;
         }
+        automaticCompressionSession = automatic;
         refreshCurrentScreen();
-        lastKeepRecent = keepRecent;
         lastResult = null;
         ScreenState screen = currentScreen;
+        if (screen != null && automatic) {
+            keepRecent = adaptiveKeepRecent(screen.messageCount, keepRecent);
+        }
+        final int effectiveKeepRecent = keepRecent;
+        lastKeepRecent = effectiveKeepRecent;
         DebugLogger.i("compression start chat=" + (screen == null ? "none" : DebugLogger.id(screen.chatId))
                 + " messages=" + (screen == null ? 0 : screen.messageCount)
-                + " keepRecent=" + keepRecent
+                + " keepRecent=" + effectiveKeepRecent
                 + " loading=" + (screen != null && screen.loading));
         if (screen == null) {
             finish(callback, new Result(false, "当前没有可用的对话", 0, 0));
@@ -665,9 +720,9 @@ static final class Result {
                     screen.messageCount, 0));
             return;
         }
-        if (screen.messageCount <= keepRecent) {
+        if (screen.messageCount <= effectiveKeepRecent) {
             finish(callback, new Result(false,
-                    "消息数量不足，需要多于 " + keepRecent + " 条",
+                    "消息数量不足，需要多于 " + effectiveKeepRecent + " 条",
                     screen.messageCount, screen.messageCount));
             return;
         }
@@ -681,7 +736,7 @@ static final class Result {
         lastProgressTotal = 0;
         compressionStartedAt = System.currentTimeMillis();
         postStatus(screen.chatId, "压缩开始：正在读取当前对话，原始消息 "
-                + screen.messageCount + " 条，保留最近 " + keepRecent + " 条。\n"
+                + screen.messageCount + " 条，保留最近 " + effectiveKeepRecent + " 条。\n"
                 + "上下文长度统计将在每个摘要分块完成后更新。");
         AtomicBoolean finished = new AtomicBoolean(false);
         ScheduledFuture<?> watchdogFuture = WATCHDOG.schedule(() -> {
@@ -714,7 +769,7 @@ static final class Result {
                         && screen.chatId.equals(previousPrepared.chatId)
                         && snapshot.providerSignature.equals(previousPrepared.providerSignature)) {
                     compressionInput = buildIncrementalCompressionInput(snapshot.messages,
-                            previousPrepared, keepRecent);
+                            previousPrepared, effectiveKeepRecent);
                     incremental = compressionInput != snapshot.messages;
                     if (incremental) {
                         DebugLogger.i("incremental manual compression input chat="
@@ -731,7 +786,7 @@ static final class Result {
                         + " 条，字符 " + charLength(compressionInput) + "，估算 token "
                         + approxTokenLength(compressionInput) + (incremental ? "。本次使用已有摘要做增量压缩。" : "。"));
                 JSONArray compacted = ContextCompression.compact(
-                        compressionInput, snapshot.config, true, keepRecent,
+                        compressionInput, snapshot.config, true, effectiveKeepRecent,
                         (completed, total) -> {
                             lastProgressCompleted = completed;
                             lastProgressTotal = total;
@@ -766,7 +821,7 @@ static final class Result {
                 }
                 prepared = new Prepared(screen.chatId, snapshot.providerSignature,
                         snapshot.messages, compacted, automatic,
-                        screen.turnCount, screen.approxContextTokens);
+                        screen.turnCount, approxTokenLength(snapshot.messages));
                 preparedUsedForActiveResponse = false;
                 preparedUsageNoticePosted = false;
                 preparedApplyCount = 0;
@@ -780,7 +835,7 @@ static final class Result {
                 result = new Result(true,
                         "摘要已就绪并将持续用于本会话。原始 "
                                 + snapshot.messages.length() + " 条，压缩后 "
-                                + compacted.length() + " 条，保留最近 " + keepRecent + " 条。",
+                                + compacted.length() + " 条，保留最近 " + effectiveKeepRecent + " 条。",
                         snapshot.messages.length(), compacted.length(), metrics);
                 DebugLogger.i("compression success chat=" + DebugLogger.id(screen.chatId)
                         + " " + metrics.describe());
@@ -806,6 +861,7 @@ static final class Result {
 
     private static void finish(Callback callback, Result result) {
         lastResult = result;
+        automaticCompressionSession = false;
         DebugLogger.i("compression result success=" + result.success
                 + " original=" + result.originalCount + " compacted=" + result.compactedCount
                 + " message=" + DebugLogger.redact(result.message));
@@ -986,25 +1042,54 @@ static final class Result {
     private static MessageStats measureHostMessages(List<?> messages) {
         if (messages == null) return new MessageStats(0, 0, 0);
         HostAbi abi = hostAbi;
+        if (abi != null) {
+            try {
+                JSONArray serialized = abi.serializeMessages(messages);
+                int messageCount = 0;
+                int userMessages = 0;
+                int charCount = 0;
+                int byteCount = 0;
+                for (int index = 0; index < serialized.length(); index++) {
+                    JSONObject message = serialized.optJSONObject(index);
+                    if (message == null) continue;
+                    if (isEnhancerStatusContent(message.optString("content", null))) continue;
+                    messageCount++;
+                    if ("user".equalsIgnoreCase(message.optString("role", ""))) {
+                        userMessages++;
+                    }
+                    String encoded = message.toString();
+                    charCount += encoded.length();
+                    byteCount += encoded.getBytes(StandardCharsets.UTF_8).length;
+                }
+                int turnCount = userMessages > 0 ? userMessages : Math.max(1, (messageCount + 1) / 2);
+                return new MessageStats(messageCount, turnCount,
+                        approxTokens(charCount, byteCount));
+            } catch (Throwable error) {
+                DebugLogger.w("serialized context measurement failed; using content fallback: "
+                        + DebugLogger.redact(error.getMessage()));
+            }
+        }
+
         int messageCount = 0;
         int userMessages = 0;
         int charCount = 0;
         int byteCount = 0;
         for (Object message : messages) {
             String content = abi == null ? null : abi.messageContent(message);
-            if (content == null) {
-                messageCount++;
-                continue;
-            }
-            if (content.startsWith(ENHANCER_MARKER)) continue;
+            if (isEnhancerStatusContent(content)) continue;
             messageCount++;
+            if (content == null) continue;
             if ("user".equalsIgnoreCase(abi.messageRole(message))) userMessages++;
             charCount += content.length();
             byteCount += content.getBytes(StandardCharsets.UTF_8).length;
         }
         int turnCount = userMessages > 0 ? userMessages : Math.max(1, (messageCount + 1) / 2);
-        int approxTokens = Math.max(0, Math.round((charCount + byteCount / 3f) / 3f));
-        return new MessageStats(messageCount, turnCount, approxTokens);
+        return new MessageStats(messageCount, turnCount, approxTokens(charCount, byteCount));
+    }
+
+    private static int approxTokens(int chars, int bytes) {
+        // A conservative estimate: English is character-bound while CJK/JSON is byte-bound.
+        return Math.max(0, Math.max(Math.round(chars / 4f), Math.round(bytes / 3f)));
     }
 
     private static String invokeStringOrNull(Object target, String methodName) {
@@ -1024,7 +1109,7 @@ static final class Result {
         if (messages == null) return 0;
         String text = messages.toString();
         int bytes = text.getBytes(StandardCharsets.UTF_8).length;
-        return Math.max(0, Math.round((text.length() + bytes / 3f) / 3f));
+        return approxTokens(text.length(), bytes);
     }
 
     private static String providerSignature(Object config) throws Exception {

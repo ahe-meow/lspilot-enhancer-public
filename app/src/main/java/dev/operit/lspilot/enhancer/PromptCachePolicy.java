@@ -28,19 +28,24 @@ public final class PromptCachePolicy {
             applied++;
         }
 
+        // GPT-5.6 needs breakpoints at reusable completed-response prefixes. Marking
+        // the changing latest user/tool suffix makes explicit mode rewrite the cache.
         for (int index = messages.length() - 1;
                 index >= 0 && applied < MAX_BREAKPOINTS; index--) {
-            if (index == anchor) {
-                continue;
-            }
+            if (index == anchor) continue;
             JSONObject message = messages.optJSONObject(index);
-            if (message == null) {
-                continue;
-            }
-            String role = message.optString("role", "");
-            if (("user".equals(role) || "tool".equals(role)) && markContent(message)) {
-                applied++;
-            }
+            if (message == null || !"assistant".equals(message.optString("role"))) continue;
+            if (markContent(message)) applied++;
+        }
+
+        // Tool-only conversations may not contain assistant text blocks. Use an older
+        // completed tool message as a fallback, never the latest changing suffix.
+        for (int index = messages.length() - 2;
+                index >= 0 && applied < MAX_BREAKPOINTS; index--) {
+            if (index == anchor) continue;
+            JSONObject message = messages.optJSONObject(index);
+            if (message == null || !"tool".equals(message.optString("role"))) continue;
+            if (markContent(message)) applied++;
         }
 
         if (applied > 0) {
@@ -128,19 +133,21 @@ public final class PromptCachePolicy {
                 .put(message("assistant", "answer"))
                 .put(message("tool", "two"))
                 .put(message("user", "three"))
-                .put(message("tool", "four"));
+                .put(message("assistant", "answer two"))
+                .put(message("tool", "four"))
+                .put(message("user", "latest"));
         body.put("messages", messages);
 
         int applied = applyExplicitBreakpoints(body);
-        check(applied == 4, "expected four breakpoints");
+        check(applied == 4, "expected four stable breakpoints");
         check("explicit".equals(body.getJSONObject("prompt_cache_options").getString("mode")),
                 "explicit mode missing");
         check(!body.has("prompt_cache_retention"), "legacy retention was not removed");
         check(hasBreakpoint(messages.getJSONObject(0)), "system anchor missing");
-        check(!hasBreakpoint(messages.getJSONObject(1)), "old user message should not be marked");
-        check(hasBreakpoint(messages.getJSONObject(3)), "recent tool message missing");
-        check(hasBreakpoint(messages.getJSONObject(4)), "recent user message missing");
-        check(hasBreakpoint(messages.getJSONObject(5)), "latest tool message missing");
+        check(hasBreakpoint(messages.getJSONObject(2)), "completed assistant breakpoint missing");
+        check(hasBreakpoint(messages.getJSONObject(6)), "older tool breakpoint missing");
+        check(hasBreakpoint(messages.getJSONObject(5)), "latest completed assistant missing");
+        check(!hasBreakpoint(messages.getJSONObject(7)), "latest user must remain unmarked");
         check(applyExplicitBreakpoints(body) == 4, "policy is not idempotent");
         System.out.println("PromptCachePolicy check passed");
     }

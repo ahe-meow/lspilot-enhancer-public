@@ -28,6 +28,11 @@ final class NativeChatTopBarAction {
     }
 
     static void refreshPanel() {
+        refreshPanel(true);
+    }
+
+    static void refreshPanel(boolean allowShow) {
+        if (!allowShow) return;
         try {
             PanelBridge bridge = panelBridge;
             if (bridge != null) bridge.set(true);

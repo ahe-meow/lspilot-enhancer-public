@@ -6,7 +6,8 @@ An LSPosed module for `me.yun.lspilot` that adds request-level enhancements and 
 
 ## Features
 
-- Adds OpenAI-compatible request enhancements such as prompt cache key generation, optional usage reporting, and extended retention for supported models.
+- Adds OpenAI-compatible request enhancements such as prompt cache key generation, optional usage reporting, extended retention, and selectable GPT-5.6 sol reasoning effort.
+- Automatically retries failed response retrieval up to five times at bounded intervals, with in-chat status notices and native stop-button cancellation.
 - Adds a route-scoped native compression icon that appears only on the AI chat screen.
 - Supports manual and pre-send chat context compression using the selected provider configuration at runtime.
 - Inserts local system status messages for compression progress and metrics, while filtering those status messages out of provider requests.

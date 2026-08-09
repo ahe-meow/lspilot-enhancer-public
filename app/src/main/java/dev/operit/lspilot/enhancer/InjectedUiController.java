@@ -106,7 +106,7 @@ final class InjectedUiController {
         if (requestHookInstalled && ModuleSettings.shouldShowSuccessNotice()) {
             ModuleSettings.markSuccessNoticeShown();
             activity.runOnUiThread(() -> Toast.makeText(activity,
-                    "模型缓存增强已加载，可在 LSPilot 设置中配置",
+                    "模型请求增强已加载，可在 LSPilot 设置中配置",
                     Toast.LENGTH_LONG).show());
         }
     }
@@ -139,6 +139,10 @@ final class InjectedUiController {
     }
 
     static void refreshChatCompressionOverlay() {
+        refreshChatCompressionOverlay(true);
+    }
+
+    static void refreshChatCompressionOverlay(boolean allowShow) {
         Activity activity = currentChatActivity();
         if (!isActivityUsable(activity)) return;
         activity.runOnUiThread(() -> {
@@ -147,7 +151,7 @@ final class InjectedUiController {
             if (frame == null) return;
             View panel = frame.findViewWithTag("lspilot-enhancer-chat-compress-panel");
             if (panel == null) {
-                if (ManualCompressionManager.isPreparing()) {
+                if (allowShow && ManualCompressionManager.isPreparing()) {
                     showInlineCompressionPanel(activity);
                 }
                 return;
@@ -669,8 +673,13 @@ final class InjectedUiController {
         status.setPadding(0, 0, 0, dp(activity, 8));
         content.addView(status, matchWrap());
 
-        Switch master = addSwitch(content, activity, "启用模型缓存增强",
+        Switch master = addSwitch(content, activity, "启用模型请求增强",
                 "关闭后保留 Hook，但不修改请求", ModuleSettings.KEY_ENABLED, ModuleSettings.isEnabled());
+        String[] reasoningLabels = {"low", "Medium", "high", "xhigh", "max", "ultra"};
+        String[] reasoningValues = {"low", "medium", "high", "xhigh", "max", "ultra"};
+        TextView reasoningEffort = addChoiceSetting(content, activity, "GPT-5.6 sol 推理强度",
+                ModuleSettings.KEY_REASONING_EFFORT, reasoningLabels, reasoningValues,
+                ModuleSettings::getReasoningEffort, ModuleSettings::setReasoningEffort);
         Switch cacheKey = addSwitch(content, activity, "稳定缓存路由键",
                 "按模型与系统提示词生成无明文 prompt_cache_key", ModuleSettings.KEY_CACHE_KEY, ModuleSettings.isCacheKeyEnabled());
         Switch retention = addSwitch(content, activity, "24 小时缓存保留",
@@ -705,6 +714,8 @@ final class InjectedUiController {
             retention.setChecked(ModuleSettings.isRetentionEnabled());
             usage.setChecked(ModuleSettings.isIncludeUsageEnabled());
             compression.setChecked(ModuleSettings.isContextCompressionEnabled());
+            reasoningEffort.setText(choiceSettingText("GPT-5.6 sol 推理强度",
+                    ModuleSettings.getReasoningEffort(), reasoningLabels, reasoningValues));
             debug.setChecked(false); verboseDebug.setChecked(false);
             autoTokens.setText(numberSettingText("自动压缩上下文用量",
                     ModuleSettings.getAutoContextTokens(), "token"));
@@ -719,7 +730,7 @@ final class InjectedUiController {
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         AlertDialog dialog = new AlertDialog.Builder(activity)
-                .setTitle("模型缓存增强").setView(scrollView)
+                .setTitle("模型请求增强").setView(scrollView)
                 .setPositiveButton("完成", null).create();
         dialog.setOnDismissListener(ignored -> {
             if (settingsDialog == dialog) {
@@ -788,6 +799,57 @@ final class InjectedUiController {
         item.setOnCheckedChangeListener((button, value) -> ModuleSettings.putBoolean(key, value));
         parent.addView(item, matchWrap());
         return item;
+    }
+
+    private interface StringSettingWriter {
+        void set(String value);
+    }
+
+    private interface StringSettingReader {
+        String get();
+    }
+
+    private static TextView addChoiceSetting(LinearLayout parent, Activity activity, String title,
+            String key, String[] labels, String[] values, StringSettingReader reader,
+            StringSettingWriter writer) {
+        boolean available = ModuleSettings.isSettingAvailable(key);
+        TextView item = new TextView(activity);
+        item.setText(choiceSettingText(title, reader.get(), labels, values)
+                + (available ? "" : "\n已禁用：" + ModuleSettings.disabledReason(key)));
+        item.setTextSize(15);
+        item.setEnabled(available);
+        item.setAlpha(available ? 1f : 0.55f);
+        item.setPadding(0, dp(activity, 9), 0, dp(activity, 9));
+        item.setOnClickListener(view -> showChoiceSettingDialog(
+                activity, item, title, labels, values, reader, writer));
+        parent.addView(item, matchWrap());
+        return item;
+    }
+
+    private static void showChoiceSettingDialog(Activity activity, TextView item, String title,
+            String[] labels, String[] values, StringSettingReader reader, StringSettingWriter writer) {
+        String current = reader.get();
+        int checked = 0;
+        for (int index = 0; index < values.length; index++) {
+            if (values[index].equals(current)) checked = index;
+        }
+        new AlertDialog.Builder(activity)
+                .setTitle(title)
+                .setSingleChoiceItems(labels, checked, (dialog, which) -> {
+                    writer.set(values[which]);
+                    item.setText(choiceSettingText(title, values[which], labels, values));
+                    dialog.dismiss();
+                })
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    private static String choiceSettingText(
+            String title, String value, String[] labels, String[] values) {
+        for (int index = 0; index < values.length; index++) {
+            if (values[index].equals(value)) return title + "\n当前：" + labels[index];
+        }
+        return title + "\n当前：" + value;
     }
 
     private interface IntSettingWriter {
