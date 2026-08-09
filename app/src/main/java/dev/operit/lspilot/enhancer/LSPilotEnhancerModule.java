@@ -207,16 +207,11 @@ public final class LSPilotEnhancerModule extends XposedModule {
     }
 
     private void installSseUsageHook(ClassLoader loader, HostAbi abi) {
-        if (abi.minified) {
-            log(Log.INFO, TAG, "Raw SSE usage hook unavailable on minified stream ABI");
-            return;
-        }
         try {
-            Class<?> providerClass = Class.forName(PROVIDER_CLASS, false, loader);
             Class<?> function1Class = Class.forName(
                     "kotlin.jvm.functions.Function1", false, loader);
-            Method scanSseData = providerClass.getDeclaredMethod(
-                    "scanSseData", String.class, function1Class);
+            Method scanSseData = abi.providerClass.getDeclaredMethod(
+                    abi.minified ? "t" : "scanSseData", String.class, function1Class);
             scanSseData.setAccessible(true);
 
             hook(scanSseData).intercept(chain -> {
@@ -228,7 +223,8 @@ public final class LSPilotEnhancerModule extends XposedModule {
             });
 
             log(Log.INFO, TAG,
-                    "Raw SSE usage hook installed for " + PROVIDER_CLASS + "#scanSseData");
+                    "Raw SSE usage hook installed for "
+                            + scanSseData.getDeclaringClass().getName() + "#" + scanSseData.getName());
         } catch (Throwable error) {
             log(Log.ERROR, TAG, "Failed to install raw SSE usage hook", error);
         }

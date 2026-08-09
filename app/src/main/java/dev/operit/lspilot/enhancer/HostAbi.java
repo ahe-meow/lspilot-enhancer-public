@@ -21,6 +21,7 @@ final class HostAbi {
     private static final String NAMED_MESSAGE = "me.yun.lspilot.data.model.AiChatMessage";
 
     // LSPilot 1.1.0(11) release APK: r8-map-id-f4ff0c078b9b8367c79a039c8c0e56924d5400d4a53a7ff1bf4cf6ca982ae59c
+    private static final String MINIFIED_PROVIDER = "ss8";
     private static final String MINIFIED_VIEW_MODEL = "bb";
     private static final String MINIFIED_CONFIG = "ib";
     private static final String MINIFIED_MESSAGE = "g8";
@@ -303,6 +304,7 @@ final class HostAbi {
     }
 
     private static HostAbi resolveMinified110(ClassLoader loader) throws Exception {
+        Class<?> providerClass = Class.forName(MINIFIED_PROVIDER, false, loader);
         Class<?> configClass = Class.forName(MINIFIED_CONFIG, false, loader);
         Class<?> viewModelClass = Class.forName(MINIFIED_VIEW_MODEL, false, loader);
         Class<?> messageClass = Class.forName(MINIFIED_MESSAGE, false, loader);
@@ -323,7 +325,7 @@ final class HostAbi {
         Method stateLoading = stateClass.getMethod("i");
         Class<?> sessionClass = Class.forName("ta", false, loader);
         Method sessionId = sessionClass.getMethod("d");
-        return new HostAbi(null, configClass, viewModelClass, messageClass, repositoryClass,
+        return new HostAbi(providerClass, configClass, viewModelClass, messageClass, repositoryClass,
                 true, null, accessible(streamMessages), loadSession, sendMessage,
                 accessible(addMessage), messageConstructor, accessible(viewModelState),
                 accessible(stateFlowValue), accessible(stateMessages), accessible(stateConfig),
