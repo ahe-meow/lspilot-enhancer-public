@@ -18,7 +18,7 @@ import java.util.List;
 /** Version-fingerprinted persistent cache for resolved host reflection descriptors. */
 final class HostAbiCache {
     private static final String TAG = "LSPilotEnhancer";
-    private static final int CACHE_SCHEMA = 1;
+    private static final int CACHE_SCHEMA = 3;
     private static final int MAX_CACHE_BYTES = 1024 * 1024;
     private static final String CACHE_DIRECTORY = "lspilot-enhancer";
     private static final String CACHE_FILE = "host-abi-v1.json";

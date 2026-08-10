@@ -44,7 +44,10 @@ final class HostAbi {
     final Method streamMessagesMethod;
     final Method loadSessionMethod;
     final Method sendMessageMethod;
+    final Method retryResponseMethod;
+    final Method stopGenerationMethod;
     final Method repositoryAddMessageMethod;
+    final Accessors accessors;
     final Constructor<?> messageConstructor;
     final Field viewModelStateField;
     final Method stateFlowValueMethod;
@@ -59,9 +62,9 @@ final class HostAbi {
             Class<?> messageClass, Class<?> repositoryClass, Class<?> aiChatRouteClass,
             boolean minified,
             Method buildRequestMethod, Method scanSseDataMethod, Method streamMessagesMethod,
-            Method loadSessionMethod,
-            Method sendMessageMethod, Method repositoryAddMessageMethod,
-            Constructor<?> messageConstructor, Field viewModelStateField,
+            Method loadSessionMethod, Method sendMessageMethod, Method retryResponseMethod,
+            Method stopGenerationMethod, Method repositoryAddMessageMethod,
+            Accessors accessors, Constructor<?> messageConstructor, Field viewModelStateField,
             Method stateFlowValueMethod, Method stateMessagesMethod, Method stateConfigMethod,
             Method stateSelectedModelMethod, Method stateLoadingMethod, Method stateSessionMethod,
             Method sessionIdMethod) {
@@ -77,7 +80,10 @@ final class HostAbi {
         this.streamMessagesMethod = streamMessagesMethod;
         this.loadSessionMethod = loadSessionMethod;
         this.sendMessageMethod = sendMessageMethod;
+        this.retryResponseMethod = retryResponseMethod;
+        this.stopGenerationMethod = stopGenerationMethod;
         this.repositoryAddMessageMethod = repositoryAddMessageMethod;
+        this.accessors = accessors;
         this.messageConstructor = messageConstructor;
         this.viewModelStateField = viewModelStateField;
         this.stateFlowValueMethod = stateFlowValueMethod;
@@ -177,7 +183,7 @@ final class HostAbi {
             if (method != null && method.getReturnType() == void.class) return accessible(method);
             throw new NoSuchMethodException("Verified LSPilot 1.1.0 send method M() missing");
         }
-        for (String name : new String[]{"sendMessage", "M", "G", "N", "x"}) {
+        for (String name : new String[]{"sendMessage", "O", "M", "G", "N", "x"}) {
             Method method = optionalDeclaredMethod(viewModelClass, name);
             if (method != null && method.getReturnType() == void.class) return accessible(method);
         }
@@ -187,12 +193,12 @@ final class HostAbi {
 
     static Method findRetryResponseMethod(Class<?> viewModelClass) {
         return findNamedVoidNoArg(viewModelClass,
-                "retryLastResponse", "regenerateResponse", "retryResponse", "regenerate", "G");
+                "retryLastResponse", "regenerateResponse", "retryResponse", "regenerate", "I", "G");
     }
 
     static Method findStopGenerationMethod(Class<?> viewModelClass) {
         return findNamedVoidNoArg(viewModelClass,
-                "stopGeneration", "stopResponse", "stop", "N");
+                "stopGeneration", "stopResponse", "stop", "P", "N");
     }
 
     private static Method findNamedVoidNoArg(Class<?> owner, String... names) {
@@ -201,6 +207,80 @@ final class HostAbi {
             if (method != null && method.getReturnType() == void.class) return accessible(method);
         }
         return null;
+    }
+
+    private static Method requireNoArgVoidHint(Class<?> owner, Method method, String role)
+            throws NoSuchMethodException {
+        if (method == null) return null;
+        if (method.getDeclaringClass() != owner
+                || method.getReturnType() != void.class
+                || method.getParameterTypes().length != 0
+                || Modifier.isStatic(method.getModifiers())) {
+            throw new NoSuchMethodException("DexKit " + role + " hint is incompatible with "
+                    + owner.getName());
+        }
+        return accessible(method);
+    }
+
+    void validateAccessorBindings() throws Exception {
+        if (accessors == null || !accessors.hasCompressionAccessors()) {
+            throw new NoSuchMethodException("config/message accessors are incomplete");
+        }
+        Object config = newConfigProbe();
+        checkEquals("provider_probe", providerId(config), "providerId accessor");
+        checkEquals("model_probe", modelName(config), "modelName accessor");
+        checkEquals("key_probe", apiKey(config), "apiKey accessor");
+        checkEquals("https://probe.local/v1", fullApiUrl(config), "fullApiUrl accessor");
+        Object message = newStatusMessage("message_probe", "user", "content_probe", 1L);
+        checkEquals("message_probe", messageId(message), "message id accessor");
+        checkEquals("user", messageRole(message), "message role accessor");
+        checkEquals("content_probe", messageContent(message), "message content accessor");
+    }
+
+    private Object newConfigProbe() throws Exception {
+        Constructor<?> constructor = configClass.getDeclaredConstructor(
+                String.class, String.class, String.class, String.class,
+                String.class, String.class, List.class);
+        constructor.setAccessible(true);
+        return constructor.newInstance("id_probe", "name_probe", "provider_probe", "key_probe",
+                "https://probe.local", "/v1", Collections.singletonList("model_probe"));
+    }
+
+    private static void checkEquals(String expected, String actual, String label) {
+        if (!expected.equals(actual)) {
+            throw new IllegalStateException(label + " returned " + actual);
+        }
+    }
+
+    static final class Accessors {
+        final Method configProviderId;
+        final Method configModelName;
+        final Method configApiKey;
+        final Method configFullApiUrl;
+        final Method messageRole;
+        final Method messageContent;
+        final Method messageId;
+        final Method messageToolCalls;
+        final Method messageToolCallId;
+
+        Accessors(Method configProviderId, Method configModelName, Method configApiKey,
+                Method configFullApiUrl, Method messageRole, Method messageContent,
+                Method messageId, Method messageToolCalls, Method messageToolCallId) {
+            this.configProviderId = configProviderId;
+            this.configModelName = configModelName;
+            this.configApiKey = configApiKey;
+            this.configFullApiUrl = configFullApiUrl;
+            this.messageRole = messageRole;
+            this.messageContent = messageContent;
+            this.messageId = messageId;
+            this.messageToolCalls = messageToolCalls;
+            this.messageToolCallId = messageToolCallId;
+        }
+
+        boolean hasCompressionAccessors() {
+            return configModelName != null && configFullApiUrl != null
+                    && messageRole != null && messageContent != null;
+        }
     }
 
     Object newStatusMessage(String id, String role, String content, long timestamp) throws Exception {
@@ -220,19 +300,19 @@ final class HostAbi {
     }
 
     String providerId(Object config) throws Exception {
-        return nonEmpty(readConfigString(config, "getProviderId", "o"), "providerId");
+        return nonEmpty(invokeString(config, accessors.configProviderId), "providerId");
     }
 
     String modelName(Object config) throws Exception {
-        return nonEmpty(readConfigString(config, "getModelName", "k"), "modelName");
+        return nonEmpty(invokeString(config, accessors.configModelName), "modelName");
     }
 
     String apiKey(Object config) throws Exception {
-        return nonEmpty(readConfigString(config, "getApiKey", "f"), "apiKey");
+        return nonEmpty(invokeString(config, accessors.configApiKey), "apiKey");
     }
 
     String fullApiUrl(Object config) throws Exception {
-        return nonEmpty(readConfigString(config, "getFullApiUrl", "i"), "fullApiUrl");
+        return nonEmpty(invokeString(config, accessors.configFullApiUrl), "fullApiUrl");
     }
 
     String providerSignature(Object config) throws Exception {
@@ -240,22 +320,19 @@ final class HostAbi {
     }
 
     boolean hasCompressionAccessors() {
-        return hasAnyNoArg(configClass, "getModelName", "k")
-                && hasAnyNoArg(configClass, "getFullApiUrl", "i")
-                && hasAnyNoArg(messageClass, "getRole", "i")
-                && hasAnyNoArg(messageClass, "getContent", "c");
+        return accessors != null && accessors.hasCompressionAccessors();
     }
 
     String messageRole(Object message) {
-        return readStringOrNull(message, "getRole", "i");
+        return invokeStringOrNull(message, accessors.messageRole);
     }
 
     String messageContent(Object message) {
-        return readStringOrNull(message, "getContent", "c");
+        return invokeStringOrNull(message, accessors.messageContent);
     }
 
     String messageId(Object message) {
-        return readStringOrNull(message, "getId", "f");
+        return invokeStringOrNull(message, accessors.messageId);
     }
 
     Object copyMessageWithContent(Object message, String content) throws Exception {
@@ -282,8 +359,8 @@ final class HostAbi {
     }
 
 
-    private Object messageValue(Object message, String namedMethod, String minifiedMethod) {
-        return invokeNoArgOrNull(message, namedMethod, minifiedMethod);
+    private Object messageValue(Object message, Method method) {
+        return invokeNoArgOrNull(message, method);
     }
 
     Object currentState(Object viewModel) throws Exception {
@@ -364,8 +441,8 @@ final class HostAbi {
             if (role == null || content == null) continue;
             JSONObject serialized = new JSONObject().put("role", role).put("content", content)
                     .put(HOST_INDEX, index);
-            Object toolCalls = messageValue(message, "getToolCalls", "p");
-            Object toolCallId = messageValue(message, "getToolCallId", "n");
+            Object toolCalls = messageValue(message, accessors.messageToolCalls);
+            Object toolCallId = messageValue(message, accessors.messageToolCallId);
             if ("assistant".equals(role) && hasItems(toolCalls)) {
                 serialized.put(HOST_TOOL_CALLS, String.valueOf(toolCalls));
             }
@@ -448,14 +525,19 @@ final class HostAbi {
         Method streamMessages = findMethod(viewModelClass, void.class,
                 configClass, List.class, function1Class);
         Method sendMessage = findSendMessageMethod(viewModelClass);
+        Method retryResponse = findRetryResponseMethod(viewModelClass);
+        Method stopGeneration = findStopGenerationMethod(viewModelClass);
         Method addMessage = repositoryClass.getMethod("addMessage", String.class, messageClass);
         Constructor<?> messageConstructor = findMessageConstructor(messageClass);
         Class<?> aiChatRouteClass = optionalClass(loader,
                 "me.yun.lspilot.ui.navigation.Route$AiChat");
-        return new HostAbi(providerClass, configClass, viewModelClass, messageClass, repositoryClass,
+        HostAbi abi = new HostAbi(providerClass, configClass, viewModelClass, messageClass, repositoryClass,
                 aiChatRouteClass, false, accessible(buildRequest), accessible(scanSseData),
-                accessible(streamMessages), loadSession, sendMessage,
-                accessible(addMessage), messageConstructor, null, null, null, null, null, null, null, null);
+                accessible(streamMessages), loadSession, sendMessage, retryResponse, stopGeneration,
+                accessible(addMessage), bindAccessors(configClass, messageClass, null),
+                messageConstructor, null, null, null, null, null, null, null, null);
+        abi.validateAccessorBindings();
+        return abi;
     }
 
     private static HostAbi resolveMinified110(ClassLoader loader) throws Exception {
@@ -476,6 +558,8 @@ final class HostAbi {
         Method loadSession = findLoadSessionMethod(viewModelClass,
                 Class.forName("android.content.Context", false, loader));
         Method sendMessage = findSendMessageMethod(viewModelClass);
+        Method retryResponse = findRetryResponseMethod(viewModelClass);
+        Method stopGeneration = findStopGenerationMethod(viewModelClass);
         Method addMessage = repositoryClass.getMethod("c", String.class, messageClass);
         Constructor<?> messageConstructor = findMessageConstructor(messageClass);
         Class<?> stateClass = Class.forName("va", false, loader);
@@ -489,19 +573,24 @@ final class HostAbi {
         Class<?> sessionClass = Class.forName("ua", false, loader);
         Method sessionId = sessionClass.getMethod("d");
         Class<?> aiChatRouteClass = optionalClass(loader, "lka$b");
-        return new HostAbi(providerClass, configClass, viewModelClass, messageClass, repositoryClass,
+        HostAbi abi = new HostAbi(providerClass, configClass, viewModelClass, messageClass, repositoryClass,
                 aiChatRouteClass, true, accessible(buildRequest), accessible(scanSseData),
-                accessible(streamMessages), loadSession, sendMessage,
-                accessible(addMessage), messageConstructor, accessible(viewModelState),
+                accessible(streamMessages), loadSession, sendMessage, retryResponse, stopGeneration,
+                accessible(addMessage), bindAccessors(configClass, messageClass, null),
+                messageConstructor, accessible(viewModelState),
                 accessible(stateFlowValue), accessible(stateMessages), accessible(stateConfig),
                 accessible(stateSelectedModel), accessible(stateLoading), accessible(stateSession),
                 accessible(sessionId));
+        abi.validateAccessorBindings();
+        return abi;
     }
 
     static HostAbi minifiedFromDex(Class<?> providerClass, Class<?> configClass,
             Class<?> viewModelClass, Class<?> messageClass, Class<?> repositoryClass,
             Class<?> aiChatRouteClass, Method buildRequestMethod, Method scanSseDataMethod,
-            Method streamMessagesMethod, Method repositoryAddMessageMethod, Class<?> stateClass,
+            Method streamMessagesMethod, Method sendMessageHint, Method retryResponseHint,
+            Method stopGenerationHint, Method repositoryAddMessageMethod,
+            DexAbiScanner.AccessorNames accessorNames, Class<?> stateClass,
             Method stateMessagesMethod, Method stateConfigMethod, Method stateSelectedModelMethod,
             Method stateLoadingMethod, Method stateSessionMethod, Method sessionIdMethod)
             throws Exception {
@@ -509,17 +598,25 @@ final class HostAbi {
         requireReturnType(scanSseDataMethod, boolean.class);
         Method loadSession = findLoadSessionMethod(viewModelClass,
                 Class.forName("android.content.Context", false, viewModelClass.getClassLoader()));
-        Method sendMessage = findSendMessageMethod(viewModelClass);
+        Method sendMessage = requireNoArgVoidHint(viewModelClass, sendMessageHint, "sendMessage");
+        if (sendMessage == null) sendMessage = findSendMessageMethod(viewModelClass);
+        Method retryResponse = requireNoArgVoidHint(viewModelClass, retryResponseHint, "retryResponse");
+        if (retryResponse == null) retryResponse = findRetryResponseMethod(viewModelClass);
+        Method stopGeneration = requireNoArgVoidHint(viewModelClass, stopGenerationHint, "stopGeneration");
+        if (stopGeneration == null) stopGeneration = findStopGenerationMethod(viewModelClass);
         Constructor<?> messageConstructor = findMessageConstructor(messageClass);
         Field viewModelState = findStateField(viewModelClass, stateClass);
         Method stateFlowValue = viewModelState.getType().getMethod("getValue");
-        return new HostAbi(providerClass, configClass, viewModelClass, messageClass, repositoryClass,
+        HostAbi abi = new HostAbi(providerClass, configClass, viewModelClass, messageClass, repositoryClass,
                 aiChatRouteClass, true, accessible(buildRequestMethod), accessible(scanSseDataMethod),
-                accessible(streamMessagesMethod), loadSession, sendMessage,
-                accessible(repositoryAddMessageMethod), messageConstructor, accessible(viewModelState),
+                accessible(streamMessagesMethod), loadSession, sendMessage, retryResponse, stopGeneration,
+                accessible(repositoryAddMessageMethod), bindAccessors(configClass, messageClass, accessorNames),
+                messageConstructor, accessible(viewModelState),
                 accessible(stateFlowValue), accessible(stateMessagesMethod), accessible(stateConfigMethod),
                 accessible(stateSelectedModelMethod), accessible(stateLoadingMethod),
                 accessible(stateSessionMethod), accessible(sessionIdMethod));
+        abi.validateAccessorBindings();
+        return abi;
     }
 
     private static Field findStateField(Class<?> viewModelClass, Class<?> stateClass)
@@ -590,6 +687,70 @@ final class HostAbi {
         }
         throw new NoSuchMethodException("repository message replacement method unavailable on "
                 + repositoryClass.getName());
+    }
+
+    private static Accessors bindAccessors(Class<?> configClass, Class<?> messageClass,
+            DexAbiScanner.AccessorNames names) throws NoSuchMethodException {
+        return new Accessors(
+                requiredStringAccessor(configClass, hint(names, "configProviderId"),
+                        "getProviderId", "o"),
+                requiredStringAccessor(configClass, hint(names, "configModelName"),
+                        "getModelName", "k"),
+                requiredStringAccessor(configClass, hint(names, "configApiKey"),
+                        "getApiKey", "f"),
+                requiredStringAccessor(configClass, hint(names, "configFullApiUrl"),
+                        "getFullApiUrl", "i"),
+                requiredStringAccessor(messageClass, hint(names, "messageRole"),
+                        "getRole", "i"),
+                requiredStringAccessor(messageClass, hint(names, "messageContent"),
+                        "getContent", "c"),
+                requiredStringAccessor(messageClass, hint(names, "messageId"),
+                        "getId", "f"),
+                optionalAccessor(messageClass, List.class, hint(names, "messageToolCalls"),
+                        "getToolCalls", "p"),
+                optionalAccessor(messageClass, String.class, hint(names, "messageToolCallId"),
+                        "getToolCallId", "n"));
+    }
+
+    private static String hint(DexAbiScanner.AccessorNames names, String key) {
+        if (names == null) return null;
+        if ("configProviderId".equals(key)) return names.configProviderId;
+        if ("configModelName".equals(key)) return names.configModelName;
+        if ("configApiKey".equals(key)) return names.configApiKey;
+        if ("configFullApiUrl".equals(key)) return names.configFullApiUrl;
+        if ("messageRole".equals(key)) return names.messageRole;
+        if ("messageContent".equals(key)) return names.messageContent;
+        if ("messageId".equals(key)) return names.messageId;
+        if ("messageToolCalls".equals(key)) return names.messageToolCalls;
+        if ("messageToolCallId".equals(key)) return names.messageToolCallId;
+        return null;
+    }
+
+    private static Method requiredStringAccessor(Class<?> owner, String hint, String... fallbacks)
+            throws NoSuchMethodException {
+        Method method = optionalAccessor(owner, String.class, hint, fallbacks);
+        if (method == null) {
+            throw new NoSuchMethodException("String accessor unavailable on " + owner.getName());
+        }
+        return method;
+    }
+
+    private static Method optionalAccessor(Class<?> owner, Class<?> returnType, String hint,
+            String... fallbacks) {
+        Method hinted = optionalAccessorByName(owner, returnType, hint);
+        if (hinted != null) return hinted;
+        for (String fallback : fallbacks) {
+            Method method = optionalAccessorByName(owner, returnType, fallback);
+            if (method != null) return method;
+        }
+        return null;
+    }
+
+    private static Method optionalAccessorByName(Class<?> owner, Class<?> returnType, String name) {
+        if (name == null || name.isEmpty()) return null;
+        Method method = optionalNoArg(owner, name);
+        if (method == null || Modifier.isStatic(method.getModifiers())) return null;
+        return returnType.isAssignableFrom(method.getReturnType()) ? accessible(method) : null;
     }
 
     private static Method findConfigCopyDefault(Class<?> configClass) throws Exception {
@@ -689,40 +850,26 @@ final class HostAbi {
                 + " candidates=" + candidates);
     }
 
-    private String readConfigString(Object config, String namedMethod, String minifiedMethod) throws Exception {
-        if (config == null) throw new NullPointerException("config");
-        Method method = optionalNoArg(config.getClass(), namedMethod);
-        if (method == null) method = optionalNoArg(config.getClass(), minifiedMethod);
-        if (method == null) {
-            throw new NoSuchMethodException(namedMethod + "/" + minifiedMethod
-                    + " not found on " + config.getClass().getName());
-        }
-        Object value = method.invoke(config);
+    private static String invokeString(Object target, Method method) throws Exception {
+        if (target == null) throw new NullPointerException("target");
+        if (method == null) throw new NoSuchMethodException("bound accessor missing on "
+                + target.getClass().getName());
+        Object value = method.invoke(target);
         return value == null ? null : String.valueOf(value);
     }
 
-    private static String readStringOrNull(Object target, String namedMethod, String minifiedMethod) {
-        Object value = invokeNoArgOrNull(target, namedMethod, minifiedMethod);
+    private static String invokeStringOrNull(Object target, Method method) {
+        Object value = invokeNoArgOrNull(target, method);
         return value == null ? null : String.valueOf(value);
     }
 
-    private static Object invokeNoArgOrNull(Object target, String namedMethod,
-            String minifiedMethod) {
-        if (target == null) return null;
+    private static Object invokeNoArgOrNull(Object target, Method method) {
+        if (target == null || method == null) return null;
         try {
-            Method method = optionalNoArg(target.getClass(), namedMethod);
-            if (method == null) method = optionalNoArg(target.getClass(), minifiedMethod);
-            return method == null ? null : method.invoke(target);
+            return method.invoke(target);
         } catch (Throwable ignored) {
             return null;
         }
-    }
-
-    private static boolean hasAnyNoArg(Class<?> owner, String... names) {
-        for (String name : names) {
-            if (optionalNoArg(owner, name) != null) return true;
-        }
-        return false;
     }
 
     private static Method optionalNoArg(Class<?> owner, String name) {
@@ -798,9 +945,11 @@ final class HostAbi {
     public static void main(String[] args) throws Exception {
         HostAbi abi = resolve(HostAbi.class.getClassLoader(), args);
         check(abi.streamMessagesMethod != null, "stream method missing");
-        check(findRetryResponseMethod(abi.viewModelClass) != null, "retry response method missing");
-        check(findStopGenerationMethod(abi.viewModelClass) != null, "stop generation method missing");
+        check(abi.retryResponseMethod != null, "retry response method missing");
+        check(abi.stopGenerationMethod != null, "stop generation method missing");
         check(abi.repositoryAddMessageMethod != null, "repository add-message method missing");
+        check(abi.hasCompressionAccessors(), "compression accessors missing");
+        abi.validateAccessorBindings();
     }
 
     private static void check(boolean condition, String message) {

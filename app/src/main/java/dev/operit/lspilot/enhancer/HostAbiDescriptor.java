@@ -26,7 +26,18 @@ final class HostAbiDescriptor {
         putMethod(result, "streamMessagesMethod", abi.streamMessagesMethod);
         putMethod(result, "loadSessionMethod", abi.loadSessionMethod);
         putMethod(result, "sendMessageMethod", abi.sendMessageMethod);
+        putMethod(result, "retryResponseMethod", abi.retryResponseMethod);
+        putMethod(result, "stopGenerationMethod", abi.stopGenerationMethod);
         putMethod(result, "repositoryAddMessageMethod", abi.repositoryAddMessageMethod);
+        putMethod(result, "configProviderIdMethod", abi.accessors.configProviderId);
+        putMethod(result, "configModelNameMethod", abi.accessors.configModelName);
+        putMethod(result, "configApiKeyMethod", abi.accessors.configApiKey);
+        putMethod(result, "configFullApiUrlMethod", abi.accessors.configFullApiUrl);
+        putMethod(result, "messageRoleMethod", abi.accessors.messageRole);
+        putMethod(result, "messageContentMethod", abi.accessors.messageContent);
+        putMethod(result, "messageIdMethod", abi.accessors.messageId);
+        putMethod(result, "messageToolCallsMethod", abi.accessors.messageToolCalls);
+        putMethod(result, "messageToolCallIdMethod", abi.accessors.messageToolCallId);
         putField(result, "viewModelStateField", abi.viewModelStateField);
         putMethod(result, "stateFlowValueMethod", abi.stateFlowValueMethod);
         putMethod(result, "stateMessagesMethod", abi.stateMessagesMethod);
@@ -60,7 +71,19 @@ final class HostAbiDescriptor {
                 readMethod(loader, value, "streamMessagesMethod", true),
                 readMethod(loader, value, "loadSessionMethod", true),
                 readMethod(loader, value, "sendMessageMethod", true),
+                readMethod(loader, value, "retryResponseMethod", false),
+                readMethod(loader, value, "stopGenerationMethod", false),
                 readMethod(loader, value, "repositoryAddMessageMethod", true),
+                new HostAbi.Accessors(
+                        readMethod(loader, value, "configProviderIdMethod", true),
+                        readMethod(loader, value, "configModelNameMethod", true),
+                        readMethod(loader, value, "configApiKeyMethod", true),
+                        readMethod(loader, value, "configFullApiUrlMethod", true),
+                        readMethod(loader, value, "messageRoleMethod", true),
+                        readMethod(loader, value, "messageContentMethod", true),
+                        readMethod(loader, value, "messageIdMethod", true),
+                        readMethod(loader, value, "messageToolCallsMethod", false),
+                        readMethod(loader, value, "messageToolCallIdMethod", false)),
                 findMessageConstructor(messageClass),
                 readField(loader, value, "viewModelStateField", minified),
                 readMethod(loader, value, "stateFlowValueMethod", minified),
@@ -86,6 +109,8 @@ final class HostAbiDescriptor {
         requireMethod(abi.repositoryAddMessageMethod, abi.repositoryClass, void.class,
                 String.class, abi.messageClass);
         requireMethod(abi.sendMessageMethod, abi.viewModelClass, void.class);
+        requireOptionalMethod(abi.retryResponseMethod, abi.viewModelClass, void.class);
+        requireOptionalMethod(abi.stopGenerationMethod, abi.viewModelClass, void.class);
         if (!abi.viewModelClass.isAssignableFrom(abi.loadSessionMethod.getDeclaringClass())
                 && !abi.loadSessionMethod.getDeclaringClass().isAssignableFrom(abi.viewModelClass)) {
             throw new NoSuchMethodException("cached load-session owner is incompatible");
@@ -93,7 +118,22 @@ final class HostAbiDescriptor {
         if (!abi.hasCompressionAccessors()) {
             throw new NoSuchMethodException("cached config/message accessors are incompatible");
         }
+        validateAccessors(abi);
         if (abi.minified) validateState(abi);
+    }
+
+    private static void validateAccessors(HostAbi abi) throws Exception {
+        HostAbi.Accessors accessors = abi.accessors;
+        requireMethod(accessors.configProviderId, abi.configClass, String.class);
+        requireMethod(accessors.configModelName, abi.configClass, String.class);
+        requireMethod(accessors.configApiKey, abi.configClass, String.class);
+        requireMethod(accessors.configFullApiUrl, abi.configClass, String.class);
+        requireMethod(accessors.messageRole, abi.messageClass, String.class);
+        requireMethod(accessors.messageContent, abi.messageClass, String.class);
+        requireMethod(accessors.messageId, abi.messageClass, String.class);
+        requireOptionalMethod(accessors.messageToolCalls, abi.messageClass, List.class);
+        requireOptionalMethod(accessors.messageToolCallId, abi.messageClass, String.class);
+        abi.validateAccessorBindings();
     }
 
     private static void validateState(HostAbi abi) throws Exception {
@@ -116,6 +156,11 @@ final class HostAbiDescriptor {
         }
         requireMethod(abi.stateFlowValueMethod, abi.viewModelStateField.getType(),
                 abi.stateFlowValueMethod.getReturnType());
+    }
+
+    private static void requireOptionalMethod(Method method, Class<?> expectedOwner,
+            Class<?> returnType, Class<?>... params) throws NoSuchMethodException {
+        if (method != null) requireMethod(method, expectedOwner, returnType, params);
     }
 
     private static void requireMethod(Method method, Class<?> expectedOwner, Class<?> returnType,

@@ -1,4 +1,14 @@
 # Changelog
+## 1.7.4-preview.21
+- Bind config and message accessors from DexKit field-reader metadata instead of relying on current host obfuscation names.
+- Validate bound accessors with probe config/message instances before caching the ABI descriptor.
+- Bump the ABI cache schema so older name-only descriptors are rebuilt automatically.
+
+## 1.7.4-preview.20
+- Fix DexKit ABI adaptation after the host update changed provider and ViewModel obfuscation names.
+- Ignore static Kotlin wrapper methods during legacy DEX ABI matching and discover send, retry, and stop methods from stable host message-role strings.
+- Persist the resolved ViewModel lifecycle methods in the ABI descriptor cache and invalidate older cache schemas.
+
 ## 1.7.4-preview.19
 - Harden host ABI adaptation for future minified updates by broadening DEX class candidates, accepting private singleton fields, and validating message copy content fields.
 - Fingerprint host APK and split contents in the ABI cache so host updates reliably trigger DexKit/DEX re-resolution instead of reusing stale descriptors.

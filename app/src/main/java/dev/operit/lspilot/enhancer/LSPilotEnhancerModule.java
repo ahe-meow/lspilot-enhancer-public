@@ -343,8 +343,8 @@ public final class LSPilotEnhancerModule extends XposedModule {
     }
 
     private void installAutoRetryHooks(HostAbi abi) {
-        Method retryResponse = HostAbi.findRetryResponseMethod(abi.viewModelClass);
-        Method stopGeneration = HostAbi.findStopGenerationMethod(abi.viewModelClass);
+        Method retryResponse = abi.retryResponseMethod;
+        Method stopGeneration = abi.stopGenerationMethod;
         AutoRetryManager.configure(retryResponse);
 
         if (!abi.minified) installNamedStreamRetryHook(abi);

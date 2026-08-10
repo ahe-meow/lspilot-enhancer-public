@@ -11,28 +11,40 @@ import java.util.ArrayList;
 import java.util.Enumeration;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 final class DexAbiScanner {
     private DexAbiScanner() {}
 
     static HostAbi resolve(ClassLoader loader, String[] dexPaths) throws Exception {
-        return resolveClassNames(loader, dexClassNames(dexPaths), true);
+        return resolveClassNames(loader, dexClassNames(dexPaths), true, null, null);
     }
 
     static HostAbi resolveCandidates(ClassLoader loader, Iterable<String> candidateNames)
             throws Exception {
+        return resolveCandidates(loader, candidateNames, null);
+    }
+
+    static HostAbi resolveCandidates(ClassLoader loader, Iterable<String> candidateNames,
+            Map<String, ViewModelMethodNames> methodNames) throws Exception {
+        return resolveCandidates(loader, candidateNames, methodNames, null);
+    }
+
+    static HostAbi resolveCandidates(ClassLoader loader, Iterable<String> candidateNames,
+            Map<String, ViewModelMethodNames> methodNames, AccessorNames accessorNames) throws Exception {
         Set<String> uniqueNames = new LinkedHashSet<>();
         if (candidateNames != null) {
             for (String name : candidateNames) {
                 if (name != null && !name.isEmpty()) uniqueNames.add(name);
             }
         }
-        return resolveClassNames(loader, new ArrayList<>(uniqueNames), false);
+        return resolveClassNames(loader, new ArrayList<>(uniqueNames), false, methodNames, accessorNames);
     }
 
     private static HostAbi resolveClassNames(ClassLoader loader, List<String> classNames,
-            boolean filterNames) throws Exception {
+            boolean filterNames, Map<String, ViewModelMethodNames> methodNames,
+            AccessorNames accessorNames) throws Exception {
         List<Class<?>> classes = loadCandidateClasses(loader, classNames, filterNames);
         List<BuildRequestCandidate> buildRequests = findBuildRequests(classes);
         Class<?> function1Class = Class.forName("kotlin.jvm.functions.Function1", false, loader);
@@ -45,18 +57,30 @@ final class DexAbiScanner {
                 Method scanSseData = findSseData(request.owner, function1Class);
                 StreamCandidate stream = findStreamMessages(classes, request.configClass, function1Class);
                 StateCandidate state = findState(classes, stream.owner, request.configClass);
+                ViewModelMethodNames names = methodNames == null
+                        ? null : methodNames.get(stream.owner.getName());
+                Method sendMessage = findHintedNoArgVoid(stream.owner,
+                        names == null ? null : names.sendMessage);
+                Method retryResponse = findHintedNoArgVoid(stream.owner,
+                        names == null ? null : names.retryResponse);
+                Method stopGeneration = findHintedNoArgVoid(stream.owner,
+                        names == null ? null : names.stopGeneration);
                 Class<?> aiChatRouteClass = findAiChatRouteClass(loader, classNames);
                 DebugLogger.w("DEX ABI scan matched provider=" + request.owner.getName()
                         + " config=" + request.configClass.getName()
                         + " viewModel=" + stream.owner.getName()
                         + " state=" + state.stateClass.getName()
                         + " message=" + messageClass.getName()
-                        + " repository=" + repository.owner.getName());
+                        + " repository=" + repository.owner.getName()
+                        + " send=" + methodName(sendMessage)
+                        + " retry=" + methodName(retryResponse)
+                        + " stop=" + methodName(stopGeneration));
                 return HostAbi.minifiedFromDex(
                         request.owner, request.configClass, stream.owner, messageClass,
                         repository.owner, aiChatRouteClass, request.method, scanSseData,
-                        stream.method, repository.method, state.stateClass, state.messagesMethod,
-                        state.configMethod, state.selectedModelMethod, state.loadingMethod,
+                        stream.method, sendMessage, retryResponse, stopGeneration, repository.method,
+                        accessorNames, state.stateClass, state.messagesMethod, state.configMethod,
+                        state.selectedModelMethod, state.loadingMethod,
                         state.sessionMethod, state.sessionIdMethod);
             } catch (Throwable error) {
                 lastError = error;
@@ -68,6 +92,23 @@ final class DexAbiScanner {
                         + buildRequests.size() + " loadedClasses=" + classes.size());
         if (lastError != null) error.initCause(lastError);
         throw error;
+    }
+
+    private static Method findHintedNoArgVoid(Class<?> owner, String name) {
+        if (name == null || name.isEmpty()) return null;
+        try {
+            Method method = owner.getDeclaredMethod(name);
+            if (method.getReturnType() == void.class
+                    && !Modifier.isStatic(method.getModifiers())) {
+                return accessible(method);
+            }
+        } catch (Throwable ignored) {
+        }
+        return null;
+    }
+
+    private static String methodName(Method method) {
+        return method == null ? "fallback" : method.getName();
     }
 
     static Class<?> findArrowPreferenceClass(ClassLoader loader, String[] dexPaths) throws Exception {
@@ -129,7 +170,8 @@ final class DexAbiScanner {
             for (Method method : declaredMethods(owner)) {
                 try {
                     Class<?>[] types = method.getParameterTypes();
-                    if (method.getReturnType() == String.class
+                    if (!Modifier.isStatic(method.getModifiers())
+                            && method.getReturnType() == String.class
                             && types.length == 4
                             && types[0] != null
                             && !types[0].isPrimitive()
@@ -154,7 +196,8 @@ final class DexAbiScanner {
             throws NoSuchMethodException {
         for (Method method : declaredMethods(owner)) {
             Class<?>[] types = method.getParameterTypes();
-            if (method.getReturnType() == boolean.class
+            if (!Modifier.isStatic(method.getModifiers())
+                    && method.getReturnType() == boolean.class
                     && types.length == 2
                     && types[0] == String.class
                     && types[1] == function1Class) {
@@ -172,7 +215,8 @@ final class DexAbiScanner {
             for (Method method : declaredMethods(owner)) {
                 try {
                     Class<?>[] types = method.getParameterTypes();
-                    if (method.getReturnType() == void.class
+                    if (!Modifier.isStatic(method.getModifiers())
+                            && method.getReturnType() == void.class
                             && types.length == 3
                             && types[0] == configClass
                             && types[1] == List.class
@@ -201,7 +245,8 @@ final class DexAbiScanner {
             for (Method method : declaredMethods(owner)) {
                 try {
                     Class<?>[] types = method.getParameterTypes();
-                    if (method.getReturnType() == void.class
+                    if (!Modifier.isStatic(method.getModifiers())
+                            && method.getReturnType() == void.class
                             && types.length == 2
                             && types[0] == String.class
                             && types[1] == messageClass) {
@@ -494,17 +539,84 @@ final class DexAbiScanner {
         return method;
     }
 
-    public static void main(String[] args) {
+    public static void main(String[] args) throws Exception {
         check(isAbiCandidateName("ts8"), "short minified ABI class should be accepted");
         check(isAbiCandidateName("abcdefgh"), "longer minified ABI class should be accepted");
         check(!isAbiCandidateName("android.app.Activity"), "framework class should be rejected");
         check(isRouteCandidateName("lka$b"), "minified route class should be accepted");
         check(!isRouteCandidateName("lka"), "route class without nested marker should be rejected");
         check(isArrowPreferenceCandidateName("fx"), "minified ArrowPreference class should be accepted");
+        if (args != null && args.length > 0) {
+            HostAbi abi = resolve(DexAbiScanner.class.getClassLoader(), args);
+            check(abi.buildRequestMethod != null, "legacy build request method missing");
+            check(abi.sendMessageMethod != null, "legacy send message method missing");
+            check(abi.retryResponseMethod != null, "legacy retry response method missing");
+            check(abi.stopGenerationMethod != null, "legacy stop generation method missing");
+            check(abi.hasCompressionAccessors(), "legacy compression accessors missing");
+            abi.validateAccessorBindings();
+            System.out.println("Legacy DEX ABI resolved provider=" + abi.providerClass.getName()
+                    + " viewModel=" + abi.viewModelClass.getName()
+                    + " send=" + abi.sendMessageMethod.getName()
+                    + " retry=" + abi.retryResponseMethod.getName()
+                    + " stop=" + abi.stopGenerationMethod.getName()
+                    + " accessors=" + accessorNames(abi));
+        }
+    }
+
+    private static String accessorNames(HostAbi abi) {
+        return "providerId=" + methodName(abi.accessors.configProviderId)
+                + ",model=" + methodName(abi.accessors.configModelName)
+                + ",apiKey=" + methodName(abi.accessors.configApiKey)
+                + ",url=" + methodName(abi.accessors.configFullApiUrl)
+                + ",messageId=" + methodName(abi.accessors.messageId)
+                + ",role=" + methodName(abi.accessors.messageRole)
+                + ",content=" + methodName(abi.accessors.messageContent);
     }
 
     private static void check(boolean condition, String message) {
         if (!condition) throw new AssertionError(message);
+    }
+
+    static final class AccessorNames {
+        final String configProviderId;
+        final String configModelName;
+        final String configApiKey;
+        final String configFullApiUrl;
+        final String messageId;
+        final String messageRole;
+        final String messageContent;
+        final String messageToolCalls;
+        final String messageToolCallId;
+
+        AccessorNames(String configProviderId, String configModelName, String configApiKey,
+                String configFullApiUrl, String messageId, String messageRole, String messageContent,
+                String messageToolCalls, String messageToolCallId) {
+            this.configProviderId = emptyToNull(configProviderId);
+            this.configModelName = emptyToNull(configModelName);
+            this.configApiKey = emptyToNull(configApiKey);
+            this.configFullApiUrl = emptyToNull(configFullApiUrl);
+            this.messageId = emptyToNull(messageId);
+            this.messageRole = emptyToNull(messageRole);
+            this.messageContent = emptyToNull(messageContent);
+            this.messageToolCalls = emptyToNull(messageToolCalls);
+            this.messageToolCallId = emptyToNull(messageToolCallId);
+        }
+
+        private static String emptyToNull(String value) {
+            return value == null || value.isEmpty() ? null : value;
+        }
+    }
+
+    static final class ViewModelMethodNames {
+        final String sendMessage;
+        final String retryResponse;
+        final String stopGeneration;
+
+        ViewModelMethodNames(String sendMessage, String retryResponse, String stopGeneration) {
+            this.sendMessage = sendMessage;
+            this.retryResponse = retryResponse;
+            this.stopGeneration = stopGeneration;
+        }
     }
 
     private static final class BuildRequestCandidate {
