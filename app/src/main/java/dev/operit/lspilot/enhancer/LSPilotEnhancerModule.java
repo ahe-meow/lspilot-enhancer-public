@@ -347,13 +347,19 @@ public final class LSPilotEnhancerModule extends XposedModule {
 
         try {
             hook(retryResponse).intercept(chain -> {
+                Object viewModel = chain.getThisObject();
+                String chatId = currentChatId(abi, viewModel);
                 if (!AutoRetryManager.isInternalRetry()) {
-                    Object viewModel = chain.getThisObject();
-                    String chatId = currentChatId(abi, viewModel);
                     AutoRetryManager.beginTurn(viewModel, chatId);
                     AutoRetryManager.setRetryMethod(viewModel, retryResponse);
+                    return chain.proceed();
                 }
-                return chain.proceed();
+                AutoRetryManager.prepareHostRetry(abi, viewModel, chatId);
+                try {
+                    return chain.proceed();
+                } finally {
+                    AutoRetryManager.restoreHostRetry(abi, viewModel, chatId);
+                }
             });
             hook(stopGeneration).intercept(chain -> {
                 Object viewModel = chain.getThisObject();

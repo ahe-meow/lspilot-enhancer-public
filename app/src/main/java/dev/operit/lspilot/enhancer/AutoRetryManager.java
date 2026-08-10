@@ -87,10 +87,59 @@ final class AutoRetryManager {
                     || !chatId.equals(state.chatId) || state.attemptMessages == null) {
                 return messages;
             }
-            DebugLogger.w("auto retry restoring first-attempt context chat="
+            DebugLogger.w("auto retry restoring preserved context chat="
                     + DebugLogger.id(chatId) + " currentMessages=" + messages.size()
                     + " restoredMessages=" + state.attemptMessages.size());
             return new ArrayList<>(state.attemptMessages);
+        }
+    }
+
+    static void prepareHostRetry(HostAbi abi, Object viewModel, String chatId) {
+        if (abi == null || !abi.minified || viewModel == null || isBlank(chatId)) return;
+        try {
+            Object hostState = abi.currentState(viewModel);
+            List<?> currentMessages = abi.stateMessages(hostState);
+            if (currentMessages == null || currentMessages.isEmpty()) return;
+            List<?> snapshot = new ArrayList<>(currentMessages);
+            synchronized (LOCK) {
+                RetryState state = STATES.get(viewModel);
+                if (state == null || !state.active || !state.retryInvocationInFlight
+                        || !chatId.equals(state.chatId)) return;
+                state.attemptMessages = snapshot;
+                state.retryHostMessages = snapshot;
+            }
+            boolean persisted = false;
+            try {
+                abi.persistMessages(chatId, snapshot);
+                persisted = true;
+            } catch (Throwable error) {
+                DebugLogger.e("failed to preserve host repository before auto retry", error);
+            }
+            DebugLogger.i("auto retry host snapshot captured chat=" + DebugLogger.id(chatId)
+                    + " messages=" + snapshot.size() + " persisted=" + persisted);
+        } catch (Throwable error) {
+            DebugLogger.e("failed to capture host state before auto retry", error);
+        }
+    }
+
+    static void restoreHostRetry(HostAbi abi, Object viewModel, String chatId) {
+        if (abi == null || !abi.minified || viewModel == null || isBlank(chatId)) return;
+        List<?> snapshot;
+        synchronized (LOCK) {
+            RetryState state = STATES.get(viewModel);
+            if (state == null || !state.active || !chatId.equals(state.chatId)
+                    || state.retryHostMessages == null) return;
+            snapshot = new ArrayList<>(state.retryHostMessages);
+        }
+        try {
+            boolean restored = abi.replaceStateMessages(viewModel, snapshot);
+            if (!restored) {
+                throw new IllegalStateException("host StateFlow rejected message restoration");
+            }
+            DebugLogger.i("auto retry restored host state chat=" + DebugLogger.id(chatId)
+                    + " messages=" + snapshot.size());
+        } catch (Throwable error) {
+            DebugLogger.e("failed to restore host state after auto retry", error);
         }
     }
 
@@ -448,6 +497,7 @@ final class AutoRetryManager {
         int attemptGeneration;
         boolean retryInvocationInFlight;
         List<?> attemptMessages;
+        List<?> retryHostMessages;
         Runnable pending;
         Runnable watchdog;
         Method retryMethod;

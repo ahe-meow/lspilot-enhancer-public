@@ -269,6 +269,36 @@ final class HostAbi {
         return state == null ? null : (List<?>) stateMessagesMethod.invoke(state);
     }
 
+    boolean replaceStateMessages(Object viewModel, List<?> messages) throws Exception {
+        if (!minified || viewModel == null || messages == null
+                || viewModelStateField == null || stateFlowValueMethod == null) {
+            return false;
+        }
+        Object stateFlow = viewModelStateField.get(viewModel);
+        if (stateFlow == null) return false;
+        Method compareAndSet = findStateFlowCompareAndSet(stateFlow.getClass());
+        List<?> replacementMessages = new ArrayList<>(messages);
+        for (int attempt = 0; attempt < 4; attempt++) {
+            Object current = stateFlowValueMethod.invoke(stateFlow);
+            if (current == null) return false;
+            Object replacement = copyStateWithMessages(current, replacementMessages);
+            if (Boolean.TRUE.equals(compareAndSet.invoke(stateFlow, current, replacement))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    void persistMessages(String chatId, List<?> messages) throws Exception {
+        if (!minified || chatId == null || chatId.trim().isEmpty() || messages == null) return;
+        Object repository = singletonInstance(repositoryClass);
+        if (repository == null) {
+            throw new IllegalStateException("host repository singleton unavailable");
+        }
+        Method replaceMessages = findRepositoryReplaceMessages();
+        replaceMessages.invoke(repository, chatId, new ArrayList<>(messages));
+    }
+
     Object stateConfig(Object state) throws Exception {
         return state == null ? null : stateConfigMethod.invoke(state);
     }
@@ -478,6 +508,62 @@ final class HostAbi {
                 + viewModelClass.getName());
     }
 
+    private Object copyStateWithMessages(Object state, List<?> messages) throws Exception {
+        Method copyDefault = findStateCopyDefault(state.getClass());
+        return copyDefault.invoke(null, state, null, messages, null, false,
+                null, null, null, null, 0xfd, null);
+    }
+
+    private Method findStateCopyDefault(Class<?> stateClass) throws NoSuchMethodException {
+        for (Method method : stateClass.getDeclaredMethods()) {
+            Class<?>[] types = method.getParameterTypes();
+            if (!Modifier.isStatic(method.getModifiers())
+                    || method.getReturnType() != stateClass
+                    || types.length != 11
+                    || types[0] != stateClass
+                    || types[2] != List.class
+                    || types[3] != String.class
+                    || types[4] != boolean.class
+                    || types[5] != List.class
+                    || types[6] != configClass
+                    || types[7] != String.class
+                    || types[8] != String.class
+                    || types[9] != int.class
+                    || types[10] != Object.class) {
+                continue;
+            }
+            return accessible(method);
+        }
+        throw new NoSuchMethodException("state copy$default-compatible method not found on "
+                + stateClass.getName());
+    }
+
+    private Method findStateFlowCompareAndSet(Class<?> implementationClass)
+            throws NoSuchMethodException {
+        for (Class<?> owner : new Class<?>[]{viewModelStateField.getType(), implementationClass}) {
+            for (String name : new String[]{"compareAndSet", "e"}) {
+                Method method = optionalMethod(owner, name, Object.class, Object.class);
+                if (method != null && (method.getReturnType() == boolean.class
+                        || method.getReturnType() == Boolean.class)) {
+                    return accessible(method);
+                }
+            }
+        }
+        throw new NoSuchMethodException("StateFlow compare-and-set method unavailable on "
+                + implementationClass.getName());
+    }
+
+    private Method findRepositoryReplaceMessages() throws NoSuchMethodException {
+        for (String name : new String[]{"replaceMessages", "saveMessages", "p"}) {
+            Method method = optionalMethod(repositoryClass, name, String.class, List.class);
+            if (method != null && method.getReturnType() == void.class) {
+                return accessible(method);
+            }
+        }
+        throw new NoSuchMethodException("repository message replacement method unavailable on "
+                + repositoryClass.getName());
+    }
+
     private static Method findConfigCopyDefault(Class<?> configClass) throws Exception {
         Method named = optionalDeclaredMethod(configClass, "copy$default", configClass,
                 String.class, String.class, String.class, String.class, String.class,
@@ -591,6 +677,14 @@ final class HostAbi {
             } catch (Throwable ignoredAgain) {
                 return null;
             }
+        }
+    }
+
+    private static Method optionalMethod(Class<?> owner, String name, Class<?>... params) {
+        try {
+            return owner.getMethod(name, params);
+        } catch (Throwable ignored) {
+            return optionalDeclaredMethod(owner, name, params);
         }
     }
 

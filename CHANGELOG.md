@@ -1,4 +1,11 @@
 # Changelog
+## 1.7.4-preview.17
+
+- Preserve the complete current host message list before automatic retry instead of accepting the native regeneration truncation at the most recent user message.
+- Restore the immutable host chat state with a message-only copy after native retry starts, retaining loading, provider, model, draft, attachment, and session fields.
+- Replace the repository message snapshot before retry so the truncated native state cannot overwrite the conversation tail in persistent storage.
+- Add an Android-runtime regression check against LSPilot 1.1.0's real `cb`/`va`/`Lut7` ABI.
+
 ## 1.7.4-preview.16
 
 - Preserve the first-attempt message list when the host regeneration path supplies an empty or replaced history during automatic retry.
