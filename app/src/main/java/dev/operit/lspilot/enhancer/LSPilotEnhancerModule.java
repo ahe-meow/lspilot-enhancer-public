@@ -98,7 +98,8 @@ public final class LSPilotEnhancerModule extends XposedModule {
         installSendBeforeCompressionHook(loader, abi);
         if (!abi.minified) installChatButtonHook(loader);
         log(Log.INFO, TAG,
-                "LSPilotEnhancer loaded version=1.7.4-preview.14 dexkit-adaptive-abi");
+                "LSPilotEnhancer loaded version=" + BuildConfig.VERSION_NAME
+                        + " (" + BuildConfig.VERSION_CODE + ") dexkit-adaptive-abi");
         // Disable the experimental Compose TopAppBar injection. The reliable entry is
         // the Activity-owned native overlay button installed from SubScreenActivity hooks.
         // installNativeChatTopBarActionHook(loader);
@@ -1056,7 +1057,8 @@ public final class LSPilotEnhancerModule extends XposedModule {
     }
 
     private static String normalize(String value) {
-        String normalized = value.toLowerCase(Locale.ROOT)
+        String source = value == null ? "" : value;
+        String normalized = source.toLowerCase(Locale.ROOT)
                 .replaceAll("[^a-z0-9._-]+", "-")
                 .replaceAll("^-+|-+$", "");
         return normalized.isEmpty() ? "unknown" : normalized;

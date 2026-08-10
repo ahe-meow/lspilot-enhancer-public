@@ -172,10 +172,14 @@ final class DexKitAbiScanner {
 
     public static void main(String[] dexPaths) throws Exception {
         HostAbi abi = resolve(DexKitAbiScanner.class.getClassLoader(), dexPaths);
-        assert abi.buildRequestMethod != null;
-        assert abi.streamMessagesMethod != null;
-        assert abi.repositoryAddMessageMethod != null;
+        check(abi.buildRequestMethod != null, "build request method missing");
+        check(abi.streamMessagesMethod != null, "stream method missing");
+        check(abi.repositoryAddMessageMethod != null, "repository add-message method missing");
         System.out.println("DexKit ABI resolved provider=" + abi.providerClass.getName()
                 + " viewModel=" + abi.viewModelClass.getName());
+    }
+
+    private static void check(boolean condition, String message) {
+        if (!condition) throw new AssertionError(message);
     }
 }

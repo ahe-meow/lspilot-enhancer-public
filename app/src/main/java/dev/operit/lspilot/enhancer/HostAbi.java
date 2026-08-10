@@ -263,7 +263,7 @@ final class HostAbi {
         Method copyDefault = findMessageCopyDefault(message.getClass());
         Class<?>[] types = copyDefault.getParameterTypes();
         int fieldCount = types.length - 3;
-        if (fieldCount < 3) {
+        if (fieldCount < 3 || types[3] != String.class) {
             throw new NoSuchMethodException("message copy method has no content field");
         }
         Object[] args = new Object[types.length];
@@ -655,7 +655,7 @@ final class HostAbi {
                 int.class, int.class, int.class, int.class, long.class, int.class,
                 int.class, long.class, int.class
         };
-        Constructor<?> constructor = messageClass.getConstructor(types);
+        Constructor<?> constructor = messageClass.getDeclaredConstructor(types);
         constructor.setAccessible(true);
         return constructor;
     }
@@ -797,20 +797,36 @@ final class HostAbi {
 
     public static void main(String[] args) throws Exception {
         HostAbi abi = resolve(HostAbi.class.getClassLoader(), args);
-        assert abi.streamMessagesMethod != null;
-        assert findRetryResponseMethod(abi.viewModelClass) != null;
-        assert findStopGenerationMethod(abi.viewModelClass) != null;
-        assert abi.repositoryAddMessageMethod != null;
+        check(abi.streamMessagesMethod != null, "stream method missing");
+        check(findRetryResponseMethod(abi.viewModelClass) != null, "retry response method missing");
+        check(findStopGenerationMethod(abi.viewModelClass) != null, "stop generation method missing");
+        check(abi.repositoryAddMessageMethod != null, "repository add-message method missing");
+    }
+
+    private static void check(boolean condition, String message) {
+        if (!condition) throw new AssertionError(message);
     }
 
     static Object singletonInstance(Class<?> type) throws Exception {
         for (String fieldName : new String[]{"INSTANCE", "a"}) {
-            try {
-                Field field = type.getField(fieldName);
-                Object value = field.get(null);
-                if (value != null) return value;
-            } catch (Throwable ignored) {
-            }
+            Field field = optionalSingletonField(type, fieldName);
+            if (field == null) continue;
+            Object value = field.get(null);
+            if (value != null) return value;
+        }
+        return null;
+    }
+
+    private static Field optionalSingletonField(Class<?> type, String fieldName) {
+        try {
+            Field field = type.getField(fieldName);
+            if (Modifier.isStatic(field.getModifiers())) return accessible(field);
+        } catch (Throwable ignored) {
+        }
+        try {
+            Field field = type.getDeclaredField(fieldName);
+            if (Modifier.isStatic(field.getModifiers())) return accessible(field);
+        } catch (Throwable ignored) {
         }
         return null;
     }

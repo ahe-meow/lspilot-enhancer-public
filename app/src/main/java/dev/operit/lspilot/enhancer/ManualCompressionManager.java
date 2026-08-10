@@ -875,12 +875,15 @@ static final class Result {
     }
 
     private static void finish(Callback callback, Result result) {
+        if (result == null) {
+            result = new Result(false, "压缩未返回结果", 0, 0);
+        }
         lastResult = result;
         automaticCompressionSession = false;
         DebugLogger.i("compression result success=" + result.success
                 + " original=" + result.originalCount + " compacted=" + result.compactedCount
                 + " message=" + DebugLogger.redact(result.message));
-        callback.onComplete(result);
+        if (callback != null) callback.onComplete(result);
     }
 
     private static JSONArray stripEnhancerStatuses(JSONArray messages) throws Exception {

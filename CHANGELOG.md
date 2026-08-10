@@ -1,4 +1,10 @@
 # Changelog
+## 1.7.4-preview.19
+- Harden host ABI adaptation for future minified updates by broadening DEX class candidates, accepting private singleton fields, and validating message copy content fields.
+- Fingerprint host APK and split contents in the ABI cache so host updates reliably trigger DexKit/DEX re-resolution instead of reusing stale descriptors.
+- Fix startup diagnostics to report the actual module version and guard request policy normalization against missing model names.
+- Make compression completion and Android runtime self-checks more defensive and explicit.
+
 ## 1.7.4-preview.18
 
 - Change automatic retry to regenerate from the failed assistant message position instead of the host's most recent user-message regeneration anchor.

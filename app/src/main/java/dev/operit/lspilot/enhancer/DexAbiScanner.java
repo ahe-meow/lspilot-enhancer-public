@@ -403,13 +403,23 @@ final class DexAbiScanner {
 
     private static boolean hasSingletonField(Class<?> type) {
         for (String name : new String[]{"INSTANCE", "a"}) {
-            try {
-                Field field = type.getField(name);
-                if (Modifier.isStatic(field.getModifiers())) return true;
-            } catch (Throwable ignored) {
-            }
+            if (singletonField(type, name) != null) return true;
         }
         return false;
+    }
+
+    private static Field singletonField(Class<?> type, String name) {
+        try {
+            Field field = type.getField(name);
+            if (Modifier.isStatic(field.getModifiers())) return field;
+        } catch (Throwable ignored) {
+        }
+        try {
+            Field field = type.getDeclaredField(name);
+            if (Modifier.isStatic(field.getModifiers())) return field;
+        } catch (Throwable ignored) {
+        }
+        return null;
     }
 
     private static boolean isAbiCandidateName(String name) {
@@ -419,7 +429,7 @@ final class DexAbiScanner {
             return true;
         }
         if (name.indexOf('.') >= 0 || name.indexOf('$') >= 0) return false;
-        return name.length() <= 5 && isLowerMinifiedName(name);
+        return name.length() <= 8 && isLowerMinifiedName(name);
     }
 
     private static boolean isRouteCandidateName(String name) {
@@ -485,11 +495,16 @@ final class DexAbiScanner {
     }
 
     public static void main(String[] args) {
-        assert isAbiCandidateName("ts8");
-        assert !isAbiCandidateName("android.app.Activity");
-        assert isRouteCandidateName("lka$b");
-        assert !isRouteCandidateName("lka");
-        assert isArrowPreferenceCandidateName("fx");
+        check(isAbiCandidateName("ts8"), "short minified ABI class should be accepted");
+        check(isAbiCandidateName("abcdefgh"), "longer minified ABI class should be accepted");
+        check(!isAbiCandidateName("android.app.Activity"), "framework class should be rejected");
+        check(isRouteCandidateName("lka$b"), "minified route class should be accepted");
+        check(!isRouteCandidateName("lka"), "route class without nested marker should be rejected");
+        check(isArrowPreferenceCandidateName("fx"), "minified ArrowPreference class should be accepted");
+    }
+
+    private static void check(boolean condition, String message) {
+        if (!condition) throw new AssertionError(message);
     }
 
     private static final class BuildRequestCandidate {

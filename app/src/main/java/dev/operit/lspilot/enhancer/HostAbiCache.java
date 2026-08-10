@@ -114,8 +114,15 @@ final class HostAbiCache {
         for (String path : paths) {
             File file = new File(path);
             source.append("\napk=").append(path)
-                    .append('|').append(file.length())
-                    .append('|').append(file.lastModified());
+                    .append('|').append(file.isFile() ? file.length() : -1L)
+                    .append('|').append(file.isFile() ? file.lastModified() : -1L);
+            if (file.isFile()) {
+                try {
+                    source.append("|sha256=").append(fileSha256(file));
+                } catch (Throwable error) {
+                    source.append("|sha256Error=").append(shortError(error));
+                }
+            }
         }
         return sha256(source.toString());
     }
@@ -129,7 +136,25 @@ final class HostAbiCache {
 
     private static String sha256(String value) throws Exception {
         MessageDigest digest = MessageDigest.getInstance("SHA-256");
-        byte[] hash = digest.digest(value.getBytes(StandardCharsets.UTF_8));
+        return hex(digest.digest(value.getBytes(StandardCharsets.UTF_8)));
+    }
+
+    private static String fileSha256(File file) throws Exception {
+        MessageDigest digest = MessageDigest.getInstance("SHA-256");
+        FileInputStream input = new FileInputStream(file);
+        try {
+            byte[] buffer = new byte[64 * 1024];
+            int read;
+            while ((read = input.read(buffer)) != -1) {
+                digest.update(buffer, 0, read);
+            }
+        } finally {
+            input.close();
+        }
+        return hex(digest.digest());
+    }
+
+    private static String hex(byte[] hash) {
         StringBuilder result = new StringBuilder(hash.length * 2);
         for (byte item : hash) result.append(String.format("%02x", item & 0xff));
         return result.toString();
