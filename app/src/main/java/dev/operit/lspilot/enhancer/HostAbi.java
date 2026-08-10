@@ -529,7 +529,7 @@ final class HostAbi {
         Method stateSession = stateClass.getMethod("h");
         Class<?> sessionClass = Class.forName("ua", false, loader);
         Method sessionId = sessionClass.getMethod("d");
-        Class<?> aiChatRouteClass = optionalClass(loader, "lka$b");
+        Class<?> aiChatRouteClass = optionalClass(loader, "ela$b");
         HostAbi abi = new HostAbi(providerClass, configClass, viewModelClass, messageClass, repositoryClass,
                 aiChatRouteClass, true, accessible(buildRequest), accessible(scanSseData),
                 accessible(streamMessages), loadSession, sendMessage, retryResponse, stopGeneration,

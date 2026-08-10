@@ -1,4 +1,10 @@
 # Changelog
+## 1.7.4-preview.23
+- Match prepared compression snapshots against the host's OpenAI request encoding so automatic compression is applied instead of rejected on tool-call messages.
+- Reuse request-encoded retained messages when merging compressed history, preserving valid `tool_calls` and `tool_call_id` fields.
+- Refresh compression UI locally without reloading the host chat session, keeping the compression button and pending user message visible.
+- Resolve the verified minified `AiChat` route class (`ela$b`) instead of the unrelated `lka$b` serializer class.
+
 ## 1.7.4-preview.22
 - Keep the minified chat UI message list untouched during manual compression; compression now applies only to the outgoing request JSON.
 - Continue stripping enhancer status messages from minified provider requests without replacing the ViewModel stream message list.

@@ -288,8 +288,8 @@ final class DexAbiScanner {
     }
 
     private static Class<?> findAiChatRouteClass(ClassLoader loader, List<String> classNames) {
-        Class<?> known = loadClass(loader, "lka$b");
-        if (known != null) return known;
+        Class<?> known = loadClass(loader, "ela$b");
+        if (known != null && looksLikeAiChatRoute(known)) return known;
         for (String className : classNames) {
             if (!isRouteCandidateName(className)) continue;
             Class<?> type = loadClass(loader, className);
@@ -543,7 +543,7 @@ final class DexAbiScanner {
         check(isAbiCandidateName("ts8"), "short minified ABI class should be accepted");
         check(isAbiCandidateName("abcdefgh"), "longer minified ABI class should be accepted");
         check(!isAbiCandidateName("android.app.Activity"), "framework class should be rejected");
-        check(isRouteCandidateName("lka$b"), "minified route class should be accepted");
+        check(isRouteCandidateName("ela$b"), "minified route class should be accepted");
         check(!isRouteCandidateName("lka"), "route class without nested marker should be rejected");
         check(isArrowPreferenceCandidateName("fx"), "minified ArrowPreference class should be accepted");
         if (args != null && args.length > 0) {
@@ -553,6 +553,8 @@ final class DexAbiScanner {
             check(abi.retryResponseMethod != null, "legacy retry response method missing");
             check(abi.stopGenerationMethod != null, "legacy stop generation method missing");
             check(abi.hasCompressionAccessors(), "legacy compression accessors missing");
+            check(abi.aiChatRouteClass != null && looksLikeAiChatRoute(abi.aiChatRouteClass),
+                    "legacy AiChat route class is invalid");
             abi.validateAccessorBindings();
             System.out.println("Legacy DEX ABI resolved provider=" + abi.providerClass.getName()
                     + " viewModel=" + abi.viewModelClass.getName()

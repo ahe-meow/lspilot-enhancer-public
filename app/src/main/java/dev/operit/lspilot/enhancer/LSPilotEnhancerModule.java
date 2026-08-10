@@ -682,7 +682,7 @@ public final class LSPilotEnhancerModule extends XposedModule {
         Class<?> aiChatRouteClass = abi.aiChatRouteClass;
         if (aiChatRouteClass == null) {
             try {
-                aiChatRouteClass = Class.forName("lka$b", false, loader);
+                aiChatRouteClass = Class.forName("ela$b", false, loader);
             } catch (ClassNotFoundException error) {
                 log(Log.ERROR, TAG, "Minified AiChat route class unavailable", error);
                 return;
@@ -739,10 +739,8 @@ public final class LSPilotEnhancerModule extends XposedModule {
             hook(loadSession).intercept(chain -> {
                 Object viewModel = chain.getThisObject();
                 String chatId = (String) chain.getArg(1);
-                Object packageName = chain.getArg(0);
                 AutoRetryManager.onChatLoaded(viewModel, chatId);
-                ManualCompressionManager.captureViewModel(viewModel, chatId,
-                        packageName == null ? null : String.valueOf(packageName), chain.getArg(2));
+                ManualCompressionManager.captureViewModel(viewModel, chatId);
                 ManualCompressionManager.enterChat(chatId);
                 Object result = chain.proceed();
                 if (abi.minified) {

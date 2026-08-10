@@ -189,13 +189,13 @@ static final class Result {
     private static volatile long lastBlockedSendNoticeAt;
     private static volatile long lastStatusPostAt;
     private static volatile String lastStatusFingerprint;
-    private static final Handler MAIN_HANDLER = new Handler(Looper.getMainLooper());
+    private static Handler mainHandler() {
+        return new Handler(Looper.getMainLooper());
+    }
 
     private static volatile ScreenState currentScreen;
     private static volatile WeakReference<Object> viewModelRef = new WeakReference<>(null);
-    private static volatile WeakReference<Object> viewModelContextRef = new WeakReference<>(null);
     private static volatile String viewModelChatId;
-    private static volatile String viewModelPackageName;
     private static volatile Prepared prepared;
     private static volatile Result lastResult;
     private static volatile int lastKeepRecent;
@@ -261,12 +261,10 @@ static final class Result {
                         marker + "\n" + content, System.currentTimeMillis());
                 Object repository = HostAbi.singletonInstance(abi.repositoryClass);
                 abi.repositoryAddMessageMethod.invoke(repository, chatId, message);
-                boolean reloadChat = !RETRY_STATUS_MARKER.equals(marker) && shouldReloadChat(content);
                 DebugLogger.i("chat status inserted chat=" + DebugLogger.id(chatId)
                         + " chars=" + content.length()
-                        + " refresh=" + (reloadChat ? "chat_session" : "local_compression_ui"));
-                if (reloadChat) reloadCurrentSession(chatId);
-                else refreshCompressionUi(allowPanel);
+                        + " refresh=local_compression_ui");
+                refreshCompressionUi(allowPanel);
             } catch (Throwable error) {
                 DebugLogger.e("chat status insertion failed chat=" + DebugLogger.id(chatId), error);
             }
@@ -293,38 +291,6 @@ static final class Result {
             return "compression-progress";
         }
         return content;
-    }
-
-    private static boolean shouldReloadChat(String content) {
-        return content.startsWith("压缩完成：")
-                || content.startsWith("压缩失败：")
-                || content.startsWith("压缩超时：")
-                || content.startsWith("自动重试")
-                || content.startsWith("对话出错")
-                || content.startsWith("已按宿主停止");
-    }
-
-    private static void reloadCurrentSession(String chatId) {
-        HostAbi abi = hostAbi;
-        Object viewModel = viewModelRef.get();
-        Object context = viewModelContextRef.get();
-        String packageName = viewModelPackageName;
-        if (abi == null || abi.loadSessionMethod == null || viewModel == null || context == null
-                || packageName == null || !chatId.equals(viewModelChatId)) {
-            DebugLogger.w("chat status reload skipped chat=" + DebugLogger.id(chatId));
-            refreshCompressionUi();
-            return;
-        }
-        MAIN_HANDLER.post(() -> {
-            try {
-                abi.loadSessionMethod.invoke(viewModel, packageName, chatId, context);
-                DebugLogger.i("chat status reload completed chat=" + DebugLogger.id(chatId));
-            } catch (Throwable error) {
-                DebugLogger.e("chat status reload failed chat=" + DebugLogger.id(chatId), error);
-            } finally {
-                refreshCompressionUi();
-            }
-        });
     }
 
     static void postCompressionStatus(String content) {
@@ -396,16 +362,28 @@ static final class Result {
                 && isEnhancerStatusContent(((JSONObject) message).optString("content"));
     }
 
-    private static boolean sameSerializedMessage(Object first, Object second) throws Exception {
+    private static boolean sameSerializedMessage(Object first, Object second) {
         if (first == second) return true;
         if (first instanceof JSONObject && second instanceof JSONObject) {
-            JSONObject normalizedFirst = new JSONObject(first.toString());
-            JSONObject normalizedSecond = new JSONObject(second.toString());
-            // Status messages are removed before comparison, but their insertion shifts this
-            // bookkeeping index. It is not part of the conversation identity.
-            normalizedFirst.remove(HOST_INDEX);
-            normalizedSecond.remove(HOST_INDEX);
-            return normalizedFirst.toString().equals(normalizedSecond.toString());
+            JSONObject firstMessage = (JSONObject) first;
+            JSONObject secondMessage = (JSONObject) second;
+            if (!firstMessage.optString("role").equals(secondMessage.optString("role"))) {
+                return false;
+            }
+            Object firstContent = firstMessage.opt("content");
+            Object secondContent = secondMessage.opt("content");
+            String firstText = firstContent == null || JSONObject.NULL.equals(firstContent)
+                    ? "" : String.valueOf(firstContent);
+            String secondText = secondContent == null || JSONObject.NULL.equals(secondContent)
+                    ? "" : String.valueOf(secondContent);
+            String firstToolCallId = firstMessage.optString("_lspilot_tool_call_id",
+                    firstMessage.optString("tool_call_id"));
+            String secondToolCallId = secondMessage.optString("_lspilot_tool_call_id",
+                    secondMessage.optString("tool_call_id"));
+            return firstText.equals(secondText)
+                    && firstToolCallId.equals(secondToolCallId)
+                    && ContextCompression.hasToolCalls(firstMessage)
+                    == ContextCompression.hasToolCalls(secondMessage);
         }
         return String.valueOf(first).equals(String.valueOf(second));
     }
@@ -420,12 +398,10 @@ static final class Result {
         return result;
     }
 
-    static void captureViewModel(Object viewModel, String chatId, String packageName, Object context) {
+    static void captureViewModel(Object viewModel, String chatId) {
         if (viewModel == null || chatId == null) return;
         viewModelRef = new WeakReference<>(viewModel);
-        viewModelContextRef = new WeakReference<>(context);
         viewModelChatId = chatId;
-        viewModelPackageName = packageName;
         DebugLogger.i("chat ViewModel captured class=" + viewModel.getClass().getName()
                 + " chat=" + DebugLogger.id(chatId));
     }
@@ -571,7 +547,7 @@ static final class Result {
     }
 
     private static void refreshCompressionUi(boolean allowPanel) {
-        MAIN_HANDLER.post(() -> {
+        mainHandler().post(() -> {
             try {
                 NativeChatTopBarAction.refreshPanel(allowPanel);
                 InjectedUiController.refreshChatCompressionOverlay(allowPanel);
@@ -909,6 +885,43 @@ static final class Result {
         return input;
     }
 
+    private static JSONArray mergePreparedMessages(JSONArray source, JSONArray compacted,
+            JSONArray actual) throws Exception {
+        int actualSystemCount = countLeadingSystemMessages(actual);
+        int sourceSystemCount = countLeadingSystemMessages(source);
+        int sourceHistoryCount = source.length() - sourceSystemCount;
+        int compactedSystemCount = countLeadingSystemMessages(compacted);
+        int firstRetainedIndex = compacted.length();
+        for (int index = compactedSystemCount; index < compacted.length(); index++) {
+            JSONObject message = compacted.optJSONObject(index);
+            if (message != null && message.has(HOST_INDEX)) {
+                firstRetainedIndex = index;
+                break;
+            }
+        }
+        int retainedCount = compacted.length() - firstRetainedIndex;
+        int retainedSourceStart = sourceHistoryCount - retainedCount;
+        if (retainedSourceStart < 0) {
+            throw new IllegalStateException("compacted history exceeds source history");
+        }
+
+        JSONArray result = new JSONArray();
+        for (int index = 0; index < actualSystemCount; index++) {
+            result.put(actual.get(index));
+        }
+        for (int index = compactedSystemCount; index < firstRetainedIndex; index++) {
+            result.put(compacted.get(index));
+        }
+        for (int index = actualSystemCount + retainedSourceStart;
+                index < actualSystemCount + sourceHistoryCount; index++) {
+            result.put(actual.get(index));
+        }
+        for (int index = actualSystemCount + sourceHistoryCount; index < actual.length(); index++) {
+            result.put(actual.get(index));
+        }
+        return result;
+    }
+
     static JSONArray applyPrepared(JSONArray actualMessages, Object config) {
         Prepared value = prepared;
         if (value == null || actualMessages == null || config == null) {
@@ -942,18 +955,7 @@ static final class Result {
                 }
             }
 
-            JSONArray result = new JSONArray();
-            for (int index = 0; index < actualSystemCount; index++) {
-                result.put(cleanActual.get(index));
-            }
-            int compactedSystemCount = countLeadingSystemMessages(value.compacted);
-            for (int index = compactedSystemCount; index < value.compacted.length(); index++) {
-                result.put(value.compacted.get(index));
-            }
-            int tailStart = actualSystemCount + sourceHistoryCount;
-            for (int index = tailStart; index < cleanActual.length(); index++) {
-                result.put(cleanActual.get(index));
-            }
+            JSONArray result = mergePreparedMessages(value.source, value.compacted, cleanActual);
             int invalidToolIndex = ContextCompression.firstInvalidToolCallIndex(result);
             if (invalidToolIndex >= 0) {
                 JSONObject invalid = result.optJSONObject(invalidToolIndex);
@@ -1179,6 +1181,69 @@ static final class Result {
         String message = current.getMessage();
         return message == null || message.trim().isEmpty()
                 ? current.getClass().getSimpleName() : message;
+    }
+
+    public static void main(String[] args) throws Exception {
+        JSONObject hostToolCall = new JSONObject()
+                .put("role", "assistant")
+                .put("content", "")
+                .put(HOST_INDEX, 1)
+                .put("_lspilot_tool_calls",
+                        "[AiToolCall(id=call_1, functionName=run, functionArguments={})]");
+        JSONObject requestToolCall = new JSONObject()
+                .put("role", "assistant")
+                .put("content", JSONObject.NULL)
+                .put("tool_calls", new JSONArray().put(new JSONObject().put("id", "call_1")));
+        check(sameSerializedMessage(hostToolCall, requestToolCall),
+                "host and request encodings of one tool call must match");
+        check(!sameSerializedMessage(
+                        new JSONObject().put("role", "user").put("content", "before"),
+                        new JSONObject().put("role", "user").put("content", "after")),
+                "changed message content must not match");
+
+        JSONObject hostToolResult = new JSONObject()
+                .put("role", "tool")
+                .put("content", "result")
+                .put(HOST_INDEX, 4)
+                .put("_lspilot_tool_call_id", "call_1");
+        JSONObject requestToolResult = new JSONObject()
+                .put("role", "tool")
+                .put("content", "result")
+                .put("tool_call_id", "call_1");
+        JSONArray source = new JSONArray()
+                .put(new JSONObject().put("role", "user").put("content", "old").put(HOST_INDEX, 0))
+                .put(new JSONObject().put("role", "assistant").put("content", "old reply").put(HOST_INDEX, 1))
+                .put(new JSONObject().put("role", "user").put("content", "question").put(HOST_INDEX, 2))
+                .put(hostToolCall)
+                .put(hostToolResult);
+        JSONArray compacted = new JSONArray()
+                .put(new JSONObject().put("role", "user").put("content", "summary"))
+                .put(hostToolCall)
+                .put(hostToolResult);
+        JSONArray actual = new JSONArray()
+                .put(new JSONObject().put("role", "system").put("content", "prompt"))
+                .put(new JSONObject().put("role", "user").put("content", "old"))
+                .put(new JSONObject().put("role", "assistant").put("content", "old reply"))
+                .put(new JSONObject().put("role", "user").put("content", "question"))
+                .put(requestToolCall)
+                .put(requestToolResult)
+                .put(new JSONObject().put("role", "user").put("content", "new"));
+        JSONArray merged = mergePreparedMessages(source, compacted, actual);
+        check(merged.length() == 5, "prepared request must replace only compressed history");
+        check(merged.getJSONObject(2).has("tool_calls")
+                        && !merged.getJSONObject(2).has("_lspilot_tool_calls"),
+                "retained assistant message must use request tool-call encoding");
+        check(merged.getJSONObject(3).has("tool_call_id")
+                        && !merged.getJSONObject(3).has("_lspilot_tool_call_id"),
+                "retained tool result must use request encoding");
+        check("new".equals(merged.getJSONObject(4).optString("content")),
+                "messages added after compression must be preserved");
+        check(ContextCompression.firstInvalidToolCallIndex(merged) < 0,
+                "merged request must preserve valid tool-call order");
+    }
+
+    private static void check(boolean condition, String message) {
+        if (!condition) throw new AssertionError(message);
     }
 
     private static final class MessageStats {
