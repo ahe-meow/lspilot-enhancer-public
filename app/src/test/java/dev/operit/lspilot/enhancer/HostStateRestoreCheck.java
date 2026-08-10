@@ -43,6 +43,11 @@ public final class HostStateRestoreCheck {
         assertEquals("selected-model", abi.stateSelectedModel(restored), "selected model");
         assertEquals("draft", stateClass.getMethod("c").invoke(restored), "draft");
         assertEquals(attachments, stateClass.getMethod("e").invoke(restored), "attachments");
+        Object failed = abi.newStatusMessage("failed-id", "assistant", "Request failed: old",
+                System.currentTimeMillis());
+        Object retried = abi.copyMessageWithContent(failed, "new response");
+        assertEquals("failed-id", abi.messageId(retried), "failed assistant id");
+        assertEquals("new response", abi.messageContent(retried), "failed assistant content");
     }
 
     private static void assertTrue(boolean value, String message) {

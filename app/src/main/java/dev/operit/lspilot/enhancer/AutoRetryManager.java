@@ -18,6 +18,7 @@ import java.util.WeakHashMap;
 final class AutoRetryManager {
     private static final int MAX_RETRIES = AutoRetryPolicy.maxRetries();
     private static final long RETRY_START_TIMEOUT_MS = 15_000L;
+    private static final long RETRY_PERSIST_INTERVAL_MS = 1_000L;
     private static final String ERROR_EVENT = "nyb$c";
     private static final String DONE_EVENT = "nyb$b";
     private static final Object LOCK = new Object();
@@ -78,7 +79,33 @@ final class AutoRetryManager {
                     + DebugLogger.id(chatId) + " messages=" + messages.size());
         }
     }
-
+    static List<?> retryRequestMessages(HostAbi abi, Object viewModel, String chatId,
+            List<?> messages) {
+        if (abi == null || !abi.minified || viewModel == null || isBlank(chatId)
+                || messages == null) return null;
+        onAttemptStarted(viewModel, chatId);
+        List<?> request;
+        List<?> preserved;
+        synchronized (LOCK) {
+            RetryState state = STATES.get(viewModel);
+            if (state == null || !state.active || state.retryNumber <= 0
+                    || !chatId.equals(state.chatId) || state.retryRequestMessages == null
+                    || state.retryHostMessages == null) return null;
+            request = new ArrayList<>(state.retryRequestMessages);
+            preserved = new ArrayList<>(state.retryHostMessages);
+        }
+        try {
+            if (!abi.replaceStateMessages(viewModel, preserved)) {
+                DebugLogger.w("auto retry could not publish preserved tail before stream");
+            }
+        } catch (Throwable error) {
+            DebugLogger.e("failed to publish preserved tail before auto retry stream", error);
+        }
+        DebugLogger.i("auto retry request starts before failed assistant chat="
+                + DebugLogger.id(chatId) + " requestMessages=" + request.size()
+                + " preservedMessages=" + preserved.size());
+        return request;
+    }
     static List<?> restoreAttemptMessages(Object viewModel, String chatId, List<?> messages) {
         if (viewModel == null || isBlank(chatId) || messages == null) return messages;
         synchronized (LOCK) {
@@ -94,6 +121,13 @@ final class AutoRetryManager {
         }
     }
 
+
+
+    static List<?> retryContextBeforeTarget(List<?> messages, int targetIndex) {
+        if (messages == null) return null;
+        if (targetIndex < 0 || targetIndex > messages.size()) return new ArrayList<>(messages);
+        return new ArrayList<>(messages.subList(0, targetIndex));
+    }
     static void prepareHostRetry(HostAbi abi, Object viewModel, String chatId) {
         if (abi == null || !abi.minified || viewModel == null || isBlank(chatId)) return;
         try {
@@ -101,12 +135,28 @@ final class AutoRetryManager {
             List<?> currentMessages = abi.stateMessages(hostState);
             if (currentMessages == null || currentMessages.isEmpty()) return;
             List<?> snapshot = new ArrayList<>(currentMessages);
+            int failedAssistantIndex = -1;
             synchronized (LOCK) {
                 RetryState state = STATES.get(viewModel);
                 if (state == null || !state.active || !state.retryInvocationInFlight
                         || !chatId.equals(state.chatId)) return;
+                failedAssistantIndex = findTargetIndex(abi, snapshot, state.targetMessageId);
+                if (failedAssistantIndex < 0) failedAssistantIndex = findLastAssistant(abi, snapshot);
+                if (failedAssistantIndex < 0) {
+                    DebugLogger.w("auto retry failed to locate failed assistant chat="
+                            + DebugLogger.id(chatId));
+                    return;
+                }
+                Object target = snapshot.get(failedAssistantIndex);
+                String targetId = abi.messageId(target);
+                state.targetMessageId = targetId;
+                state.targetMessageIndex = failedAssistantIndex;
                 state.attemptMessages = snapshot;
                 state.retryHostMessages = snapshot;
+                state.retryRequestMessages = retryContextBeforeTarget(snapshot, failedAssistantIndex);
+                state.retryAbi = abi;
+                state.responseMerged = false;
+                state.lastRetryPersistAtMs = 0L;
             }
             boolean persisted = false;
             try {
@@ -116,12 +166,154 @@ final class AutoRetryManager {
                 DebugLogger.e("failed to preserve host repository before auto retry", error);
             }
             DebugLogger.i("auto retry host snapshot captured chat=" + DebugLogger.id(chatId)
-                    + " messages=" + snapshot.size() + " persisted=" + persisted);
+                    + " messages=" + snapshot.size() + " failedAssistantIndex="
+                    + failedAssistantIndex + " persisted=" + persisted);
         } catch (Throwable error) {
             DebugLogger.e("failed to capture host state before auto retry", error);
         }
     }
 
+private static int findTargetIndex(HostAbi abi, List<?> messages, String targetId) {
+        if (abi == null || messages == null || isBlank(targetId)) return -1;
+        for (int index = messages.size() - 1; index >= 0; index--) {
+            try {
+                if (targetId.equals(abi.messageId(messages.get(index)))) return index;
+            } catch (Throwable ignored) {
+            }
+        }
+        return -1;
+    }
+
+    private static int findLastAssistant(HostAbi abi, List<?> messages) {
+        if (abi == null || messages == null) return -1;
+        for (int index = messages.size() - 1; index >= 0; index--) {
+            try {
+                if ("assistant".equals(abi.messageRole(messages.get(index)))) return index;
+            } catch (Throwable ignored) {
+            }
+        }
+        return -1;
+    }
+
+    private static void rememberFailureTarget(HostAbi abi, Object viewModel, String chatId) {
+        if (abi == null || viewModel == null || isBlank(chatId)) return;
+        try {
+            List<?> messages = abi.stateMessages(abi.currentState(viewModel));
+            int index = findLastAssistant(abi, messages);
+            if (index < 0) return;
+            String id = abi.messageId(messages.get(index));
+            synchronized (LOCK) {
+                RetryState state = STATES.get(viewModel);
+                if (state != null && state.active && chatId.equals(state.chatId)
+                        && !isBlank(id) && isBlank(state.targetMessageId)) {
+                    state.targetMessageId = id;
+                }
+            }
+        } catch (Throwable error) {
+            DebugLogger.e("failed to remember failed assistant target", error);
+        }
+    }
+
+    private static Object findGeneratedAssistant(HostAbi abi, List<?> currentMessages,
+            List<?> originalMessages) {
+        if (abi == null || currentMessages == null || originalMessages == null) return null;
+        for (int index = currentMessages.size() - 1; index >= 0; index--) {
+            Object candidate = currentMessages.get(index);
+            try {
+                if (!"assistant".equals(abi.messageRole(candidate))) continue;
+                String id = abi.messageId(candidate);
+                if (!isBlank(id) && !containsMessageId(abi, originalMessages, id)) return candidate;
+            } catch (Throwable ignored) {
+            }
+        }
+        return null;
+    }
+
+    private static boolean containsMessageId(HostAbi abi, List<?> messages, String id) {
+        if (abi == null || messages == null || isBlank(id)) return false;
+        for (Object message : messages) {
+            try {
+                if (id.equals(abi.messageId(message))) return true;
+            } catch (Throwable ignored) {
+            }
+        }
+        return false;
+    }
+
+    private static void mergeRetryState(HostAbi abi, Object viewModel, String chatId,
+            boolean persist) {
+        if (abi == null || viewModel == null || isBlank(chatId)) return;
+        List<?> original;
+        String targetId;
+        int storedTargetIndex;
+        boolean responseMerged;
+        long persistTimeMs = System.currentTimeMillis();
+        boolean persistMerged = persist;
+        synchronized (LOCK) {
+            RetryState state = STATES.get(viewModel);
+            if (state == null || !state.active || state.retryNumber <= 0
+                    || !chatId.equals(state.chatId) || state.retryHostMessages == null) return;
+            original = new ArrayList<>(state.retryHostMessages);
+            targetId = state.targetMessageId;
+            storedTargetIndex = state.targetMessageIndex;
+            responseMerged = state.responseMerged;
+            if (!persistMerged
+                    && persistTimeMs - state.lastRetryPersistAtMs >= RETRY_PERSIST_INTERVAL_MS) {
+                persistMerged = true;
+            }
+        }
+        try {
+            List<?> current = abi.stateMessages(abi.currentState(viewModel));
+            Object generated = findGeneratedAssistant(abi, current, original);
+            if (generated == null) {
+                if (persist && responseMerged) {
+                    try {
+                        abi.persistMessages(chatId, original);
+                    } catch (Throwable error) {
+                        DebugLogger.e("failed to persist final in-place retry response", error);
+                    }
+                }
+                return;
+            }
+            int targetIndex = findTargetIndex(abi, original, targetId);
+            if (targetIndex < 0 && storedTargetIndex >= 0
+                    && storedTargetIndex < original.size()) {
+                targetIndex = storedTargetIndex;
+            }
+            if (targetIndex < 0) return;
+            String content = abi.messageContent(generated);
+            Object replacement = abi.copyMessageWithContent(original.get(targetIndex), content);
+            List<Object> merged = new ArrayList<>(original);
+            merged.set(targetIndex, replacement);
+            if (!abi.replaceStateMessages(viewModel, merged)) return;
+            synchronized (LOCK) {
+                RetryState state = STATES.get(viewModel);
+                if (state != null && state.active && chatId.equals(state.chatId)) {
+                    state.retryHostMessages = merged;
+                    state.attemptMessages = merged;
+                    state.responseMerged = true;
+                }
+            }
+            if (persistMerged) {
+                try {
+                    abi.persistMessages(chatId, merged);
+                    synchronized (LOCK) {
+                        RetryState state = STATES.get(viewModel);
+                        if (state != null && state.active && chatId.equals(state.chatId)) {
+                            state.lastRetryPersistAtMs = persistTimeMs;
+                        }
+                    }
+                } catch (Throwable error) {
+                    DebugLogger.e("failed to persist generated failed-assistant replacement", error);
+                }
+            }
+            DebugLogger.i("auto retry updated failed assistant in place chat="
+                    + DebugLogger.id(chatId) + " targetIndex=" + targetIndex
+                    + " tailMessages=" + (merged.size() - targetIndex - 1));
+        } catch (Throwable error) {
+            DebugLogger.e("failed to merge auto retry response into failed assistant", error);
+        }
+    }
     static void restoreHostRetry(HostAbi abi, Object viewModel, String chatId) {
         if (abi == null || !abi.minified || viewModel == null || isBlank(chatId)) return;
         List<?> snapshot;
@@ -168,6 +360,10 @@ final class AutoRetryManager {
     }
 
     static Object wrapStreamCallback(Object callback, Object viewModel, String chatId) {
+        return wrapStreamCallback(callback, viewModel, chatId, null);
+    }
+
+    static Object wrapStreamCallback(Object callback, Object viewModel, String chatId, HostAbi abi) {
         if (callback == null || viewModel == null || isBlank(chatId)) return callback;
         onAttemptStarted(viewModel, chatId);
         try {
@@ -177,17 +373,30 @@ final class AutoRetryManager {
                 return callback;
             }
             return Proxy.newProxyInstance(loader, new Class<?>[]{function1},
-                    new StreamCallback(callback, viewModel, chatId));
+                    new StreamCallback(callback, viewModel, chatId, abi));
         } catch (Throwable error) {
             DebugLogger.e("failed to wrap host stream callback", error);
             return callback;
         }
     }
 
-    static void onRepositoryMessage(String chatId, String role, String content) {
+    static void onRepositoryMessage(HostAbi abi, String chatId, String role, String content,
+            Object message) {
         if (!"assistant".equals(role) || !isFailureContent(content)) return;
         RetryState state = findByChat(chatId);
-        if (state != null) scheduleRetry(state, extractFailureReason(content));
+        if (state != null) {
+            if (abi != null && message != null) {
+                String messageId = abi.messageId(message);
+                if (!isBlank(messageId)) {
+                    synchronized (LOCK) {
+                        if (state.active && chatId.equals(state.chatId)) {
+                            state.targetMessageId = messageId;
+                        }
+                    }
+                }
+            }
+            scheduleRetry(state, extractFailureReason(content));
+        }
     }
 
     private static boolean isFailureContent(String content) {
@@ -256,10 +465,11 @@ final class AutoRetryManager {
         }
     }
 
-    private static void onStreamEvent(Object viewModel, String chatId, Object event) {
+    private static void onStreamEvent(HostAbi abi, Object viewModel, String chatId, Object event) {
         if (event == null) return;
         String name = event.getClass().getName();
         if (isErrorEvent(event, name)) {
+            rememberFailureTarget(abi, viewModel, chatId);
             RetryState state = findByChat(chatId);
             if (state != null) scheduleRetry(state, eventMessage(event));
         } else if (DONE_EVENT.equals(name) || isNamedDone(name)) {
@@ -420,13 +630,17 @@ final class AutoRetryManager {
     }
 
     private static void onRetryStartTimeout(RetryState state, int generation) {
+        Object owner;
+        HostAbi abi;
         synchronized (LOCK) {
-            Object owner = state.viewModel.get();
+            owner = state.viewModel.get();
             if (!state.active || owner == null || STATES.get(owner) != state
                     || state.attemptGeneration != generation || state.watchdog == null) return;
             state.watchdog = null;
             state.errorObserved = false;
+            abi = state.retryAbi;
         }
+        if (abi != null) restoreHostRetry(abi, owner, state.chatId);
         scheduleRetry(state, "宿主重试入口未在 15 秒内启动流请求");
     }
 
@@ -496,8 +710,14 @@ final class AutoRetryManager {
         boolean errorObserved;
         int attemptGeneration;
         boolean retryInvocationInFlight;
+        int targetMessageIndex = -1;
+        String targetMessageId;
+        boolean responseMerged;
+        long lastRetryPersistAtMs;
+        HostAbi retryAbi;
         List<?> attemptMessages;
         List<?> retryHostMessages;
+        List<?> retryRequestMessages;
         Runnable pending;
         Runnable watchdog;
         Method retryMethod;
@@ -513,25 +733,44 @@ final class AutoRetryManager {
         private final Object delegate;
         private final Object viewModel;
         private final String chatId;
+        private final HostAbi abi;
 
-        StreamCallback(Object delegate, Object viewModel, String chatId) {
+        StreamCallback(Object delegate, Object viewModel, String chatId, HostAbi abi) {
             this.delegate = delegate;
             this.viewModel = viewModel;
             this.chatId = chatId;
+            this.abi = abi;
         }
 
         @Override
         public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
-            if ("invoke".equals(method.getName()) && args != null && args.length == 1) {
-                // Observe the event before the host delegate runs; a delegate exception must not
-                // prevent retry scheduling or the diagnostic status from being posted.
-                onStreamEvent(viewModel, chatId, args[0]);
+            if (!"invoke".equals(method.getName()) || args == null || args.length != 1) {
+                try {
+                    return method.invoke(delegate, args);
+                } catch (InvocationTargetException error) {
+                    throw error.getTargetException();
+                }
             }
+            Object event = args[0];
+            String eventName = event == null ? null : event.getClass().getName();
+            boolean errorEvent = isErrorEvent(event, eventName);
+            boolean doneEvent = eventName != null
+                    && (DONE_EVENT.equals(eventName) || isNamedDone(eventName));
+            if (errorEvent) {
+                // Capture the target before the host may replace the transient stream message.
+                onStreamEvent(abi, viewModel, chatId, event);
+            }
+            Object result = null;
+            Throwable delegateError = null;
             try {
-                return method.invoke(delegate, args);
+                result = method.invoke(delegate, args);
             } catch (InvocationTargetException error) {
-                throw error.getTargetException();
+                delegateError = error.getTargetException();
             }
+            mergeRetryState(abi, viewModel, chatId, errorEvent || doneEvent);
+            if (doneEvent) onStreamEvent(abi, viewModel, chatId, event);
+            if (delegateError != null) throw delegateError;
+            return result;
         }
     }
 }

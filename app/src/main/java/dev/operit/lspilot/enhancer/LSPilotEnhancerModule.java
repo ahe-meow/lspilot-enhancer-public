@@ -299,14 +299,22 @@ public final class LSPilotEnhancerModule extends XposedModule {
                 Object[] args = chain.getArgs().toArray();
                 List<?> messages = rawMessages instanceof List ? (List<?>) rawMessages : null;
                 if (messages != null) {
-                    AutoRetryManager.captureAttemptMessages(viewModel, chatId, messages);
-                    List<?> restored = AutoRetryManager.restoreAttemptMessages(
-                            viewModel, chatId, messages);
-                    boolean restoredContext = restored != messages;
-                    if (restoredContext) {
-                        messages = restored;
-                        log(Log.WARN, TAG, "auto retry restored original stream context messages="
-                                + messages.size());
+                    List<?> retryRequest = AutoRetryManager.retryRequestMessages(
+                            abi, viewModel, chatId, messages);
+                    boolean customRetry = retryRequest != null;
+                    if (customRetry) {
+                        messages = retryRequest;
+                        log(Log.WARN, TAG, "auto retry request starts before failed assistant"
+                                + " requestMessages=" + messages.size());
+                    } else {
+                        AutoRetryManager.captureAttemptMessages(viewModel, chatId, messages);
+                        List<?> restored = AutoRetryManager.restoreAttemptMessages(
+                                viewModel, chatId, messages);
+                        if (restored != messages) {
+                            messages = restored;
+                            log(Log.WARN, TAG, "auto retry restored original stream context messages="
+                                    + messages.size());
+                        }
                     }
                     List<Object> compacted = ManualCompressionManager.applyPreparedToHostMessages(
                             messages, config, abi);
@@ -314,12 +322,12 @@ public final class LSPilotEnhancerModule extends XposedModule {
                         args[1] = compacted;
                         log(Log.INFO, TAG, "minified stream context applied originalMessages="
                                 + messages.size() + " compactedMessages=" + compacted.size());
-                    } else if (restoredContext) {
+                    } else if (messages != rawMessages) {
                         args[1] = messages;
                     }
                 }
                 args[2] = AutoRetryManager.wrapStreamCallback(
-                        chain.getArg(2), viewModel, chatId);
+                        chain.getArg(2), viewModel, chatId, abi);
                 return chain.proceed(args);
             });
             InjectedUiController.setRequestHookInstalled(true);
@@ -357,8 +365,9 @@ public final class LSPilotEnhancerModule extends XposedModule {
                 AutoRetryManager.prepareHostRetry(abi, viewModel, chatId);
                 try {
                     return chain.proceed();
-                } finally {
+                } catch (Throwable error) {
                     AutoRetryManager.restoreHostRetry(abi, viewModel, chatId);
+                    throw error;
                 }
             });
             hook(stopGeneration).intercept(chain -> {
@@ -370,8 +379,8 @@ public final class LSPilotEnhancerModule extends XposedModule {
                 String chatId = String.valueOf(chain.getArg(0));
                 Object message = chain.getArg(1);
                 Object result = chain.proceed();
-                AutoRetryManager.onRepositoryMessage(chatId,
-                        abi.messageRole(message), abi.messageContent(message));
+                AutoRetryManager.onRepositoryMessage(abi, chatId,
+                        abi.messageRole(message), abi.messageContent(message), message);
                 return result;
             });
             log(Log.INFO, TAG, "Auto retry hooks installed retry="

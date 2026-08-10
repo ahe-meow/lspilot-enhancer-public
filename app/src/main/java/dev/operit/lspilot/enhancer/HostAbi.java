@@ -254,6 +254,34 @@ final class HostAbi {
         return readStringOrNull(message, "getContent", "c");
     }
 
+    String messageId(Object message) {
+        return readStringOrNull(message, "getId", "f");
+    }
+
+    Object copyMessageWithContent(Object message, String content) throws Exception {
+        if (message == null) throw new NullPointerException("message");
+        Method copyDefault = findMessageCopyDefault(message.getClass());
+        Class<?>[] types = copyDefault.getParameterTypes();
+        int fieldCount = types.length - 3;
+        if (fieldCount < 3) {
+            throw new NoSuchMethodException("message copy method has no content field");
+        }
+        Object[] args = new Object[types.length];
+        args[0] = message;
+        int mask = 0;
+        for (int field = 0; field < fieldCount; field++) {
+            args[field + 1] = primitiveDefault(types[field + 1]);
+            mask |= 1 << field;
+        }
+        // g8's third data field is content. Clear only that default-mask bit.
+        args[3] = content == null ? "" : content;
+        mask &= ~(1 << 2);
+        args[fieldCount + 1] = mask;
+        args[fieldCount + 2] = null;
+        return copyDefault.invoke(null, args);
+    }
+
+
     private Object messageValue(Object message, String namedMethod, String minifiedMethod) {
         return invokeNoArgOrNull(message, namedMethod, minifiedMethod);
     }
@@ -588,6 +616,35 @@ final class HostAbi {
         }
         throw new NoSuchMethodException("copy$default-compatible method not found on "
                 + configClass.getName());
+    }
+
+    private Method findMessageCopyDefault(Class<?> messageClass) throws NoSuchMethodException {
+        for (Method method : messageClass.getDeclaredMethods()) {
+            Class<?>[] types = method.getParameterTypes();
+            if (!Modifier.isStatic(method.getModifiers())
+                    || method.getReturnType() != messageClass
+                    || types.length < 6
+                    || types[0] != messageClass
+                    || types[types.length - 2] != int.class
+                    || types[types.length - 1] != Object.class) {
+                continue;
+            }
+            return accessible(method);
+        }
+        throw new NoSuchMethodException("message copy$default-compatible method not found on "
+                + messageClass.getName());
+    }
+
+    private static Object primitiveDefault(Class<?> type) {
+        if (!type.isPrimitive()) return null;
+        if (type == boolean.class) return false;
+        if (type == long.class) return 0L;
+        if (type == double.class) return 0D;
+        if (type == float.class) return 0F;
+        if (type == char.class) return (char) 0;
+        if (type == byte.class) return (byte) 0;
+        if (type == short.class) return (short) 0;
+        return 0;
     }
 
     private static Constructor<?> findMessageConstructor(Class<?> messageClass) throws Exception {

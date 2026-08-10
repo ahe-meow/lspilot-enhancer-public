@@ -1,4 +1,11 @@
 # Changelog
+## 1.7.4-preview.18
+
+- Change automatic retry to regenerate from the failed assistant message position instead of the host's most recent user-message regeneration anchor.
+- Send only the history before the failed assistant to the provider, replace that assistant in place with the streamed response, and retain every following message.
+- Keep the complete preserved message list visible and persistent throughout retry stream updates, with a timeout fallback for hosts that never start streaming.
+- Add regression coverage for failed-assistant request boundaries and message-ID-preserving content replacement.
+
 ## 1.7.4-preview.17
 
 - Preserve the complete current host message list before automatic retry instead of accepting the native regeneration truncation at the most recent user message.

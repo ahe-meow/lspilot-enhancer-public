@@ -1,6 +1,8 @@
 package dev.operit.lspilot.enhancer;
 
 import java.lang.reflect.Method;
+import java.util.Arrays;
+import java.util.List;
 
 public final class AutoRetryManagerCheck {
     private AutoRetryManagerCheck() {
@@ -31,6 +33,19 @@ public final class AutoRetryManagerCheck {
                 new Class<?>[]{String.class}, "Request error: connection reset"));
         assertEquals("上游拒绝请求", invokeString("extractFailureReason",
                 new Class<?>[]{String.class}, "请求失败：上游拒绝请求"));
+        List<String> history = Arrays.asList(
+                "user-before", "assistant-previous", "assistant-failed",
+                "user-after", "assistant-after");
+        List<?> request = AutoRetryManager.retryContextBeforeTarget(history, 2);
+        if (!Arrays.asList("user-before", "assistant-previous").equals(request)) {
+            throw new AssertionError("retry request must stop before failed assistant: " + request);
+        }
+        if (request.size() >= history.size()) {
+            throw new AssertionError("retry request must exclude failed assistant and tail");
+        }
+        if (!AutoRetryManager.retryContextBeforeTarget(history, 0).isEmpty()) {
+            throw new AssertionError("retry request before first message must be empty");
+        }
     }
 
     private static boolean invokeBoolean(String name, Class<?>[] parameterTypes, Object... args)
