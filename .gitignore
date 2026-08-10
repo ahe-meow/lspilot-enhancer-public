@@ -30,10 +30,12 @@ Thumbs.db
 *.swp
 *.tmp
 
-# Local diagnostics, recovered chat data, and device snapshots
+# Local diagnostics, recovered chat data, device snapshots, and agent workspaces
 .backup/
 out/
 reverse/latest-host/
+.worktrees/
+.superpowers/
 
 # Logs
 *.log
