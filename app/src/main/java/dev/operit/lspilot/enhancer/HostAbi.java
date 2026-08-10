@@ -12,7 +12,6 @@ import org.json.JSONObject;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-import java.util.UUID;
 
 /** Host ABI resolver for named debug builds and minified release builds. */
 final class HostAbi {
@@ -462,48 +461,6 @@ final class HostAbi {
             return !text.isEmpty() && !"[]".equals(text) && !"null".equals(text);
         }
         return value != null && !JSONObject.NULL.equals(value);
-    }
-
-    List<Object> materializeMessages(JSONArray messages, List<?> originals) throws Exception {
-        List<Object> result = new ArrayList<>();
-        if (messages == null) return result;
-        boolean[] used = originals == null ? new boolean[0] : new boolean[originals.size()];
-        for (int index = 0; index < messages.length(); index++) {
-            JSONObject message = messages.optJSONObject(index);
-            if (message == null) continue;
-            String role = message.optString("role", "user");
-            String content = message.optString("content", "");
-            int originalIndex = message.optInt(HOST_INDEX, -1);
-            if (!matchesOriginal(originals, used, originalIndex, role, content)) {
-                originalIndex = findOriginalMessage(originals, used, role, content);
-            }
-            if (originalIndex >= 0) {
-                used[originalIndex] = true;
-                result.add(originals.get(originalIndex));
-            } else {
-                result.add(newStatusMessage("lspilot-enhancer-request-" + UUID.randomUUID(),
-                        role, content, System.currentTimeMillis()));
-            }
-        }
-        return result;
-    }
-    private boolean matchesOriginal(List<?> originals, boolean[] used, int index,
-            String role, String content) {
-        if (originals == null || index < 0 || index >= originals.size() || used[index]) return false;
-        Object candidate = originals.get(index);
-        return same(role, messageRole(candidate)) && same(content, messageContent(candidate));
-    }
-
-    private int findOriginalMessage(List<?> originals, boolean[] used, String role, String content) {
-        if (originals == null) return -1;
-        for (int index = 0; index < originals.size(); index++) {
-            if (matchesOriginal(originals, used, index, role, content)) return index;
-        }
-        return -1;
-    }
-
-    private static boolean same(String first, String second) {
-        return first == null ? second == null : first.equals(second);
     }
 
     private static HostAbi resolveNamed(ClassLoader loader) throws Exception {

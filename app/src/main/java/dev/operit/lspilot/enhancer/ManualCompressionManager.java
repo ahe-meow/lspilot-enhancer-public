@@ -462,29 +462,6 @@ static final class Result {
         }
     }
 
-    static List<Object> applyPreparedToHostMessages(List<?> messages, Object config, HostAbi abi) {
-        if (messages == null || config == null || abi == null) return null;
-        try {
-            JSONArray serialized = abi.serializeMessages(messages);
-            JSONArray clean = sanitizeRequestMessages(serialized);
-            JSONArray source = clean == null ? serialized : clean;
-            JSONArray compacted = applyPrepared(source, config);
-            if (compacted != null && compacted != source) {
-                return abi.materializeMessages(compacted, messages);
-            }
-            if (source != serialized) {
-                DebugLogger.i("removed enhancer status messages from minified stream request"
-                        + " originalMessages=" + serialized.length()
-                        + " cleanMessages=" + source.length());
-                return abi.materializeMessages(source, messages);
-            }
-            return null;
-        } catch (Throwable error) {
-            DebugLogger.e("prepared host message apply failed", error);
-            return null;
-        }
-    }
-
     static boolean isInternalBuild() {
         return Boolean.TRUE.equals(INTERNAL_BUILD.get());
     }

@@ -259,17 +259,41 @@ public final class LSPilotEnhancerModule extends XposedModule {
             hook(buildRequest).intercept(chain -> {
                 Object originalResult = chain.proceed();
                 if (ManualCompressionManager.isInternalBuild()
-                        || !(originalResult instanceof String)
-                        || !ModuleSettings.isEnabled()) {
+                        || !(originalResult instanceof String)) {
                     return originalResult;
                 }
 
                 try {
+                    boolean policyEnabled = ModuleSettings.isEnabled();
+                    if (!policyEnabled
+                            && !ManualCompressionManager.hasPreparedForCurrentChat()) {
+                        return originalResult;
+                    }
                     Object config = chain.getArg(0);
                     String systemPrompt = (String) chain.getArg(2);
                     JSONObject body = new JSONObject((String) originalResult);
                     String model = requestModel(body, abi, config);
-                    applyOpenAiRequestPolicy(body, model, systemPrompt, ModuleSettings.isEnabled());
+                    JSONArray messages = body.optJSONArray("messages");
+                    JSONArray requestMessages = ManualCompressionManager.sanitizeRequestMessages(messages);
+                    if (requestMessages != null && requestMessages != messages) {
+                        body.put("messages", requestMessages);
+                        messages = requestMessages;
+                        log(Log.INFO, TAG, "removed enhancer status messages from minified provider request");
+                    }
+                    JSONArray compacted = ManualCompressionManager.applyPrepared(messages, config);
+                    if (compacted != null && compacted != messages) {
+                        body.put("messages", compacted);
+                        log(Log.INFO, TAG, "minified request context applied originalMessages="
+                                + (messages == null ? 0 : messages.length())
+                                + " compactedMessages=" + compacted.length()
+                                + " originalChars=" + (messages == null ? 0 : messages.toString().length())
+                                + " compactedChars=" + compacted.toString().length());
+                    } else if (compacted == null && policyEnabled
+                            && ModuleSettings.isContextCompressionEnabled()) {
+                        log(Log.DEBUG, TAG,
+                                "minified request runtime compression skipped; no prepared context");
+                    }
+                    applyOpenAiRequestPolicy(body, model, systemPrompt, policyEnabled);
                     return body.toString();
                 } catch (Throwable error) {
                     log(Log.ERROR, TAG,
@@ -295,7 +319,6 @@ public final class LSPilotEnhancerModule extends XposedModule {
             hook(streamMessages).intercept(chain -> {
                 Object viewModel = chain.getThisObject();
                 String chatId = abi.currentChatId(viewModel);
-                Object config = chain.getArg(0);
                 Object rawMessages = chain.getArg(1);
                 Object[] args = chain.getArgs().toArray();
                 List<?> messages = rawMessages instanceof List ? (List<?>) rawMessages : null;
@@ -317,13 +340,7 @@ public final class LSPilotEnhancerModule extends XposedModule {
                                     + messages.size());
                         }
                     }
-                    List<Object> compacted = ManualCompressionManager.applyPreparedToHostMessages(
-                            messages, config, abi);
-                    if (compacted != null) {
-                        args[1] = compacted;
-                        log(Log.INFO, TAG, "minified stream context applied originalMessages="
-                                + messages.size() + " compactedMessages=" + compacted.size());
-                    } else if (messages != rawMessages) {
+                    if (messages != rawMessages) {
                         args[1] = messages;
                     }
                 }

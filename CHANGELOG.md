@@ -1,4 +1,8 @@
 # Changelog
+## 1.7.4-preview.22
+- Keep the minified chat UI message list untouched during manual compression; compression now applies only to the outgoing request JSON.
+- Continue stripping enhancer status messages from minified provider requests without replacing the ViewModel stream message list.
+
 ## 1.7.4-preview.21
 - Bind config and message accessors from DexKit field-reader metadata instead of relying on current host obfuscation names.
 - Validate bound accessors with probe config/message instances before caching the ABI descriptor.
