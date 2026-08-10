@@ -82,12 +82,26 @@ final class ContextCompression {
                 progressListener.onProgress(completedChunks, totalChunks);
             }
         }
-
         for (int index = oldEnd; index < messages.length(); index++) {
             result.put(messages.get(index));
         }
+        // Do not hand a larger request to the caller. The coordinator performs the same
+        // validation after serialization, but this guard also protects direct callers.
+        if (!isStrictlySmaller(messages, result)) {
+            return messages;
+        }
         return result;
     }
+
+    private static boolean isStrictlySmaller(JSONArray before, JSONArray after) {
+        if (before == null || after == null || before == after) return false;
+        String beforeText = before.toString();
+        String afterText = after.toString();
+        return afterText.length() < beforeText.length()
+                && afterText.getBytes(StandardCharsets.UTF_8).length
+                        < beforeText.getBytes(StandardCharsets.UTF_8).length;
+    }
+
 
     private static List<Chunk> buildChunks(JSONArray messages, int start, int end,
             int maxMessages, int maxChars) {
@@ -241,7 +255,7 @@ final class ContextCompression {
         int toolCount = 0;
         int otherCount = 0;
         int originalChars = 0;
-        StringBuilder excerpts = new StringBuilder();
+        int chunkCharEstimate = 0;
         for (int index = start; index < end; index++) {
             JSONObject message = messages.optJSONObject(index);
             String role = message == null ? "unknown" : message.optString("role", "unknown");
@@ -252,30 +266,48 @@ final class ContextCompression {
             String text = message == null ? String.valueOf(messages.opt(index))
                     : String.valueOf(message.opt("content"));
             originalChars += text.length();
-            if (shouldKeepLocalExcerpt(role, text, index, start, end)) {
-                excerpts.append(role).append(" #").append(index - start + 1).append(": ")
-                        .append(compactTranscriptText(text, excerptLimit(role))).append('\n');
-                Object toolCalls = toolCalls(message);
-                if (toolCalls != null) {
-                    excerpts.append("tool_calls: ").append(compactTranscriptText(
-                            String.valueOf(toolCalls), MAX_TRANSCRIPT_TOOL_CHARS)).append('\n');
-                }
-            }
+            chunkCharEstimate += messageCharLength(messages, index);
         }
-        return "[Summary of previous conversation]\n"
+
+        // Excerpts are useful anchors, but retaining every user message made the local
+        // summary approach the size of the source. Keep a bounded fraction of each chunk.
+        int summaryBudget = Math.max(768, Math.min(12_000, chunkCharEstimate / 4));
+        String header = "[Summary of previous conversation]\n"
                 + "This is a deterministic local compression block; no model call was used.\n"
                 + "Covered message indexes: " + start + "-" + (end - 1)
                 + "; count=" + (end - start)
                 + "; roles user=" + userCount + ", assistant=" + assistantCount
                 + ", tool=" + toolCount + ", other=" + otherCount
                 + "; originalChars=" + originalChars + ".\n"
-                + "Key excerpts and anchors:\n" + excerpts;
+                + "Key excerpts and anchors:\n";
+        StringBuilder summary = new StringBuilder(Math.min(summaryBudget, header.length()));
+        appendWithinBudget(summary, header, summaryBudget);
+        for (int index = start; index < end && summary.length() < summaryBudget; index++) {
+            JSONObject message = messages.optJSONObject(index);
+            String role = message == null ? "unknown" : message.optString("role", "unknown");
+            String text = message == null ? String.valueOf(messages.opt(index))
+                    : String.valueOf(message.opt("content"));
+            if (!shouldKeepLocalExcerpt(role, text, index, start, end)) continue;
+            appendWithinBudget(summary, role + " #" + (index - start + 1) + ": "
+                    + compactTranscriptText(text, excerptLimit(role)) + '\n', summaryBudget);
+            Object toolCalls = toolCalls(message);
+            if (toolCalls != null && summary.length() < summaryBudget) {
+                appendWithinBudget(summary, "tool_calls: " + compactTranscriptText(
+                        String.valueOf(toolCalls), MAX_TRANSCRIPT_TOOL_CHARS) + '\n', summaryBudget);
+            }
+        }
+        return summary.toString();
+    }
+
+    private static void appendWithinBudget(StringBuilder target, String value, int budget) {
+        if (value == null || target.length() >= budget) return;
+        int remaining = budget - target.length();
+        target.append(value, 0, Math.min(remaining, value.length()));
     }
 
     private static boolean shouldKeepLocalExcerpt(String role, String text, int index,
             int start, int end) {
-        if (index < start + 3 || index >= end - 3) return true;
-        if ("user".equals(role)) return true;
+        if (index < start + 2 || index >= end - 2) return true;
         if ("assistant".equals(role)) {
             return containsAny(text, "commit", "error", "failed", "失败", "修复", "完成", "TODO", "Phase", "测试", "PASS");
         }

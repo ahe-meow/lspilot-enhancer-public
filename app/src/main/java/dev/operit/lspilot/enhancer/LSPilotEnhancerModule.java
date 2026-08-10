@@ -67,7 +67,7 @@ public final class LSPilotEnhancerModule extends XposedModule {
         String[] dexPaths = hostDexPaths(param.getApplicationInfo());
         HostAbi abi;
         try {
-            abi = HostAbi.resolve(loader, dexPaths);
+            abi = HostAbi.resolve(loader, dexPaths, param.getApplicationInfo());
             ManualCompressionManager.configure(abi);
             log(Log.INFO, TAG, "Resolved LSPilot host ABI minified=" + abi.minified
                     + " provider=" + abi.providerClass.getName()
@@ -98,7 +98,7 @@ public final class LSPilotEnhancerModule extends XposedModule {
         installSendBeforeCompressionHook(loader, abi);
         if (!abi.minified) installChatButtonHook(loader);
         log(Log.INFO, TAG,
-                "LSPilotEnhancer loaded version=1.7.4-preview.13 reasoning-cache-compression-fix");
+                "LSPilotEnhancer loaded version=1.7.4-preview.14 dexkit-adaptive-abi");
         // Disable the experimental Compose TopAppBar injection. The reliable entry is
         // the Activity-owned native overlay button installed from SubScreenActivity hooks.
         // installNativeChatTopBarActionHook(loader);
@@ -297,18 +297,29 @@ public final class LSPilotEnhancerModule extends XposedModule {
                 Object config = chain.getArg(0);
                 Object rawMessages = chain.getArg(1);
                 Object[] args = chain.getArgs().toArray();
-                args[2] = AutoRetryManager.wrapStreamCallback(
-                        chain.getArg(2), viewModel, chatId);
-                if (rawMessages instanceof List) {
-                    List<?> messages = (List<?>) rawMessages;
+                List<?> messages = rawMessages instanceof List ? (List<?>) rawMessages : null;
+                if (messages != null) {
+                    AutoRetryManager.captureAttemptMessages(viewModel, chatId, messages);
+                    List<?> restored = AutoRetryManager.restoreAttemptMessages(
+                            viewModel, chatId, messages);
+                    boolean restoredContext = restored != messages;
+                    if (restoredContext) {
+                        messages = restored;
+                        log(Log.WARN, TAG, "auto retry restored original stream context messages="
+                                + messages.size());
+                    }
                     List<Object> compacted = ManualCompressionManager.applyPreparedToHostMessages(
                             messages, config, abi);
                     if (compacted != null) {
                         args[1] = compacted;
                         log(Log.INFO, TAG, "minified stream context applied originalMessages="
                                 + messages.size() + " compactedMessages=" + compacted.size());
+                    } else if (restoredContext) {
+                        args[1] = messages;
                     }
                 }
+                args[2] = AutoRetryManager.wrapStreamCallback(
+                        chain.getArg(2), viewModel, chatId);
                 return chain.proceed(args);
             });
             InjectedUiController.setRequestHookInstalled(true);
@@ -371,8 +382,21 @@ public final class LSPilotEnhancerModule extends XposedModule {
             hook(streamMessages).intercept(chain -> {
                 Object viewModel = chain.getThisObject();
                 Object[] args = chain.getArgs().toArray();
+                String chatId = currentChatId(abi, viewModel);
+                Object rawMessages = chain.getArg(1);
+                if (rawMessages instanceof List) {
+                    List<?> messages = (List<?>) rawMessages;
+                    AutoRetryManager.captureAttemptMessages(viewModel, chatId, messages);
+                    List<?> restored = AutoRetryManager.restoreAttemptMessages(
+                            viewModel, chatId, messages);
+                    if (restored != messages) {
+                        args[1] = restored;
+                        log(Log.WARN, TAG, "auto retry restored named stream context messages="
+                                + restored.size());
+                    }
+                }
                 args[2] = AutoRetryManager.wrapStreamCallback(
-                        chain.getArg(2), viewModel, currentChatId(abi, viewModel));
+                        chain.getArg(2), viewModel, chatId);
                 return chain.proceed(args);
             });
             log(Log.INFO, TAG, "Named stream retry hook installed for "

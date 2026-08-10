@@ -1,0 +1,77 @@
+package dev.operit.lspilot.enhancer;
+
+import java.lang.reflect.Method;
+
+public final class AutoRetryManagerCheck {
+    private AutoRetryManagerCheck() {
+    }
+
+    public static void main(String[] args) throws Exception {
+        assertTrue(invokeBoolean("isErrorEvent", new Class<?>[]{Object.class, String.class},
+                new IllegalStateException("socket closed"), IllegalStateException.class.getName()),
+                "Throwable must be treated as an error event");
+
+        Failure failure = new Failure(new IllegalStateException("upstream rejected request"));
+        assertTrue(invokeBoolean("isErrorEvent", new Class<?>[]{Object.class, String.class},
+                failure, failure.getClass().getName()),
+                "$Failure carrier must be treated as an error event");
+        assertEquals("upstream rejected request", invokeString("eventMessage",
+                new Class<?>[]{Object.class}, failure));
+
+        Failed failed = new Failed("HTTP 502: context window exceeded");
+        assertTrue(invokeBoolean("isErrorEvent", new Class<?>[]{Object.class, String.class},
+                failed, failed.getClass().getName()),
+                "$Failed carrier must be treated as an error event");
+        assertEquals("HTTP 502: context window exceeded", invokeString("eventMessage",
+                new Class<?>[]{Object.class}, failed));
+
+        assertTrue(invokeBoolean("isFailureContent", new Class<?>[]{String.class},
+                "Request error: connection reset"), "English error prefix must be recognized");
+        assertEquals("connection reset", invokeString("extractFailureReason",
+                new Class<?>[]{String.class}, "Request error: connection reset"));
+        assertEquals("上游拒绝请求", invokeString("extractFailureReason",
+                new Class<?>[]{String.class}, "请求失败：上游拒绝请求"));
+    }
+
+    private static boolean invokeBoolean(String name, Class<?>[] parameterTypes, Object... args)
+            throws Exception {
+        return (Boolean) method(name, parameterTypes).invoke(null, args);
+    }
+
+    private static String invokeString(String name, Class<?>[] parameterTypes, Object... args)
+            throws Exception {
+        return (String) method(name, parameterTypes).invoke(null, args);
+    }
+
+    private static Method method(String name, Class<?>... parameterTypes) throws Exception {
+        Method method = AutoRetryManager.class.getDeclaredMethod(name, parameterTypes);
+        method.setAccessible(true);
+        return method;
+    }
+
+    private static void assertTrue(boolean value, String message) {
+        if (!value) throw new AssertionError(message);
+    }
+
+    private static void assertEquals(String expected, String actual) {
+        if (!expected.equals(actual)) {
+            throw new AssertionError("expected " + expected + ", got " + actual);
+        }
+    }
+
+    private static final class Failure {
+        private final Throwable cause;
+
+        Failure(Throwable cause) {
+            this.cause = cause;
+        }
+    }
+
+    private static final class Failed {
+        private final String error;
+
+        Failed(String error) {
+            this.error = error;
+        }
+    }
+}

@@ -1,4 +1,17 @@
 # Changelog
+## 1.7.4-preview.16
+
+- Preserve the first-attempt message list when the host regeneration path supplies an empty or replaced history during automatic retry.
+- Detect Throwable and additional host failure event shapes, extract nested failure details, and include the concrete reason in retry status messages.
+- Observe stream failure events before dispatching to the host callback so callback exceptions cannot hide retry scheduling.
+- Keep retry status updates on the local chat UI and prevent them from reloading a possibly empty host session over the active conversation.
+
+## 1.7.4-preview.15
+
+- Ignore host-list bookkeeping indexes when matching prepared compression snapshots, so enhancer status messages cannot invalidate an otherwise unchanged compression baseline.
+- Bound deterministic local summary blocks and reject any compacted request that is not strictly smaller in characters and UTF-8 bytes.
+- Add a large-conversation regression check for compression expansion.
+
 ## 1.7.4-preview.13
 
 - Stabilize GPT-5.6 explicit prompt-cache breakpoints around completed assistant prefixes instead of moving them across the changing user/tool suffix.

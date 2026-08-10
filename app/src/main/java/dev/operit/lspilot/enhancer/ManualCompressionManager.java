@@ -177,6 +177,7 @@ static final class Result {
     private static final String ENHANCER_MARKER = "[系统提示 · 上下文压缩]";
     static final String RETRY_STATUS_MARKER = "[系统提示 · 自动重试]";
     private static final String ENHANCER_ROLE = "system";
+    private static final String HOST_INDEX = "_lspilot_host_index";
     private static final String TAG = "LSPilotEnhancer";
     private static volatile Method buildRequestMethod;
     private static volatile HostAbi hostAbi;
@@ -260,7 +261,7 @@ static final class Result {
                         marker + "\n" + content, System.currentTimeMillis());
                 Object repository = HostAbi.singletonInstance(abi.repositoryClass);
                 abi.repositoryAddMessageMethod.invoke(repository, chatId, message);
-                boolean reloadChat = shouldReloadChat(content);
+                boolean reloadChat = !RETRY_STATUS_MARKER.equals(marker) && shouldReloadChat(content);
                 DebugLogger.i("chat status inserted chat=" + DebugLogger.id(chatId)
                         + " chars=" + content.length()
                         + " refresh=" + (reloadChat ? "chat_session" : "local_compression_ui"));
@@ -393,6 +394,20 @@ static final class Result {
         return message instanceof JSONObject
                 && ((JSONObject) message).optString("role").equals(ENHANCER_ROLE)
                 && isEnhancerStatusContent(((JSONObject) message).optString("content"));
+    }
+
+    private static boolean sameSerializedMessage(Object first, Object second) throws Exception {
+        if (first == second) return true;
+        if (first instanceof JSONObject && second instanceof JSONObject) {
+            JSONObject normalizedFirst = new JSONObject(first.toString());
+            JSONObject normalizedSecond = new JSONObject(second.toString());
+            // Status messages are removed before comparison, but their insertion shifts this
+            // bookkeeping index. It is not part of the conversation identity.
+            normalizedFirst.remove(HOST_INDEX);
+            normalizedSecond.remove(HOST_INDEX);
+            return normalizedFirst.toString().equals(normalizedSecond.toString());
+        }
+        return String.valueOf(first).equals(String.valueOf(second));
     }
 
     private static JSONArray withoutEnhancerStatuses(JSONArray messages) throws Exception {
@@ -887,7 +902,7 @@ static final class Result {
         for (int index = 0; index < previousHistoryCount; index++) {
             Object oldItem = previous.source.get(previousSystemCount + index);
             Object currentItem = currentSource.get(currentSystemCount + index);
-            if (!String.valueOf(oldItem).equals(String.valueOf(currentItem))) {
+            if (!sameSerializedMessage(oldItem, currentItem)) {
                 DebugLogger.w("incremental compression skipped: source prefix changed");
                 return currentSource;
             }
@@ -929,15 +944,19 @@ static final class Result {
             int sourceSystemCount = countLeadingSystemMessages(value.source);
             int sourceHistoryCount = value.source.length() - sourceSystemCount;
             if (cleanActual.length() - actualSystemCount < sourceHistoryCount) {
-                DebugLogger.w("prepared context rejected: actual history shorter than source");
+                String detail = "prepared context rejected: actual history shorter than source";
+                Log.w(TAG, detail);
+                DebugLogger.w(detail);
                 resetPreparedState(true);
                 return null;
             }
             for (int index = 0; index < sourceHistoryCount; index++) {
                 Object sourceItem = value.source.get(sourceSystemCount + index);
                 Object actualItem = cleanActual.get(actualSystemCount + index);
-                if (!String.valueOf(sourceItem).equals(String.valueOf(actualItem))) {
-                    DebugLogger.w("prepared context rejected: chat changed before send");
+                if (!sameSerializedMessage(sourceItem, actualItem)) {
+                    String detail = "prepared context rejected: chat changed before send index=" + index;
+                    Log.w(TAG, detail);
+                    DebugLogger.w(detail);
                     resetPreparedState(true);
                     return null;
                 }
@@ -982,8 +1001,11 @@ static final class Result {
             int applyIndex = ++preparedApplyCount;
             compressionUsedForPendingRequest = true;
             lastMetrics = metrics;
-            DebugLogger.i("manual prepared context applied chat=" + DebugLogger.id(value.chatId)
-                    + " applyCount=" + applyIndex + " " + metrics.describe());
+            String appliedDetail = (value.automatic ? "automatic" : "manual")
+                    + " prepared context applied chat=" + DebugLogger.id(value.chatId)
+                    + " applyCount=" + applyIndex + " " + metrics.describe();
+            Log.i(TAG, appliedDetail);
+            DebugLogger.i(appliedDetail);
             if (!preparedUsageNoticePosted) {
                 preparedUsageNoticePosted = true;
                 postStatus(value.chatId, "本会话已启用压缩基线：消息 " + metrics.originalMessages

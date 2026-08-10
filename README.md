@@ -12,6 +12,7 @@ An LSPosed module for `me.yun.lspilot` that adds request-level enhancements and 
 - Supports manual and pre-send chat context compression using the selected provider configuration at runtime.
 - Inserts local system status messages for compression progress and metrics, while filtering those status messages out of provider requests.
 - Tracks compression application and provider usage without logging message bodies, API keys, or raw request payloads.
+- Resolves minified host ABI members with DexKit after host/module updates, then reuses a version-fingerprinted descriptor cache on normal starts.
 
 ## Current Behavior
 
@@ -44,7 +45,7 @@ Build a release APK:
 bash ./gradlew :app:assembleRelease --no-daemon --console=plain -x lintVitalRelease
 ```
 
-The module uses `lib/libxposed-api-102.0.0.aar` as a `compileOnly` dependency.
+The module uses `lib/libxposed-api-102.0.0.aar` as a `compileOnly` dependency and `org.luckypray:dexkit:2.2.0` for update-triggered runtime ABI discovery. DexKit is distributed under Apache-2.0 with its native Core under LGPL-3.0; upstream source and license texts are available at [LuckyPray/DexKit](https://github.com/LuckyPray/DexKit).
 
 ## Installation
 

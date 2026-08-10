@@ -1,5 +1,7 @@
 package dev.operit.lspilot.enhancer;
 
+import android.content.pm.ApplicationInfo;
+
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
@@ -44,16 +46,16 @@ final class HostAbi {
     final Method sendMessageMethod;
     final Method repositoryAddMessageMethod;
     final Constructor<?> messageConstructor;
-    private final Field viewModelStateField;
-    private final Method stateFlowValueMethod;
-    private final Method stateMessagesMethod;
-    private final Method stateConfigMethod;
-    private final Method stateSelectedModelMethod;
-    private final Method stateLoadingMethod;
-    private final Method stateSessionMethod;
-    private final Method sessionIdMethod;
+    final Field viewModelStateField;
+    final Method stateFlowValueMethod;
+    final Method stateMessagesMethod;
+    final Method stateConfigMethod;
+    final Method stateSelectedModelMethod;
+    final Method stateLoadingMethod;
+    final Method stateSessionMethod;
+    final Method sessionIdMethod;
 
-    private HostAbi(Class<?> providerClass, Class<?> configClass, Class<?> viewModelClass,
+    HostAbi(Class<?> providerClass, Class<?> configClass, Class<?> viewModelClass,
             Class<?> messageClass, Class<?> repositoryClass, Class<?> aiChatRouteClass,
             boolean minified,
             Method buildRequestMethod, Method scanSseDataMethod, Method streamMessagesMethod,
@@ -92,33 +94,59 @@ final class HostAbi {
     }
 
     static HostAbi resolve(ClassLoader loader, String[] dexPaths) throws Exception {
+        return resolveFresh(loader, dexPaths);
+    }
+
+    static HostAbi resolve(ClassLoader loader, String[] dexPaths, ApplicationInfo appInfo)
+            throws Exception {
+        return HostAbiCache.resolve(loader, dexPaths, appInfo);
+    }
+
+    static HostAbi resolveFresh(ClassLoader loader, String[] dexPaths) throws Exception {
+        Throwable namedError;
         try {
             return resolveNamed(loader);
-        } catch (Throwable namedError) {
+        } catch (Throwable error) {
+            namedError = error;
+        }
+
+        Throwable dexKitError = null;
+        Throwable dexScanError = null;
+        if (dexPaths != null && dexPaths.length > 0) {
             try {
-                HostAbi minified = resolveMinified110(loader);
-                DebugLogger.w("named host ABI unavailable; using known minified ABI: "
+                HostAbi scanned = DexKitAbiScanner.resolve(loader, dexPaths);
+                DebugLogger.w("named host ABI unavailable; using DexKit-assisted ABI: "
                         + shortError(namedError));
-                return minified;
-            } catch (Throwable minifiedError) {
-                if (dexPaths != null && dexPaths.length > 0) {
-                    try {
-                        HostAbi scanned = DexAbiScanner.resolve(loader, dexPaths);
-                        DebugLogger.w("known minified ABI unavailable; using DEX-scanned ABI: "
-                                + shortError(minifiedError));
-                        return scanned;
-                    } catch (Throwable scanError) {
-                        NoSuchMethodException combined = new NoSuchMethodException(
-                                "host ABI unavailable; named=" + shortError(namedError)
-                                        + " minified=" + shortError(minifiedError)
-                                        + " dex=" + shortError(scanError));
-                        combined.initCause(scanError);
-                        throw combined;
-                    }
-                }
-                if (minifiedError instanceof Exception) throw (Exception) minifiedError;
-                throw new Exception(minifiedError);
+                return scanned;
+            } catch (Throwable error) {
+                dexKitError = error;
+                DebugLogger.w("DexKit-assisted ABI unavailable; trying legacy DEX scan: "
+                        + shortError(error));
             }
+            try {
+                HostAbi scanned = DexAbiScanner.resolve(loader, dexPaths);
+                DebugLogger.w("DexKit-assisted ABI unavailable; using legacy DEX scan: "
+                        + shortError(dexKitError));
+                return scanned;
+            } catch (Throwable error) {
+                dexScanError = error;
+            }
+        }
+
+        try {
+            HostAbi minified = resolveMinified110(loader);
+            DebugLogger.w("dynamic host ABI unavailable; using known minified ABI: dexkit="
+                    + shortError(dexKitError) + " dex=" + shortError(dexScanError));
+            return minified;
+        } catch (Throwable minifiedError) {
+            NoSuchMethodException combined = new NoSuchMethodException(
+                    "host ABI unavailable; named=" + shortError(namedError)
+                            + " dexkit=" + shortError(dexKitError)
+                            + " dex=" + shortError(dexScanError)
+                            + " minified=" + shortError(minifiedError));
+            combined.initCause(dexScanError != null ? dexScanError
+                    : (dexKitError != null ? dexKitError : minifiedError));
+            throw combined;
         }
     }
 

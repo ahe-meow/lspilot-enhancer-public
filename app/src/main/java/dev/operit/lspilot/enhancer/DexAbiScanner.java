@@ -17,8 +17,23 @@ final class DexAbiScanner {
     private DexAbiScanner() {}
 
     static HostAbi resolve(ClassLoader loader, String[] dexPaths) throws Exception {
-        List<String> classNames = dexClassNames(dexPaths);
-        List<Class<?>> classes = loadCandidateClasses(loader, classNames);
+        return resolveClassNames(loader, dexClassNames(dexPaths), true);
+    }
+
+    static HostAbi resolveCandidates(ClassLoader loader, Iterable<String> candidateNames)
+            throws Exception {
+        Set<String> uniqueNames = new LinkedHashSet<>();
+        if (candidateNames != null) {
+            for (String name : candidateNames) {
+                if (name != null && !name.isEmpty()) uniqueNames.add(name);
+            }
+        }
+        return resolveClassNames(loader, new ArrayList<>(uniqueNames), false);
+    }
+
+    private static HostAbi resolveClassNames(ClassLoader loader, List<String> classNames,
+            boolean filterNames) throws Exception {
+        List<Class<?>> classes = loadCandidateClasses(loader, classNames, filterNames);
         List<BuildRequestCandidate> buildRequests = findBuildRequests(classes);
         Class<?> function1Class = Class.forName("kotlin.jvm.functions.Function1", false, loader);
         Class<?> messageClass = findMessageClass(classes);
@@ -96,10 +111,11 @@ final class DexAbiScanner {
         return new ArrayList<>(result);
     }
 
-    private static List<Class<?>> loadCandidateClasses(ClassLoader loader, List<String> classNames) {
+    private static List<Class<?>> loadCandidateClasses(ClassLoader loader, List<String> classNames,
+            boolean filterNames) {
         List<Class<?>> result = new ArrayList<>();
         for (String className : classNames) {
-            if (!isAbiCandidateName(className)) continue;
+            if (filterNames && !isAbiCandidateName(className)) continue;
             Class<?> type = loadClass(loader, className);
             if (type != null) result.add(type);
         }

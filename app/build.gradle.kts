@@ -11,8 +11,8 @@ android {
         applicationId = "dev.operit.lspilot.cache"
         minSdk = 26
         targetSdk = 29
-        versionCode = 50
-        versionName = "1.7.4-preview.13"
+        versionCode = 53
+        versionName = "1.7.4-preview.16"
     }
 
     buildTypes {
@@ -32,7 +32,14 @@ android {
         targetCompatibility = JavaVersion.VERSION_1_8
     }
 
+    buildFeatures {
+        buildConfig = true
+    }
+
     packaging {
+        jniLibs {
+            useLegacyPackaging = true
+        }
         resources {
             merges += "META-INF/xposed/*"
         }
@@ -41,4 +48,5 @@ android {
 
 dependencies {
     compileOnly(files("../lib/libxposed-api-102.0.0.aar"))
+    implementation("org.luckypray:dexkit:2.2.0")
 }
