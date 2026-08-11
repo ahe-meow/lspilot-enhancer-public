@@ -3,6 +3,9 @@ package dev.operit.lspilot.enhancer;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import java.util.HashMap;
+import java.util.Map;
+
 /** Runnable non-UI protocol checks; assertions are enabled by the dalvikvm command. */
 public final class ModelContextCompressionCheck {
     private ModelContextCompressionCheck() {
@@ -39,6 +42,107 @@ public final class ModelContextCompressionCheck {
                 "unpaired tool calls must fail");
         assertTrue(SummaryProtocol.estimateTokens(source) > 0,
                 "effective context must have a positive estimate");
+
+        assertEquals(CompressionStateMachine.State.WAITING_SAFE_BOUNDARY,
+                CompressionStateMachine.transition(CompressionStateMachine.State.IDLE,
+                        CompressionStateMachine.Event.OVER_LIMIT_UNPAIRED),
+                "unpaired over-limit context must wait");
+        assertEquals(CompressionStateMachine.State.SUMMARIZING,
+                CompressionStateMachine.transition(CompressionStateMachine.State.IDLE,
+                        CompressionStateMachine.Event.OVER_LIMIT_SAFE),
+                "safe over-limit context must summarize");
+        assertEquals(CompressionStateMachine.State.RETRYING,
+                CompressionStateMachine.transition(CompressionStateMachine.State.VALIDATING,
+                        CompressionStateMachine.Event.FIRST_FAILURE),
+                "first validation failure must retry");
+        assertEquals(CompressionStateMachine.State.AWAITING_USER_ACTION,
+                CompressionStateMachine.transition(CompressionStateMachine.State.RETRYING,
+                        CompressionStateMachine.Event.FAILURE_EXHAUSTED),
+                "exhausted retry must await action");
+
+        CompressionStateMachine.Task task = CompressionStateMachine.newTask(
+                "chat-1", "boundary", "provider-a", "model-a", 3);
+        assertTrue(CompressionStateMachine.isCurrent(task, task.taskId, "chat-1"),
+                "current task must accept its response");
+        assertTrue(!CompressionStateMachine.isCurrent(task, task.taskId, "chat-2"),
+                "switched chat must reject late response");
+
+        String first = SummaryRecordStore.fingerprint(source);
+        String same = SummaryRecordStore.fingerprint(copyWithTransientFields(source));
+        String changed = SummaryRecordStore.fingerprint(copyWithChangedContent(source));
+        assertEquals(first, same, "transient host fields must not alter boundary fingerprint");
+        assertTrue(!first.equals(changed), "stable content edit must invalidate the boundary");
+
+        MemoryStore memory = new MemoryStore();
+        SummaryRecordStore.useStore(memory);
+        SummaryRecordStore.Record record = new SummaryRecordStore.Record(
+                "chat-1", "summary", source, first, "provider-a", "model-a",
+                3, 100, 50, 50, 50d, true, 123L);
+        SummaryRecordStore.writeComplete("chat-1", record);
+        assertTrue(SummaryRecordStore.readUsable("chat-1", source, "provider-a", "model-a") != null,
+                "complete record must round-trip");
+        memory.values.put(memory.lastKey,
+                new JSONObject(memory.values.get(memory.lastKey)).put("complete", false).toString());
+        assertTrue(SummaryRecordStore.readUsable("chat-1", source, "provider-a", "model-a") == null,
+                "incomplete record must be ignored");
+        SummaryRecordStore.writeComplete("chat-1", record);
+        assertTrue(SummaryRecordStore.readUsable("chat-1", source, "provider-b", "model-a") == null,
+                "provider change must invalidate record");
+        assertTrue(SummaryRecordStore.readUsable("chat-1", copyWithChangedContent(source),
+                "provider-a", "model-a") == null,
+                "history change must invalidate record");
+        SummaryRecordStore.invalidate("chat-1");
+        assertTrue(SummaryRecordStore.readUsable("chat-1", source, "provider-a", "model-a") == null,
+                "explicit invalidation must remove record");
+        SummaryRecordStore.useStore(null);
+    }
+
+    private static JSONArray copyWithTransientFields(JSONArray source) throws Exception {
+        JSONArray result = new JSONArray();
+        for (int index = 0; index < source.length(); index++) {
+            JSONObject copy = new JSONObject(source.getJSONObject(index).toString())
+                    .put("_lspilot_host_index", index)
+                    .put("pendingInput", "draft text");
+            result.put(copy);
+        }
+        result.put(new JSONObject().put("role", "system")
+                .put("content", "[系统提示 · 上下文压缩]\nwaiting"));
+        return result;
+    }
+
+    private static JSONArray copyWithChangedContent(JSONArray source) throws Exception {
+        JSONArray result = new JSONArray();
+        boolean changed = false;
+        for (int index = 0; index < source.length(); index++) {
+            JSONObject copy = new JSONObject(source.getJSONObject(index).toString());
+            if (!changed && "user".equals(copy.optString("role"))) {
+                copy.put("content", "edited content");
+                changed = true;
+            }
+            result.put(copy);
+        }
+        return result;
+    }
+
+    private static final class MemoryStore implements SummaryRecordStore.KeyValueStore {
+        final Map<String, String> values = new HashMap<>();
+        String lastKey;
+
+        @Override
+        public String get(String key) {
+            return values.get(key);
+        }
+
+        @Override
+        public void put(String key, String value) {
+            lastKey = key;
+            values.put(key, value);
+        }
+
+        @Override
+        public void remove(String key) {
+            values.remove(key);
+        }
     }
 
     private static String validMarkdown(int rounds) {
