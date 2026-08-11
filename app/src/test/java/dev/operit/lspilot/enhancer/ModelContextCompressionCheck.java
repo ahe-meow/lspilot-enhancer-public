@@ -94,6 +94,76 @@ public final class ModelContextCompressionCheck {
         SummaryRecordStore.invalidate("chat-1");
         assertTrue(SummaryRecordStore.readUsable("chat-1", source, "provider-a", "model-a") == null,
                 "explicit invalidation must remove record");
+
+        JSONArray pendingUser = new JSONArray().put(message("user", "blocked request"));
+        JSONArray sourceWithPending = copy(source);
+        sourceWithPending.put(pendingUser.getJSONObject(0));
+        JSONArray summarySource = ManualCompressionManager.excludePendingUser(
+                sourceWithPending, pendingUser);
+        assertEquals(source.length(), summarySource.length(),
+                "blocked user message must be excluded from summary source");
+        JSONArray recovery = new JSONArray().put(
+                SummaryProtocol.wrapBaseline(validMarkdown(3)));
+        recovery = ManualCompressionManager.appendPendingUserOnce(recovery, pendingUser);
+        recovery = ManualCompressionManager.appendPendingUserOnce(recovery, pendingUser);
+        assertEquals(1, countMessage(recovery, pendingUser.getJSONObject(0)),
+                "blocked user message must be recovered exactly once");
+
+        ManualCompressionManager.bufferRecoveryEvents(new JSONArray()
+                .put(message("assistant", "assistant-1"))
+                .put(message("assistant", "tool-call"))
+                .put(message("tool", "tool-result")));
+        JSONArray flushed = ManualCompressionManager.drainRecoveryEvents();
+        assertEquals("assistant-1", flushed.getJSONObject(0).optString("content"),
+                "recovery events must preserve assistant order");
+        assertEquals("tool-call", flushed.getJSONObject(1).optString("content"),
+                "recovery events must preserve tool-call order");
+        assertEquals("tool-result", flushed.getJSONObject(2).optString("content"),
+                "recovery events must preserve tool-result order");
+        assertEquals(0, ManualCompressionManager.drainRecoveryEvents().length(),
+                "recovery events must flush only once");
+        assertTrue(ManualCompressionManager.blocksNewSend(
+                        CompressionStateMachine.State.SUMMARIZING),
+                "summary states must block new sends");
+        assertTrue(!ManualCompressionManager.blocksNewSend(CompressionStateMachine.State.IDLE),
+                "idle state must allow sends");
+        assertEquals(3, ModuleSettings.getSummaryKeepRecent(),
+                "model summary retention must default to three rounds");
+        assertEquals(SummaryProtocol.estimateTokens(source),
+                ManualCompressionManager.completedContextTokens(source),
+                "threshold must count completed messages without pending input");
+
+        String effectiveChat = "chat-effective";
+        ManualCompressionManager.enterChat(effectiveChat);
+        JSONArray boundary = pairedToolMessages();
+        SummaryRecordStore.Record effectiveRecord = new SummaryRecordStore.Record(
+                effectiveChat, validMarkdown(3), boundary,
+                SummaryRecordStore.fingerprint(boundary), "provider-a", "model-a",
+                3, 1000, 400, 600, 60d, true, 456L);
+        SummaryRecordStore.writeComplete(effectiveChat, effectiveRecord);
+        JSONArray hostMessages = copy(boundary);
+        hostMessages.put(message("assistant", "post-boundary"));
+        JSONArray effective = ManualCompressionManager.effectiveRequestMessages(
+                hostMessages, "provider-a", "model-a");
+        assertEquals(3, effective.length(),
+                "usable summary must rebuild system, baseline and post-boundary context");
+        assertEquals("system", effective.getJSONObject(0).optString("role"),
+                "rebuilt context must retain current system message");
+        assertContains(effective.getJSONObject(1).optString("content"),
+                SummaryProtocol.BASELINE_PREFIX);
+        assertEquals("post-boundary", effective.getJSONObject(2).optString("content"),
+                "rebuilt context must retain post-boundary messages");
+
+        JSONArray providerFallback = ManualCompressionManager.effectiveRequestMessages(
+                hostMessages, "provider-b", "model-a");
+        assertEquals(hostMessages.length(), providerFallback.length(),
+                "provider change must fall back to unsummarized effective history");
+        SummaryRecordStore.writeComplete(effectiveChat, effectiveRecord);
+        JSONArray editedHistory = copyWithChangedContent(hostMessages);
+        JSONArray historyFallback = ManualCompressionManager.effectiveRequestMessages(
+                editedHistory, "provider-a", "model-a");
+        assertEquals(editedHistory.length(), historyFallback.length(),
+                "covered history change must invalidate and fall back");
         SummaryRecordStore.useStore(null);
     }
 
@@ -122,6 +192,23 @@ public final class ModelContextCompressionCheck {
             result.put(copy);
         }
         return result;
+    }
+
+    private static JSONArray copy(JSONArray source) throws Exception {
+        return new JSONArray(source.toString());
+    }
+
+    private static int countMessage(JSONArray messages, JSONObject expected) {
+        int count = 0;
+        for (int index = 0; index < messages.length(); index++) {
+            JSONObject message = messages.optJSONObject(index);
+            if (message != null
+                    && message.optString("role").equals(expected.optString("role"))
+                    && message.optString("content").equals(expected.optString("content"))) {
+                count++;
+            }
+        }
+        return count;
     }
 
     private static final class MemoryStore implements SummaryRecordStore.KeyValueStore {

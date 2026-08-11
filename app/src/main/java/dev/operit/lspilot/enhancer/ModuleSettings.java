@@ -29,6 +29,7 @@ final class ModuleSettings {
     private static final String KEY_HOST_MIGRATED = "settings_host_migrated_v1";
 
     static final int DEFAULT_AUTO_CONTEXT_TOKENS = 16_000;
+    static final int DEFAULT_SUMMARY_KEEP_RECENT = 3;
     static final int MIN_AUTO_CONTEXT_TOKENS = 1_000;
     static final int MAX_AUTO_CONTEXT_TOKENS = 512_000;
 
@@ -155,6 +156,10 @@ final class ModuleSettings {
                 ContextCompression.KEEP_RECENT_MESSAGES);
         return value == 16 || value == 32 || value == 64
                 ? value : ContextCompression.KEEP_RECENT_MESSAGES;
+    }
+
+    static int getSummaryKeepRecent() {
+        return DEFAULT_SUMMARY_KEEP_RECENT;
     }
 
     static void setManualKeepRecent(int value) {

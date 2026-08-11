@@ -10,18 +10,12 @@ import org.json.JSONObject;
 import java.lang.ref.WeakReference;
 import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.ScheduledFuture;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
-/** Coordinates chat-scoped manual compression without mutating host state. */
+/** Coordinates model-driven, chat-scoped context compression. */
 final class ManualCompressionManager {
     interface Callback {
         void onComplete(Result result);
@@ -60,68 +54,33 @@ final class ManualCompressionManager {
         final long durationMs;
         final int chunks;
 
-        CompressionMetrics(int originalMessages, int compactedMessages, int originalChars,
-                int compactedChars, int originalBytes, int compactedBytes,
-                long durationMs, int chunks) {
-            this.originalMessages = originalMessages;
-            this.compactedMessages = compactedMessages;
-            this.originalChars = originalChars;
-            this.compactedChars = compactedChars;
-            this.originalBytes = originalBytes;
-            this.compactedBytes = compactedBytes;
-            this.originalApproxTokens = approxTokens(originalChars, originalBytes);
-            this.compactedApproxTokens = approxTokens(compactedChars, compactedBytes);
+        CompressionMetrics(JSONArray before, JSONArray after, long durationMs) {
+            String original = before == null ? "" : before.toString();
+            String compacted = after == null ? "" : after.toString();
+            originalMessages = before == null ? 0 : before.length();
+            compactedMessages = after == null ? 0 : after.length();
+            originalChars = original.length();
+            compactedChars = compacted.length();
+            originalBytes = original.getBytes(StandardCharsets.UTF_8).length;
+            compactedBytes = compacted.getBytes(StandardCharsets.UTF_8).length;
+            originalApproxTokens = estimate(original);
+            compactedApproxTokens = estimate(compacted);
             this.durationMs = durationMs;
-            this.chunks = chunks;
-        }
-
-        static CompressionMetrics measure(JSONArray before, JSONArray after,
-                long durationMs, int chunks) {
-            int[] beforeSize = size(before);
-            int[] afterSize = size(after);
-            return new CompressionMetrics(before == null ? 0 : before.length(),
-                    after == null ? 0 : after.length(), beforeSize[0], afterSize[0],
-                    beforeSize[1], afterSize[1], durationMs, chunks);
-        }
-
-        private static int[] size(JSONArray messages) {
-            if (messages == null) return new int[]{0, 0};
-            String text = messages.toString();
-            return new int[]{text.length(), text.getBytes(StandardCharsets.UTF_8).length};
-        }
-
-        private static int approxTokens(int chars, int bytes) {
-            return Math.max(0, Math.max(Math.round(chars / 4f), Math.round(bytes / 3f)));
+            chunks = 1;
         }
 
         int ratioPercent() {
-            return originalChars <= 0 ? 0 : Math.round(compactedChars * 100f / originalChars);
+            return originalApproxTokens == 0 ? 0
+                    : Math.round(compactedApproxTokens * 100f / originalApproxTokens);
         }
 
-        boolean reducesContext() {
-            return originalApproxTokens > 0
-                    && compactedApproxTokens > 0
-                    && compactedApproxTokens < originalApproxTokens
-                    && compactedChars < originalChars
-                    && compactedBytes < originalBytes;
-        }
-
-        String notReducedMessage() {
-            return "压缩结果没有降低上下文长度（估算 token "
-                    + originalApproxTokens + " -> " + compactedApproxTokens
-                    + "，字符 " + originalChars + " -> " + compactedChars + "）";
-        }
-
-        String describe() {
-            return "messages=" + originalMessages + "->" + compactedMessages
-                    + " chars=" + originalChars + "->" + compactedChars
-                    + " bytes=" + originalBytes + "->" + compactedBytes
-                    + " approxTokens=" + originalApproxTokens + "->" + compactedApproxTokens
-                    + " ratio=" + ratioPercent() + "% durationMs=" + durationMs
-                    + " chunks=" + chunks;
+        private static int estimate(String text) {
+            int bytes = text.getBytes(StandardCharsets.UTF_8).length;
+            return Math.max(Math.round(text.length() / 4f), Math.round(bytes / 3f));
         }
     }
-static final class Result {
+
+    static final class Result {
         final boolean success;
         final String message;
         final int originalCount;
@@ -142,67 +101,72 @@ static final class Result {
         }
     }
 
+    static final class SummaryTaskSnapshot {
+        final CompressionStateMachine.Task task;
+        final JSONArray source;
+        final Object config;
+        final String prompt;
 
+        SummaryTaskSnapshot(CompressionStateMachine.Task task, JSONArray source,
+                Object config, String prompt) {
+            this.task = task;
+            this.source = copyArray(source);
+            this.config = config;
+            this.prompt = prompt;
+        }
+    }
 
-    private static final ExecutorService EXECUTOR = Executors.newSingleThreadExecutor(runnable -> {
-        Thread thread = new Thread(runnable, "LSPilotManualCompression");
-        thread.setDaemon(true);
-        return thread;
-    });
+    private static final String ENHANCER_MARKER = "[系统提示 · 上下文压缩]";
+    static final String RETRY_STATUS_MARKER = "[系统提示 · 自动重试]";
+    private static final String TAG = "LSPilotEnhancer";
+    private static final long STATUS_MIN_INTERVAL_MS = 1_500L;
     private static final ExecutorService STATUS_EXECUTOR = Executors.newSingleThreadExecutor(runnable -> {
         Thread thread = new Thread(runnable, "LSPilotCompressionStatus");
         thread.setDaemon(true);
         return thread;
     });
-    private static final ScheduledExecutorService WATCHDOG = Executors.newSingleThreadScheduledExecutor(runnable -> {
-        Thread thread = new Thread(runnable, "LSPilotCompressionWatchdog");
-        thread.setDaemon(true);
-        return thread;
-    });
-    private static final AtomicLong GENERATION = new AtomicLong();
     private static final AtomicLong STATUS_SEQUENCE = new AtomicLong();
-    private static final AtomicBoolean PREPARING = new AtomicBoolean(false);
     private static final ThreadLocal<Boolean> INTERNAL_BUILD = new ThreadLocal<>();
 
-    private static final long COMPRESSION_TIMEOUT_MS = 60_000L;
-    private static final long STATUS_MIN_INTERVAL_MS = 1_500L;
-    private static final int METHOD_CACHE_MAX_ENTRIES = 64;
-    private static final Map<String, Method> NO_ARG_METHOD_CACHE =
-            new LinkedHashMap<String, Method>(METHOD_CACHE_MAX_ENTRIES, 0.75f, true) {
-                @Override
-                protected boolean removeEldestEntry(Map.Entry<String, Method> eldest) {
-                    return size() > METHOD_CACHE_MAX_ENTRIES;
-                }
-            };
-    private static final String ENHANCER_MARKER = "[系统提示 · 上下文压缩]";
-    static final String RETRY_STATUS_MARKER = "[系统提示 · 自动重试]";
-    private static final String ENHANCER_ROLE = "system";
-    private static final String HOST_INDEX = "_lspilot_host_index";
-    private static final String TAG = "LSPilotEnhancer";
-    private static volatile Method buildRequestMethod;
     private static volatile HostAbi hostAbi;
-    private static volatile long compressionStartedAt;
-    private static volatile CompressionMetrics lastMetrics;
-    private static volatile boolean compressionUsedForPendingRequest;
-    private static volatile int lastProgressCompleted;
-    private static volatile int lastProgressTotal;
-    private static volatile long lastBlockedSendNoticeAt;
-    private static volatile long lastStatusPostAt;
-    private static volatile String lastStatusFingerprint;
-    private static Handler mainHandler() {
-        return new Handler(Looper.getMainLooper());
-    }
-
     private static volatile ScreenState currentScreen;
     private static volatile WeakReference<Object> viewModelRef = new WeakReference<>(null);
     private static volatile String viewModelChatId;
-    private static volatile Prepared prepared;
+    private static volatile String currentChatId;
     private static volatile Result lastResult;
-    private static volatile int lastKeepRecent;
-    private static volatile boolean preparedUsedForActiveResponse;
-    private static volatile boolean preparedUsageNoticePosted;
-    private static volatile int preparedApplyCount;
-    private static volatile boolean automaticCompressionSession;
+    private static volatile int lastKeepRecent = ModuleSettings.DEFAULT_SUMMARY_KEEP_RECENT;
+    private static volatile CompressionMetrics lastMetrics;
+    private static volatile boolean compressionUsedForPendingRequest;
+    private static volatile long lastBlockedSendNoticeAt;
+    private static volatile long lastStatusPostAt;
+    private static volatile String lastStatusFingerprint;
+
+    private static CompressionStateMachine.State state = CompressionStateMachine.State.IDLE;
+    private static CompressionStateMachine.Task activeTask;
+    private static JSONArray taskSource = new JSONArray();
+    private static JSONArray taskBoundary = new JSONArray();
+    private static Object taskConfig;
+    private static int retryCount;
+    private static boolean automaticRetryAllowed;
+    private static boolean recoveryRequestNeeded;
+    private static JSONArray latestHostMessages = new JSONArray();
+    private static JSONArray previousCompleteMessages = new JSONArray();
+    private static JSONArray pendingUserRequest = new JSONArray();
+    private static JSONArray pendingRecoveryEvents = new JSONArray();
+    private static SummaryRecordStore.Record usableRecord;
+    private static Callback completionCallback;
+    private static long compressionStartedAt;
+
+    private ManualCompressionManager() {
+    }
+
+    static void configure(HostAbi abi) {
+        hostAbi = abi;
+    }
+
+    static HostAbi hostAbi() {
+        return hostAbi;
+    }
 
     static Result getLastResult() {
         return lastResult;
@@ -212,198 +176,47 @@ static final class Result {
         return lastKeepRecent;
     }
 
-    private ManualCompressionManager() {
+    static boolean isInternalBuild() {
+        return Boolean.TRUE.equals(INTERNAL_BUILD.get());
     }
 
-    static void configure(HostAbi abi) {
-        hostAbi = abi;
-        buildRequestMethod = abi.buildRequestMethod;
-        DebugLogger.i("compression manager configured; minified=" + abi.minified
-                + " buildMethod=" + (abi.buildRequestMethod == null ? "none"
-                : abi.buildRequestMethod.getDeclaringClass().getName()
-                + "#" + abi.buildRequestMethod.getName()));
+    static synchronized CompressionStateMachine.State getCompressionState() {
+        return state;
     }
 
-    static HostAbi hostAbi() {
-        return hostAbi;
-    }
-    private static void postStatus(String chatId, String content) {
-        postStatus(chatId, ENHANCER_MARKER, content, !automaticCompressionSession);
+    static synchronized boolean isSummaryTaskActive() {
+        return state != CompressionStateMachine.State.IDLE;
     }
 
-    static void postChatStatus(String chatId, String content) {
-        postStatus(chatId, RETRY_STATUS_MARKER, content, false);
+    static boolean blocksNewSend(CompressionStateMachine.State value) {
+        return value != null && value != CompressionStateMachine.State.IDLE;
     }
 
-    private static void postStatus(String chatId, String marker, String content) {
-        postStatus(chatId, marker, content, !automaticCompressionSession);
+    static synchronized boolean isPreparing() {
+        return blocksNewSend(state);
     }
 
-    private static void postStatus(String chatId, String marker, String content,
-            boolean allowPanel) {
-        HostAbi abi = hostAbi;
-        if (chatId == null || content == null || abi == null
-                || abi.repositoryAddMessageMethod == null) {
-            DebugLogger.w("chat status skipped chat=" + DebugLogger.id(chatId)
-                    + " bridgeReady=" + (abi != null && abi.repositoryAddMessageMethod != null));
-            return;
-        }
-        if (shouldDropStatus(content)) {
-            DebugLogger.d("chat status throttled chat=" + DebugLogger.id(chatId)
-                    + " prefix=" + DebugLogger.redact(content));
-            return;
-        }
-        STATUS_EXECUTOR.execute(() -> {
-            try {
-                Object message = abi.newStatusMessage(
-                        "lspilot-enhancer-" + System.currentTimeMillis()
-                                + "-" + STATUS_SEQUENCE.incrementAndGet(), ENHANCER_ROLE,
-                        marker + "\n" + content, System.currentTimeMillis());
-                Object repository = HostAbi.singletonInstance(abi.repositoryClass);
-                abi.repositoryAddMessageMethod.invoke(repository, chatId, message);
-                DebugLogger.i("chat status inserted chat=" + DebugLogger.id(chatId)
-                        + " chars=" + content.length()
-                        + " refresh=local_compression_ui");
-                refreshCompressionUi(allowPanel);
-            } catch (Throwable error) {
-                DebugLogger.e("chat status insertion failed chat=" + DebugLogger.id(chatId), error);
-            }
-        });
-    }
-
-    private static boolean shouldDropStatus(String content) {
-        String fingerprint = statusFingerprint(content);
-        long now = System.currentTimeMillis();
-        synchronized (ManualCompressionManager.class) {
-            if (fingerprint.equals(lastStatusFingerprint)
-                    && now - lastStatusPostAt < STATUS_MIN_INTERVAL_MS) {
-                return true;
-            }
-            lastStatusFingerprint = fingerprint;
-            lastStatusPostAt = now;
-            return false;
-        }
-    }
-
-    private static String statusFingerprint(String content) {
-        if (content.startsWith("压缩进度：摘要分块 ")
-                || content.startsWith("压缩中：摘要分块 ")) {
-            return "compression-progress";
-        }
-        return content;
-    }
-
-    static void postCompressionStatus(String content) {
-        postCompressionStatus(content, true);
-    }
-
-    static void postCompressionStatusQuiet(String content) {
-        postCompressionStatus(content, false);
-    }
-
-    private static void postCompressionStatus(String content, boolean allowPanel) {
-        ScreenState screen = currentScreen;
-        if (screen != null) postStatus(screen.chatId, ENHANCER_MARKER, content, allowPanel);
-    }
-
-    static void onProviderUsage(long inputTokens, long outputTokens, long cachedTokens,
-            long totalTokens) {
-        CompressionMetrics metrics = lastMetrics;
-        boolean used = compressionUsedForPendingRequest;
-        compressionUsedForPendingRequest = false;
-        String chatId = currentScreen == null ? "none" : DebugLogger.id(currentScreen.chatId);
-        DebugLogger.i("provider usage observed chat=" + chatId
-                + " inputTokens=" + display(inputTokens)
-                + " outputTokens=" + display(outputTokens)
-                + " totalTokens=" + display(totalTokens)
-                + " cachedTokens=" + display(cachedTokens)
-                + " compressionUsed=" + used
-                + " compressionPrepared=" + (metrics != null));
-        if (used && metrics != null) {
-            postCompressionStatus("Provider 已返回本次请求用量，确认压缩上下文已参与请求："
-                    + "输入 token " + display(inputTokens) + "，总 token "
-                    + display(totalTokens) + "，缓存 token " + display(cachedTokens) + "。"
-                    + "压缩上下文估算 token " + metrics.compactedApproxTokens + "。");
-        }
-    }
-
-    private static String display(long value) {
-        return value < 0L ? "不可用" : Long.toString(value);
-    }
-
-    static void recordAutomaticCompression(JSONArray before, JSONArray after) {
-        if (before == null || after == null || before == after) return;
-        CompressionMetrics metrics = CompressionMetrics.measure(before, after, 0L, 0);
-        if (!metrics.reducesContext()) {
-            Log.w(TAG, "automatic compression ignored: result is not smaller "
-                    + metrics.describe());
-            return;
-        }
-        lastMetrics = metrics;
-        compressionUsedForPendingRequest = true;
-        DebugLogger.i("automatic compression applied chat="
-                + (currentScreen == null ? "none" : DebugLogger.id(currentScreen.chatId))
-                + " " + metrics.describe());
-        postCompressionStatus("自动压缩已应用：消息 " + metrics.originalMessages + " -> "
-                + metrics.compactedMessages + "；上下文字符 " + metrics.originalChars + " -> "
-                + metrics.compactedChars + "；估算 token " + metrics.originalApproxTokens + " -> "
-                + metrics.compactedApproxTokens + "；压缩率 " + metrics.ratioPercent() + "%。"
-                + " 本次请求已使用压缩上下文。");
-    }
-
-    private static boolean isEnhancerStatusContent(String content) {
-        return content != null && (content.startsWith(ENHANCER_MARKER)
-                || content.startsWith(RETRY_STATUS_MARKER));
-    }
-
-    private static boolean isEnhancerStatus(Object message) {
-        return message instanceof JSONObject
-                && ((JSONObject) message).optString("role").equals(ENHANCER_ROLE)
-                && isEnhancerStatusContent(((JSONObject) message).optString("content"));
-    }
-
-    private static boolean sameSerializedMessage(Object first, Object second) {
-        if (first == second) return true;
-        if (first instanceof JSONObject && second instanceof JSONObject) {
-            JSONObject firstMessage = (JSONObject) first;
-            JSONObject secondMessage = (JSONObject) second;
-            if (!firstMessage.optString("role").equals(secondMessage.optString("role"))) {
-                return false;
-            }
-            Object firstContent = firstMessage.opt("content");
-            Object secondContent = secondMessage.opt("content");
-            String firstText = firstContent == null || JSONObject.NULL.equals(firstContent)
-                    ? "" : String.valueOf(firstContent);
-            String secondText = secondContent == null || JSONObject.NULL.equals(secondContent)
-                    ? "" : String.valueOf(secondContent);
-            String firstToolCallId = firstMessage.optString("_lspilot_tool_call_id",
-                    firstMessage.optString("tool_call_id"));
-            String secondToolCallId = secondMessage.optString("_lspilot_tool_call_id",
-                    secondMessage.optString("tool_call_id"));
-            return firstText.equals(secondText)
-                    && firstToolCallId.equals(secondToolCallId)
-                    && ContextCompression.hasToolCalls(firstMessage)
-                    == ContextCompression.hasToolCalls(secondMessage);
-        }
-        return String.valueOf(first).equals(String.valueOf(second));
-    }
-
-    private static JSONArray withoutEnhancerStatuses(JSONArray messages) throws Exception {
-        JSONArray result = new JSONArray();
-        if (messages == null) return result;
-        for (int index = 0; index < messages.length(); index++) {
-            Object item = messages.get(index);
-            if (!isEnhancerStatus(item)) result.put(item);
-        }
-        return result;
+    static synchronized SummaryTaskSnapshot currentSummaryTask() {
+        if (activeTask == null || state != CompressionStateMachine.State.SUMMARIZING) return null;
+        return new SummaryTaskSnapshot(activeTask, taskSource, taskConfig,
+                SummaryProtocol.buildPrompt(taskSource, activeTask.keepRecent,
+                        ModuleSettings.getAutoContextTokens(), ""));
     }
 
     static void captureViewModel(Object viewModel, String chatId) {
         if (viewModel == null || chatId == null) return;
         viewModelRef = new WeakReference<>(viewModel);
         viewModelChatId = chatId;
-        DebugLogger.i("chat ViewModel captured class=" + viewModel.getClass().getName()
-                + " chat=" + DebugLogger.id(chatId));
+    }
+
+    static synchronized void enterChat(String chatId) {
+        if (chatId == null || chatId.equals(currentChatId)) return;
+        cancelActive("对话已切换，原上下文未改变。", false);
+        currentChatId = chatId;
+        currentScreen = null;
+        latestHostMessages = new JSONArray();
+        previousCompleteMessages = new JSONArray();
+        usableRecord = null;
     }
 
     static void updateMinifiedScreen(String chatId, Object viewModel) {
@@ -412,8 +225,8 @@ static final class Result {
         viewModelRef = new WeakReference<>(viewModel);
         viewModelChatId = chatId;
         try {
-            Object state = abi.currentState(viewModel);
-            if (state != null) updateScreen(chatId, state);
+            Object value = abi.currentState(viewModel);
+            if (value != null) updateScreen(chatId, value);
         } catch (Throwable error) {
             DebugLogger.e("minified chat state capture failed", error);
         }
@@ -422,97 +235,34 @@ static final class Result {
     static void refreshCurrentScreen() {
         HostAbi abi = hostAbi;
         Object viewModel = viewModelRef.get();
-        String chatId = viewModelChatId;
-        if (abi == null || !abi.minified || viewModel == null || chatId == null) return;
-        updateMinifiedScreen(chatId, viewModel);
-    }
-
-    static JSONArray sanitizeRequestMessages(JSONArray messages) {
-        if (messages == null) return null;
-        try {
-            JSONArray clean = withoutEnhancerStatuses(messages);
-            return clean.length() == messages.length() ? messages : clean;
-        } catch (Throwable error) {
-            DebugLogger.e("request message sanitization failed", error);
-            return messages;
-        }
-    }
-
-    static boolean isInternalBuild() {
-        return Boolean.TRUE.equals(INTERNAL_BUILD.get());
-    }
-
-    static void enterChat(String chatId) {
-        if (chatId == null) {
-            return;
-        }
-        ScreenState previous = currentScreen;
-        if (previous != null && !chatId.equals(previous.chatId)) {
-            currentScreen = null;
-            automaticCompressionSession = false;
-            resetPreparedState(true);
+        if (abi != null && abi.minified && viewModel != null && viewModelChatId != null) {
+            updateMinifiedScreen(viewModelChatId, viewModel);
         }
     }
 
     static void updateScreen(String chatId, Object uiState) {
-        if (chatId == null || uiState == null) {
-            return;
-        }
+        if (chatId == null || uiState == null) return;
+        enterChat(chatId);
         try {
             HostAbi abi = requireHostAbi();
             List<?> messages = abi.minified ? abi.stateMessages(uiState)
                     : (List<?>) invoke(uiState, "getMessages");
             MessageStats stats = measureHostMessages(messages);
-            String pendingInput = abi.minified
-                    ? invokeStringOrNull(uiState, "c")
-                    : invokeStringOrNull(uiState, "getInputText");
-            if (pendingInput != null && !pendingInput.trim().isEmpty()) {
-                int pendingBytes = pendingInput.getBytes(StandardCharsets.UTF_8).length;
-                stats = new MessageStats(stats.messageCount, stats.turnCount,
-                        stats.approxContextTokens + approxTokens(pendingInput.length(), pendingBytes));
-            }
             boolean loading = abi.minified ? abi.stateLoading(uiState)
                     : Boolean.TRUE.equals(invoke(uiState, "isLoading"));
-            ScreenState previous = currentScreen;
-            if (previous != null && previous.loading && !loading
-                    && preparedUsedForActiveResponse) {
-                Prepared value = prepared;
-                if (value != null && chatId.equals(value.chatId)) {
-                    preparedUsedForActiveResponse = false;
-                    preparedApplyCount = 0;
-                    compressionUsedForPendingRequest = false;
-                    DebugLogger.i((value.automatic ? "automatic" : "manual")
-                            + " prepared context retained after response"
-                            + " baseTurns=" + value.baseTurnCount
-                            + " baseTokens=" + value.baseApproxContextTokens);
-                } else {
-                    DebugLogger.i("prepared context cleared after response finished applyCount="
-                            + preparedApplyCount);
-                    resetPreparedState(true);
-                }
-            }
             Object config = abi.minified ? abi.stateConfig(uiState)
                     : invoke(uiState, "getSelectedProvider");
             String signature = config == null ? "unknown" : abi.providerSignature(config);
-            currentScreen = new ScreenState(chatId, uiState,
-                    stats.messageCount, stats.turnCount, stats.approxContextTokens,
-                    loading, signature);
-            if (ModuleSettings.isVerboseDebugLogEnabled()) {
-                DebugLogger.d("screen update chat=" + DebugLogger.id(chatId)
-                        + " messages=" + (messages == null ? 0 : messages.size())
-                        + " effectiveMessages=" + stats.messageCount
-                        + " turns=" + stats.turnCount
-                        + " approxTokens=" + stats.approxContextTokens
-                        + " loading=" + loading + " provider=" + DebugLogger.redact(signature));
+            ScreenState previous = currentScreen;
+            currentScreen = new ScreenState(chatId, uiState, stats.messageCount,
+                    stats.turnCount, stats.approxContextTokens, loading, signature);
+            if (previous != null && !signature.equals(previous.providerSignature)) {
+                SummaryRecordStore.invalidate(chatId);
+                usableRecord = null;
+                cancelActive("Provider 已变化，压缩记录已失效；原上下文未改变。", true);
             }
-            if (previous != null && previous.loading != loading && loading && PREPARING.get()) {
-                DebugLogger.i("chat became loading while compression is preparing; keeping task state");
-            }
-            if (previous != null && (!chatId.equals(previous.chatId)
-                    || !signature.equals(previous.providerSignature))) {
-                resetPreparedState(true);
-            }
-        } catch (Throwable ignored) {
+            if (messages != null) latestHostMessages = cleanMessages(abi.serializeMessages(messages));
+        } catch (Throwable error) {
             currentScreen = new ScreenState(chatId, uiState, 0, 0, 0, false, "unknown");
         }
     }
@@ -521,603 +271,647 @@ static final class Result {
         return currentScreen;
     }
 
-    static boolean isPreparing() {
-        return PREPARING.get();
+    static synchronized boolean hasPreparedForCurrentChat() {
+        return usableRecord != null && usableRecord.complete
+                && usableRecord.chatId.equals(currentChatId);
+    }
+
+    static synchronized void clearPrepared() {
+        if (currentChatId != null) SummaryRecordStore.invalidate(currentChatId);
+        usableRecord = null;
+    }
+
+    static boolean shouldAutoCompressBeforeSend() {
+        return false;
     }
 
     static boolean blockSendWhilePreparing() {
-        if (!PREPARING.get()) {
-            return false;
+        CompressionStateMachine.State current;
+        synchronized (ManualCompressionManager.class) {
+            current = state;
         }
-        ScreenState screen = currentScreen;
+        if (!blocksNewSend(current)) return false;
         long now = System.currentTimeMillis();
-        if (now - lastBlockedSendNoticeAt >= 3000L) {
+        if (now - lastBlockedSendNoticeAt >= 3_000L) {
             lastBlockedSendNoticeAt = now;
-            postStatus(screen == null ? null : screen.chatId,
-                    "压缩仍在进行，已阻止本次发送；请等待压缩完成后再发送。");
+            postCompressionStatus("上下文压缩仍在进行，已阻止新的发送请求。");
         }
-        DebugLogger.i("send blocked while compression preparing chat="
-                + (screen == null ? "none" : DebugLogger.id(screen.chatId)));
         refreshCompressionUi();
         return true;
     }
 
-    static void refreshCompressionUi() {
-        refreshCompressionUi(!automaticCompressionSession);
-    }
-
-    private static void refreshCompressionUi(boolean allowPanel) {
-        mainHandler().post(() -> {
-            try {
-                NativeChatTopBarAction.refreshPanel(allowPanel);
-                InjectedUiController.refreshChatCompressionOverlay(allowPanel);
-            } catch (Throwable error) {
-                DebugLogger.e("local compression UI refresh failed", error);
-            }
-        });
-    }
-
-    static boolean hasPreparedForCurrentChat() {
-        ScreenState screen = currentScreen;
-        Prepared value = prepared;
-        return screen != null && value != null && screen.chatId.equals(value.chatId);
-    }
-
-    static boolean shouldAutoCompressBeforeSend() {
-        refreshCurrentScreen();
-        ScreenState screen = currentScreen;
-        int keepRecent = ModuleSettings.getManualKeepRecent();
-        int triggerTokens = ModuleSettings.getAutoContextTokens();
-        if (!ModuleSettings.isEnabled()
-                || !ModuleSettings.isContextCompressionEnabled()
-                || screen == null
-                || screen.loading
-                || PREPARING.get()) {
-            return false;
-        }
-        if (screen.messageCount <= keepRecent && screen.approxContextTokens < triggerTokens) {
-            Log.i(TAG, "auto compression skipped: insufficient messages and below token threshold chat="
-                    + DebugLogger.id(screen.chatId)
-                    + " approxTokens=" + screen.approxContextTokens + "/" + triggerTokens
-                    + " messages=" + screen.messageCount
-                    + " keepRecent=" + keepRecent);
-            return false;
-        }
-        if (hasManualPreparedForCurrentChat()) {
-            return false;
-        }
-        Prepared value = prepared;
-        if (value != null && value.automatic && screen.chatId.equals(value.chatId)) {
-            if (!screen.providerSignature.equals(value.providerSignature)) {
-                resetPreparedState(true);
-            } else if (!hasEnoughNewContextForRecompression(screen, value, triggerTokens)) {
-                int newTokens = Math.max(0,
-                        screen.approxContextTokens - value.baseApproxContextTokens);
-                Log.i(TAG, "auto compression skipped: reusing prepared baseline chat="
-                        + DebugLogger.id(screen.chatId)
-                        + " newTokens=" + newTokens + "/" + triggerTokens
-                        + " approxTokens=" + screen.approxContextTokens);
-                return false;
-            }
-        }
-        if (screen.approxContextTokens >= triggerTokens) {
-            Log.i(TAG, "auto compression trigger chat=" + DebugLogger.id(screen.chatId)
-                    + " approxTokens=" + screen.approxContextTokens + "/" + triggerTokens
-                    + " messages=" + screen.messageCount
-                    + " keepRecent=" + keepRecent);
-            return true;
-        }
-        Log.i(TAG, "auto compression skipped: below threshold chat="
-                + DebugLogger.id(screen.chatId)
-                + " approxTokens=" + screen.approxContextTokens + "/" + triggerTokens
-                + " messages=" + screen.messageCount
-                + " keepRecent=" + keepRecent);
-        return false;
-    }
-
-    private static boolean hasManualPreparedForCurrentChat() {
-        ScreenState screen = currentScreen;
-        Prepared value = prepared;
-        return screen != null && value != null && !value.automatic
-                && screen.chatId.equals(value.chatId);
-    }
-
-    private static int adaptiveKeepRecent(int messageCount, int configuredKeepRecent) {
-        if (messageCount > configuredKeepRecent) return configuredKeepRecent;
-        int candidate = Math.max(4, messageCount / 2);
-        return Math.min(configuredKeepRecent, candidate);
-    }
-
-    private static boolean hasEnoughNewContextForRecompression(ScreenState screen,
-            Prepared value, int triggerTokens) {
-        int newTokens = Math.max(0,
-                screen.approxContextTokens - value.baseApproxContextTokens);
-        return newTokens >= triggerTokens;
-    }
-
-    static void clearPrepared() {
-        resetPreparedState(true);
-    }
-
-    private static void resetPreparedState(boolean bumpGeneration) {
-        prepared = null;
-        preparedUsedForActiveResponse = false;
-        preparedUsageNoticePosted = false;
-        preparedApplyCount = 0;
-        lastMetrics = null;
-        compressionUsedForPendingRequest = false;
-        if (bumpGeneration) {
-            GENERATION.incrementAndGet();
-        }
-    }
-
-    static void prepareCurrent(int keepRecent, Callback callback) {
-        prepareCurrent(keepRecent, false, callback);
-    }
-
-    static void prepareCurrentAutomatic(int keepRecent, Callback callback) {
-        prepareCurrent(keepRecent, true, callback);
-    }
-
-    private static void prepareCurrent(int keepRecent, boolean automatic, Callback callback) {
-        if (!ModuleSettings.isSettingAvailable(ModuleSettings.KEY_CONTEXT_COMPRESSION)) {
-            finish(callback, new Result(false,
-                    "上下文压缩不可用：" + ModuleSettings.disabledReason(
-                            ModuleSettings.KEY_CONTEXT_COMPRESSION), 0, 0));
-            return;
-        }
-        automaticCompressionSession = automatic;
-        refreshCurrentScreen();
-        lastResult = null;
-        ScreenState screen = currentScreen;
-        if (screen != null && automatic) {
-            keepRecent = adaptiveKeepRecent(screen.messageCount, keepRecent);
-        }
-        final int effectiveKeepRecent = keepRecent;
-        lastKeepRecent = effectiveKeepRecent;
-        DebugLogger.i("compression start chat=" + (screen == null ? "none" : DebugLogger.id(screen.chatId))
-                + " messages=" + (screen == null ? 0 : screen.messageCount)
-                + " keepRecent=" + effectiveKeepRecent
-                + " loading=" + (screen != null && screen.loading));
-        if (screen == null) {
-            finish(callback, new Result(false, "当前没有可用的对话", 0, 0));
-            return;
-        }
-        if (screen.loading) {
-            finish(callback, new Result(false, "请等待当前回复结束后再压缩",
-                    screen.messageCount, 0));
-            return;
-        }
-        if (screen.messageCount <= effectiveKeepRecent) {
-            finish(callback, new Result(false,
-                    "消息数量不足，需要多于 " + effectiveKeepRecent + " 条",
-                    screen.messageCount, screen.messageCount));
-            return;
-        }
-        if (!PREPARING.compareAndSet(false, true)) {
-            finish(callback, new Result(false, "压缩任务正在运行", screen.messageCount, 0));
-            return;
-        }
-
-        long generation = GENERATION.incrementAndGet();
-        lastProgressCompleted = 0;
-        lastProgressTotal = 0;
-        compressionStartedAt = System.currentTimeMillis();
-        postStatus(screen.chatId, "压缩开始：正在读取当前对话，原始消息 "
-                + screen.messageCount + " 条，保留最近 " + effectiveKeepRecent + " 条。\n"
-                + "上下文长度统计将在每个摘要分块完成后更新。");
-        AtomicBoolean finished = new AtomicBoolean(false);
-        ScheduledFuture<?> watchdogFuture = WATCHDOG.schedule(() -> {
-            if (!finished.compareAndSet(false, true)) {
+    static void onCompleteEvent(String chatId, JSONArray effectiveMessages,
+            boolean toolChainComplete, boolean replyFinished) {
+        if (chatId == null || effectiveMessages == null) return;
+        enterChat(chatId);
+        JSONArray hostMessages = cleanMessages(effectiveMessages);
+        Object config = currentConfig();
+        String model = currentModel();
+        JSONArray added = appendedSuffix(previousCompleteMessages, hostMessages);
+        synchronized (ManualCompressionManager.class) {
+            latestHostMessages = copyArray(hostMessages);
+            previousCompleteMessages = copyArray(hostMessages);
+            if (isSummaryTaskActive()) {
+                bufferNonUserEvents(added);
+                recoveryRequestNeeded |= !replyFinished;
+                if (state == CompressionStateMachine.State.WAITING_SAFE_BOUNDARY
+                        && toolChainComplete) {
+                    JSONArray source = effectiveRequestMessages(hostMessages, config, model);
+                    startTask(chatId, source, hostMessages, config, model,
+                            activeTask == null ? ModuleSettings.getSummaryKeepRecent()
+                                    : activeTask.keepRecent,
+                            true, automaticRetryAllowed, completionCallback);
+                }
                 return;
             }
-            long elapsed = System.currentTimeMillis() - compressionStartedAt;
-            GENERATION.compareAndSet(generation, generation + 1);
-            PREPARING.set(false);
-            Result timeout = new Result(false, "压缩超时已强制结束，本次发送已取消。",
-                    screen.messageCount, 0);
-            DebugLogger.w("compression watchdog fired chat=" + DebugLogger.id(screen.chatId)
-                    + " elapsedMs=" + elapsed
-                    + " progress=" + lastProgressCompleted + "/" + lastProgressTotal
-                    + " automatic=" + automatic);
-            postStatus(screen.chatId, "压缩超时：已强制结束本次压缩，未发送本次消息，避免回退到未压缩历史。已耗时 "
-                    + elapsed + " ms。");
-            refreshCompressionUi();
-            finish(callback, timeout);
-        }, COMPRESSION_TIMEOUT_MS, TimeUnit.MILLISECONDS);
-        EXECUTOR.execute(() -> {
-            Result result;
-            try {
-                DebugLogger.d("compression snapshot begin chat=" + DebugLogger.id(screen.chatId));
-                Snapshot snapshot = snapshot(screen);
-                boolean incremental = false;
-                Prepared previousPrepared = prepared;
-                JSONArray compressionInput = snapshot.messages;
-                if (!automatic && previousPrepared != null
-                        && screen.chatId.equals(previousPrepared.chatId)
-                        && snapshot.providerSignature.equals(previousPrepared.providerSignature)) {
-                    compressionInput = buildIncrementalCompressionInput(snapshot.messages,
-                            previousPrepared, effectiveKeepRecent);
-                    incremental = compressionInput != snapshot.messages;
-                    if (incremental) {
-                        DebugLogger.i("incremental manual compression input chat="
-                                + DebugLogger.id(screen.chatId)
-                                + " originalMessages=" + snapshot.messages.length()
-                                + " inputMessages=" + compressionInput.length());
-                    }
-                }
-                DebugLogger.d("compression snapshot ready messages=" + snapshot.messages.length()
-                        + " inputMessages=" + compressionInput.length()
-                        + " incremental=" + incremental
-                        + " provider=" + DebugLogger.redact(snapshot.providerSignature));
-                postStatus(screen.chatId, "压缩进度：快照完成，输入消息 " + compressionInput.length()
-                        + " 条，字符 " + charLength(compressionInput) + "，估算 token "
-                        + approxTokenLength(compressionInput) + (incremental ? "。本次使用已有摘要做增量压缩。" : "。"));
-                JSONArray compacted = ContextCompression.compact(
-                        compressionInput, snapshot.config, true, effectiveKeepRecent,
-                        (completed, total) -> {
-                            lastProgressCompleted = completed;
-                            lastProgressTotal = total;
-                            lastResult = new Result(true,
-                        "压缩中：摘要分块 " + completed + "/" + total
-                                + " 已完成，已耗时 "
-                                + (System.currentTimeMillis() - compressionStartedAt) + " ms。",
-                        screen.messageCount, 0);
-                            String progress = "压缩进度：摘要分块 " + completed + "/" + total
-                                    + " 已完成。当前已耗时 "
-                                    + (System.currentTimeMillis() - compressionStartedAt) + " ms。";
-                            DebugLogger.i("compression progress chat=" + DebugLogger.id(screen.chatId)
-                                    + " chunk=" + completed + "/" + total);
-                            postStatus(screen.chatId, progress);
-                        });
-                if (compacted == snapshot.messages
-                        || compacted.length() >= snapshot.messages.length()) {
-                    throw new IllegalStateException("没有可压缩的完整历史轮次");
-                }
-                CompressionMetrics metrics = CompressionMetrics.measure(snapshot.messages, compacted,
-                        System.currentTimeMillis() - compressionStartedAt, 0);
-                if (!metrics.reducesContext()) {
-                    Log.w(TAG, "compression rejected: result is not smaller "
-                            + metrics.describe());
-                    throw new IllegalStateException(metrics.notReducedMessage());
-                }
-                if (generation != GENERATION.get()) {
-                    throw new IllegalStateException("对话已切换，压缩结果已丢弃");
-                }
-                if (finished.get()) {
-                    throw new IllegalStateException("压缩已超时，结果已丢弃");
-                }
-                prepared = new Prepared(screen.chatId, snapshot.providerSignature,
-                        snapshot.messages, compacted, automatic,
-                        screen.turnCount, approxTokenLength(snapshot.messages));
-                preparedUsedForActiveResponse = false;
-                preparedUsageNoticePosted = false;
-                preparedApplyCount = 0;
-                lastMetrics = metrics;
-                postStatus(screen.chatId, "压缩完成：消息 " + metrics.originalMessages + " -> "
-                        + metrics.compactedMessages + "；字符 " + metrics.originalChars + " -> "
-                        + metrics.compactedChars + "；UTF-8 字节 " + metrics.originalBytes + " -> "
-                        + metrics.compactedBytes + "；估算 token " + metrics.originalApproxTokens
-                        + " -> " + metrics.compactedApproxTokens + "；压缩率 " + metrics.ratioPercent()
-                        + "%；耗时 " + metrics.durationMs + " ms。摘要已作为本会话长期基线，后续发送会持续复用，直到切换对话或 Provider。摘要后的新增内容会进行增量压缩。");
-                result = new Result(true,
-                        "摘要已就绪并将持续用于本会话。原始 "
-                                + snapshot.messages.length() + " 条，压缩后 "
-                                + compacted.length() + " 条，保留最近 " + effectiveKeepRecent + " 条。",
-                        snapshot.messages.length(), compacted.length(), metrics);
-                DebugLogger.i("compression success chat=" + DebugLogger.id(screen.chatId)
-                        + " " + metrics.describe());
-            } catch (Throwable error) {
-                DebugLogger.e("compression failed chat=" + DebugLogger.id(screen.chatId)
-                        + " messages=" + screen.messageCount, error);
-                postStatus(screen.chatId, "压缩失败：" + readableError(error)
-                        + "。原始消息 " + screen.messageCount + " 条，已耗时 "
-                        + (System.currentTimeMillis() - compressionStartedAt) + " ms。");
-                result = new Result(false, readableError(error), screen.messageCount, 0);
-            } finally {
-                watchdogFuture.cancel(false);
-            }
-            if (finished.compareAndSet(false, true)) {
-                PREPARING.set(false);
-                finish(callback, result);
-            } else {
-                DebugLogger.w("compression result ignored after watchdog chat="
-                        + DebugLogger.id(screen.chatId) + " success=" + result.success);
-            }
-        });
+        }
+        if (!ModuleSettings.isEnabled() || !ModuleSettings.isContextCompressionEnabled()) return;
+        JSONArray source = effectiveRequestMessages(hostMessages, config, model);
+        if (completedContextTokens(source) < ModuleSettings.getAutoContextTokens()) return;
+        bufferRecoveryEvents(added);
+        synchronized (ManualCompressionManager.class) {
+            recoveryRequestNeeded = !replyFinished;
+            startTask(chatId, source, hostMessages, config, model,
+                    ModuleSettings.getSummaryKeepRecent(), toolChainComplete, true, null);
+        }
     }
 
-    private static void finish(Callback callback, Result result) {
-        if (result == null) {
-            result = new Result(false, "压缩未返回结果", 0, 0);
+    static synchronized boolean beginPendingUserRequest(String chatId, JSONArray userRequest) {
+        if (chatId == null || userRequest == null || userRequest.length() == 0) return false;
+        enterChat(chatId);
+        if (pendingUserRequest.length() == 0) pendingUserRequest = copyArray(userRequest);
+        recoveryRequestNeeded = true;
+        if (isSummaryTaskActive()) return true;
+        Object config = currentConfig();
+        String model = currentModel();
+        JSONArray boundary = copyArray(latestHostMessages);
+        JSONArray source = effectiveRequestMessages(
+                excludePendingUser(boundary, pendingUserRequest), config, model);
+        if (completedContextTokens(source) < ModuleSettings.getAutoContextTokens()) {
+            pendingUserRequest = new JSONArray();
+            recoveryRequestNeeded = false;
+            return false;
         }
-        lastResult = result;
-        automaticCompressionSession = false;
-        DebugLogger.i("compression result success=" + result.success
-                + " original=" + result.originalCount + " compacted=" + result.compactedCount
-                + " message=" + DebugLogger.redact(result.message));
-        if (callback != null) callback.onComplete(result);
+        return startTask(chatId, source, excludePendingUser(boundary, pendingUserRequest),
+                config, model, ModuleSettings.getSummaryKeepRecent(),
+                SummaryProtocol.hasCompleteToolPairs(source), true, null);
     }
 
-    private static JSONArray stripEnhancerStatuses(JSONArray messages) throws Exception {
-        return withoutEnhancerStatuses(messages);
-    }
-
-    private static JSONArray buildIncrementalCompressionInput(JSONArray currentSource,
-            Prepared previous, int keepRecent) throws Exception {
-        if (currentSource == null || previous == null || previous.source == null
-                || previous.compacted == null) {
-            return currentSource;
+    static synchronized void onSummaryResponse(long taskId, String chatId, String markdown,
+            boolean terminalAssistant, boolean returnedToolCall, boolean thinkingOnly) {
+        if (!CompressionStateMachine.isCurrent(activeTask, taskId, chatId)) {
+            DebugLogger.w("stale compression response ignored task=" + taskId);
+            return;
         }
-        int currentSystemCount = countLeadingSystemMessages(currentSource);
-        int previousSystemCount = countLeadingSystemMessages(previous.source);
-        int previousHistoryCount = previous.source.length() - previousSystemCount;
-        if (currentSource.length() - currentSystemCount <= previousHistoryCount) {
-            return currentSource;
+        state = CompressionStateMachine.transition(state,
+                CompressionStateMachine.Event.SUMMARY_RESPONSE);
+        if (!terminalAssistant || returnedToolCall || thinkingOnly) {
+            handleSummaryFailure("摘要响应不是终态 Markdown");
+            return;
         }
-        for (int index = 0; index < previousHistoryCount; index++) {
-            Object oldItem = previous.source.get(previousSystemCount + index);
-            Object currentItem = currentSource.get(currentSystemCount + index);
-            if (!sameSerializedMessage(oldItem, currentItem)) {
-                DebugLogger.w("incremental compression skipped: source prefix changed");
-                return currentSource;
+        SummaryProtocol.Validation validation = SummaryProtocol.validateTerminalMarkdown(
+                markdown, taskSource, activeTask.keepRecent);
+        if (!validation.success) {
+            handleSummaryFailure(validation.reason);
+            return;
+        }
+        try {
+            SummaryRecordStore.Record candidate = buildRecord(markdown);
+            JSONArray rebuilt = rebuildEffective(latestHostMessages, candidate);
+            rebuilt = appendPendingUserOnce(rebuilt, pendingUserRequest);
+            int threshold = ModuleSettings.getAutoContextTokens();
+            if (completedContextTokens(rebuilt) >= threshold) {
+                handleSummaryFailure("保留最近 " + activeTask.keepRecent
+                        + " 轮后上下文仍超过 " + threshold + " token");
+                return;
             }
+            SummaryRecordStore.writeComplete(activeTask.chatId, candidate);
+            usableRecord = candidate;
+            CompressionMetrics metrics = new CompressionMetrics(taskSource, rebuilt,
+                    System.currentTimeMillis() - compressionStartedAt);
+            lastMetrics = metrics;
+            compressionUsedForPendingRequest = recoveryRequestNeeded;
+            state = CompressionStateMachine.transition(state,
+                    CompressionStateMachine.Event.SUMMARY_VALID);
+            Result result = new Result(true,
+                    "摘要已就绪：估算 token " + candidate.beforeTokens + " -> "
+                            + candidate.afterTokens + "，减少 " + candidate.reduction
+                            + "（" + Math.round(candidate.ratio) + "%）。",
+                    taskSource.length(), rebuilt.length(), metrics);
+            postStatus(activeTask.chatId, result.message);
+            finishActive(result);
+        } catch (Throwable error) {
+            handleSummaryFailure(readableError(error));
         }
-        JSONArray input = new JSONArray();
-        for (int index = 0; index < currentSystemCount; index++) {
-            input.put(currentSource.get(index));
-        }
-        int compactedSystemCount = countLeadingSystemMessages(previous.compacted);
-        for (int index = compactedSystemCount; index < previous.compacted.length(); index++) {
-            input.put(previous.compacted.get(index));
-        }
-        int tailStart = currentSystemCount + previousHistoryCount;
-        for (int index = tailStart; index < currentSource.length(); index++) {
-            input.put(currentSource.get(index));
-        }
-        if (input.length() >= currentSource.length()) {
-            return currentSource;
-        }
-        DebugLogger.i("incremental compression assembled previousSource="
-                + previous.source.length() + " previousCompacted=" + previous.compacted.length()
-                + " current=" + currentSource.length() + " input=" + input.length()
-                + " keepRecent=" + keepRecent);
-        return input;
     }
 
-    private static JSONArray mergePreparedMessages(JSONArray source, JSONArray compacted,
-            JSONArray actual) throws Exception {
-        int actualSystemCount = countLeadingSystemMessages(actual);
-        int sourceSystemCount = countLeadingSystemMessages(source);
-        int sourceHistoryCount = source.length() - sourceSystemCount;
-        int compactedSystemCount = countLeadingSystemMessages(compacted);
-        int firstRetainedIndex = compacted.length();
-        for (int index = compactedSystemCount; index < compacted.length(); index++) {
-            JSONObject message = compacted.optJSONObject(index);
-            if (message != null && message.has(HOST_INDEX)) {
-                firstRetainedIndex = index;
-                break;
-            }
+    static synchronized void onCompressionAction(CompressionStateMachine.Action action) {
+        if (action == null || activeTask == null) return;
+        if (action == CompressionStateMachine.Action.CANCEL) {
+            SummaryRecordStore.invalidate(activeTask.chatId);
+            cancelActive("已取消上下文压缩，原上下文未改变。", true);
+            return;
         }
-        int retainedCount = compacted.length() - firstRetainedIndex;
-        int retainedSourceStart = sourceHistoryCount - retainedCount;
-        if (retainedSourceStart < 0) {
-            throw new IllegalStateException("compacted history exceeds source history");
-        }
+        if (state != CompressionStateMachine.State.AWAITING_USER_ACTION) return;
+        int keep = activeTask.keepRecent;
+        if (action == CompressionStateMachine.Action.KEEP_2 && keep > 2) keep = 2;
+        else if (action == CompressionStateMachine.Action.KEEP_1 && keep > 1) keep = 1;
+        else if (action != CompressionStateMachine.Action.RETRY) return;
+        startTask(activeTask.chatId, taskSource, taskBoundary, taskConfig,
+                activeTask.model, keep, true, false, completionCallback);
+    }
 
+    static synchronized JSONArray excludePendingUser(
+            JSONArray effectiveMessages, JSONArray pendingUser) {
+        JSONArray source = copyArray(effectiveMessages);
+        int start = lastSequenceStart(source, pendingUser);
+        if (start < 0) return source;
         JSONArray result = new JSONArray();
-        for (int index = 0; index < actualSystemCount; index++) {
-            result.put(actual.get(index));
-        }
-        for (int index = compactedSystemCount; index < firstRetainedIndex; index++) {
-            result.put(compacted.get(index));
-        }
-        for (int index = actualSystemCount + retainedSourceStart;
-                index < actualSystemCount + sourceHistoryCount; index++) {
-            result.put(actual.get(index));
-        }
-        for (int index = actualSystemCount + sourceHistoryCount; index < actual.length(); index++) {
-            result.put(actual.get(index));
+        for (int index = 0; index < source.length(); index++) {
+            if (index < start || index >= start + pendingUser.length()) result.put(source.opt(index));
         }
         return result;
     }
 
+    static synchronized JSONArray appendPendingUserOnce(
+            JSONArray messages, JSONArray pendingUser) {
+        JSONArray result = copyArray(messages);
+        if (pendingUser == null || pendingUser.length() == 0
+                || lastSequenceStart(result, pendingUser) >= 0) return result;
+        for (int index = 0; index < pendingUser.length(); index++) {
+            result.put(copyValue(pendingUser.opt(index)));
+        }
+        return result;
+    }
+
+    static synchronized void bufferRecoveryEvents(JSONArray events) {
+        if (events == null) return;
+        for (int index = 0; index < events.length(); index++) {
+            pendingRecoveryEvents.put(copyValue(events.opt(index)));
+        }
+    }
+
+    static synchronized JSONArray drainRecoveryEvents() {
+        JSONArray result = copyArray(pendingRecoveryEvents);
+        pendingRecoveryEvents = new JSONArray();
+        return result;
+    }
+
+    static synchronized JSONArray drainPendingUserRequest() {
+        JSONArray result = copyArray(pendingUserRequest);
+        pendingUserRequest = new JSONArray();
+        recoveryRequestNeeded = false;
+        return result;
+    }
+
+    static int completedContextTokens(JSONArray messages) {
+        return SummaryProtocol.estimateTokens(cleanMessages(messages));
+    }
+
+    static synchronized JSONArray effectiveRequestMessages(
+            JSONArray hostMessages, Object config, String model) {
+        JSONArray clean = cleanMessages(hostMessages);
+        latestHostMessages = copyArray(clean);
+        if (currentChatId == null) return appendPendingUserOnce(clean, pendingUserRequest);
+        String signature = providerSignature(config);
+        SummaryRecordStore.Record record = findUsableRecord(
+                currentChatId, clean, signature, model);
+        if (record == null) {
+            SummaryRecordStore.invalidate(currentChatId);
+            usableRecord = null;
+            return appendPendingUserOnce(clean, pendingUserRequest);
+        }
+        usableRecord = record;
+        return appendPendingUserOnce(rebuildEffective(clean, record), pendingUserRequest);
+    }
+
+    static JSONArray sanitizeRequestMessages(JSONArray messages) {
+        return cleanMessages(messages);
+    }
+
     static JSONArray applyPrepared(JSONArray actualMessages, Object config) {
-        Prepared value = prepared;
-        if (value == null || actualMessages == null || config == null) {
-            return null;
+        if (actualMessages == null || config == null) return null;
+        JSONArray rebuilt = effectiveRequestMessages(actualMessages, config, modelName(config));
+        if (sameArray(actualMessages, rebuilt)) return null;
+        lastMetrics = new CompressionMetrics(actualMessages, rebuilt, 0L);
+        compressionUsedForPendingRequest = true;
+        return rebuilt;
+    }
+
+    static void prepareCurrent(int keepRecent, Callback callback) {
+        prepareCurrent(false, callback);
+    }
+
+    static void prepareCurrentAutomatic(int keepRecent, Callback callback) {
+        prepareCurrent(true, callback);
+    }
+
+    private static void prepareCurrent(boolean automatic, Callback callback) {
+        refreshCurrentScreen();
+        ScreenState screen = currentScreen;
+        if (screen == null || screen.loading) {
+            finish(callback, new Result(false, screen == null
+                    ? "当前没有可用的对话" : "请等待当前回复结束后再压缩", 0, 0));
+            return;
         }
         try {
-            JSONArray cleanActual = stripEnhancerStatuses(actualMessages);
-            if (!value.providerSignature.equals(providerSignature(config))) {
-                resetPreparedState(true);
-                return null;
-            }
-            int actualSystemCount = countLeadingSystemMessages(cleanActual);
-            int sourceSystemCount = countLeadingSystemMessages(value.source);
-            int sourceHistoryCount = value.source.length() - sourceSystemCount;
-            if (cleanActual.length() - actualSystemCount < sourceHistoryCount) {
-                String detail = "prepared context rejected: actual history shorter than source";
-                Log.w(TAG, detail);
-                DebugLogger.w(detail);
-                resetPreparedState(true);
-                return null;
-            }
-            for (int index = 0; index < sourceHistoryCount; index++) {
-                Object sourceItem = value.source.get(sourceSystemCount + index);
-                Object actualItem = cleanActual.get(actualSystemCount + index);
-                if (!sameSerializedMessage(sourceItem, actualItem)) {
-                    String detail = "prepared context rejected: chat changed before send index=" + index;
-                    Log.w(TAG, detail);
-                    DebugLogger.w(detail);
-                    resetPreparedState(true);
-                    return null;
+            Snapshot snapshot = snapshot(screen);
+            JSONArray source = effectiveRequestMessages(
+                    snapshot.messages, snapshot.config, snapshot.model);
+            synchronized (ManualCompressionManager.class) {
+                if (!startTask(screen.chatId, source, snapshot.messages, snapshot.config,
+                        snapshot.model, ModuleSettings.getSummaryKeepRecent(),
+                        SummaryProtocol.hasCompleteToolPairs(source), true, callback)) {
+                    finish(callback, new Result(false, "压缩任务正在运行",
+                            source.length(), 0));
                 }
             }
-
-            JSONArray result = mergePreparedMessages(value.source, value.compacted, cleanActual);
-            int invalidToolIndex = ContextCompression.firstInvalidToolCallIndex(result);
-            if (invalidToolIndex >= 0) {
-                JSONObject invalid = result.optJSONObject(invalidToolIndex);
-                JSONObject previous = invalidToolIndex <= 0
-                        ? null : result.optJSONObject(invalidToolIndex - 1);
-                DebugLogger.w("prepared context rejected: invalid tool call sequence"
-                        + " index=" + invalidToolIndex
-                        + " role=" + (invalid == null ? "null" : invalid.optString("role"))
-                        + " toolCallId=" + (invalid == null ? ""
-                        : DebugLogger.redact(invalid.optString("_lspilot_tool_call_id")))
-                        + " previousRole=" + (previous == null ? "none"
-                        : previous.optString("role"))
-                        + " previousHasToolCalls=" + ContextCompression.hasToolCalls(previous));
-                resetPreparedState(true);
-                return null;
-            }
-            CompressionMetrics metrics = CompressionMetrics.measure(cleanActual, result, 0L, 0);
-            if (!metrics.reducesContext()) {
-                Log.w(TAG, "prepared context rejected: result is not smaller "
-                        + metrics.describe());
-                resetPreparedState(true);
-                return null;
-            }
-            preparedUsedForActiveResponse = true;
-            int applyIndex = ++preparedApplyCount;
-            compressionUsedForPendingRequest = true;
-            lastMetrics = metrics;
-            String appliedDetail = (value.automatic ? "automatic" : "manual")
-                    + " prepared context applied chat=" + DebugLogger.id(value.chatId)
-                    + " applyCount=" + applyIndex + " " + metrics.describe();
-            Log.i(TAG, appliedDetail);
-            DebugLogger.i(appliedDetail);
-            if (!preparedUsageNoticePosted) {
-                preparedUsageNoticePosted = true;
-                postStatus(value.chatId, "本会话已启用压缩基线：消息 " + metrics.originalMessages
-                        + " -> " + metrics.compactedMessages + "；字符 " + metrics.originalChars + " -> "
-                        + metrics.compactedChars + "；估算 token " + metrics.originalApproxTokens + " -> "
-                        + metrics.compactedApproxTokens + "；压缩率 " + metrics.ratioPercent()
-                        + "%。该摘要会作为本会话长期基线持续复用。新增内容达到阈值后可增量压缩。");
-            }
-            return result;
         } catch (Throwable error) {
-            DebugLogger.e("prepared context apply failed", error);
-            resetPreparedState(true);
-            return null;
+            finish(callback, new Result(false, readableError(error), 0, 0));
         }
+    }
+
+    private static boolean startTask(String chatId, JSONArray source, JSONArray boundary,
+            Object config, String model, int keepRecent, boolean safeBoundary,
+            boolean allowAutomaticRetry, Callback callback) {
+        if (chatId == null || source == null || source.length() == 0) return false;
+        if (isSummaryTaskActive() && state != CompressionStateMachine.State.WAITING_SAFE_BOUNDARY
+                && state != CompressionStateMachine.State.AWAITING_USER_ACTION) return false;
+        String signature = providerSignature(config);
+        activeTask = CompressionStateMachine.newTask(chatId,
+                SummaryRecordStore.fingerprint(boundary), signature, safe(model), keepRecent);
+        taskSource = copyArray(source);
+        taskBoundary = copyArray(boundary);
+        taskConfig = config;
+        lastKeepRecent = keepRecent;
+        retryCount = 0;
+        automaticRetryAllowed = allowAutomaticRetry;
+        completionCallback = callback;
+        compressionStartedAt = System.currentTimeMillis();
+        state = safeBoundary ? CompressionStateMachine.State.SUMMARIZING
+                : CompressionStateMachine.State.WAITING_SAFE_BOUNDARY;
+        lastResult = new Result(true, safeBoundary
+                ? "正在使用当前模型压缩上下文，请稍候。"
+                : "等待当前工具调用完成后开始压缩。", source.length(), 0);
+        postStatus(chatId, lastResult.message);
+        refreshCompressionUi();
+        return true;
+    }
+
+    private static void handleSummaryFailure(String reason) {
+        if (activeTask == null) return;
+        if (automaticRetryAllowed && retryCount == 0) {
+            retryCount = 1;
+            state = CompressionStateMachine.transition(state,
+                    CompressionStateMachine.Event.FIRST_FAILURE);
+            activeTask = CompressionStateMachine.newTask(activeTask.chatId,
+                    activeTask.boundaryFingerprint, activeTask.providerSignature,
+                    activeTask.model, activeTask.keepRecent);
+            state = CompressionStateMachine.transition(state,
+                    CompressionStateMachine.Event.RETRY_REQUESTED);
+            postStatus(activeTask.chatId, "摘要校验失败，正在自动重试一次：" + reason);
+            return;
+        }
+        state = CompressionStateMachine.transition(state,
+                CompressionStateMachine.Event.FAILURE_EXHAUSTED);
+        SummaryRecordStore.invalidate(activeTask.chatId);
+        usableRecord = null;
+        lastResult = new Result(false, "压缩失败：" + reason + "；原上下文未改变。",
+                taskSource.length(), 0);
+        postStatus(activeTask.chatId, lastResult.message);
+        refreshCompressionUi();
+        Callback callback = completionCallback;
+        completionCallback = null;
+        finish(callback, lastResult);
+    }
+
+    private static SummaryRecordStore.Record buildRecord(String markdown) {
+        int before = completedContextTokens(taskSource);
+        SummaryRecordStore.Record provisional = new SummaryRecordStore.Record(
+                activeTask.chatId, markdown, taskBoundary,
+                SummaryRecordStore.fingerprint(taskBoundary), activeTask.providerSignature,
+                activeTask.model, activeTask.keepRecent, before, 0, 0, 0d,
+                true, System.currentTimeMillis());
+        JSONArray rebuilt = appendPendingUserOnce(
+                rebuildEffective(latestHostMessages, provisional), pendingUserRequest);
+        int after = completedContextTokens(rebuilt);
+        int reduction = Math.max(0, before - after);
+        double ratio = before == 0 ? 0d : reduction * 100d / before;
+        return new SummaryRecordStore.Record(activeTask.chatId, markdown, taskBoundary,
+                provisional.fingerprint, activeTask.providerSignature, activeTask.model,
+                activeTask.keepRecent, before, after, reduction, ratio,
+                true, System.currentTimeMillis());
+    }
+
+    private static void finishActive(Result result) {
+        Callback callback = completionCallback;
+        activeTask = null;
+        taskSource = new JSONArray();
+        taskBoundary = new JSONArray();
+        taskConfig = null;
+        retryCount = 0;
+        automaticRetryAllowed = false;
+        completionCallback = null;
+        lastResult = result;
+        refreshCompressionUi();
+        finish(callback, result);
+    }
+
+    private static void cancelActive(String message, boolean postNotice) {
+        if (!isSummaryTaskActive()) return;
+        String chatId = activeTask == null ? currentChatId : activeTask.chatId;
+        state = CompressionStateMachine.State.IDLE;
+        Result result = new Result(false, message, taskSource.length(), 0);
+        Callback callback = completionCallback;
+        activeTask = null;
+        taskSource = new JSONArray();
+        taskBoundary = new JSONArray();
+        taskConfig = null;
+        completionCallback = null;
+        lastResult = result;
+        if (postNotice) postStatus(chatId, message);
+        finish(callback, result);
+    }
+
+    private static void finish(Callback callback, Result result) {
+        lastResult = result;
+        if (callback != null) callback.onComplete(result);
+    }
+
+    private static SummaryRecordStore.Record findUsableRecord(String chatId, JSONArray messages,
+            String providerSignature, String model) {
+        // ponytail: histories are small; index boundaries only if this prefix scan profiles hot.
+        for (int length = messages.length(); length > 0; length--) {
+            JSONArray prefix = prefix(messages, length);
+            SummaryRecordStore.Record record = SummaryRecordStore.readUsable(
+                    chatId, prefix, providerSignature, safe(model));
+            if (record != null) return record;
+        }
+        return null;
+    }
+
+    private static JSONArray rebuildEffective(
+            JSONArray hostMessages, SummaryRecordStore.Record record) {
+        JSONArray clean = cleanMessages(hostMessages);
+        JSONArray result = new JSONArray();
+        int systemCount = countLeadingSystemMessages(clean);
+        for (int index = 0; index < systemCount; index++) result.put(clean.opt(index));
+        try {
+            result.put(SummaryProtocol.wrapBaseline(record.summaryText));
+        } catch (Throwable error) {
+            throw new IllegalStateException("summary baseline unavailable", error);
+        }
+        int boundaryLength = record.coveredBoundary.length();
+        for (int index = Math.max(systemCount, boundaryLength);
+                index < clean.length(); index++) {
+            result.put(clean.opt(index));
+        }
+        return result;
     }
 
     private static Snapshot snapshot(ScreenState screen) throws Exception {
         HostAbi abi = requireHostAbi();
-        Object uiState = screen.uiState;
-        Object config = abi.minified ? abi.stateConfig(uiState)
-                : invoke(uiState, "getSelectedProvider");
-        if (config == null) {
-            throw new IllegalStateException("当前对话没有选择 Provider");
-        }
-        String selectedModel = abi.minified ? abi.stateSelectedModel(uiState)
-                : invokeStringOrNull(uiState, "getSelectedModel");
-        config = abi.copyConfigWithSingleModel(config, selectedModel);
-        List<?> messages = abi.minified ? abi.stateMessages(uiState)
-                : (List<?>) invoke(uiState, "getMessages");
-        if (messages == null || messages.isEmpty()) {
-            throw new IllegalStateException("当前对话没有消息");
-        }
-
+        Object config = abi.minified ? abi.stateConfig(screen.uiState)
+                : invoke(screen.uiState, "getSelectedProvider");
+        if (config == null) throw new IllegalStateException("当前对话没有选择 Provider");
+        String model = abi.minified ? abi.stateSelectedModel(screen.uiState)
+                : stringValue(invoke(screen.uiState, "getSelectedModel"));
+        config = abi.copyConfigWithSingleModel(config, model);
+        List<?> messages = abi.minified ? abi.stateMessages(screen.uiState)
+                : (List<?>) invoke(screen.uiState, "getMessages");
         JSONArray serialized;
         if (abi.minified) {
             serialized = abi.serializeMessages(messages);
         } else {
             Object provider = findNamedProvider(abi, config);
             INTERNAL_BUILD.set(Boolean.TRUE);
-            String body;
             try {
-                body = (String) buildRequestMethod.invoke(provider, config, messages, "", false);
+                String body = (String) abi.buildRequestMethod.invoke(
+                        provider, config, messages, "", false);
+                serialized = new JSONObject(body).optJSONArray("messages");
             } finally {
                 INTERNAL_BUILD.remove();
             }
-            serialized = new JSONObject(body).optJSONArray("messages");
         }
         if (serialized == null || serialized.length() == 0) {
             throw new IllegalStateException("无法序列化当前对话消息");
         }
-        JSONArray cleanSerialized = withoutEnhancerStatuses(serialized);
-        return new Snapshot(config, abi.providerSignature(config),
-                new JSONArray(cleanSerialized.toString()));
+        return new Snapshot(config, safe(model), cleanMessages(serialized));
     }
 
-    private static MessageStats measureHostMessages(List<?> messages) {
-        if (messages == null) return new MessageStats(0, 0, 0);
+    private static Object currentConfig() {
+        ScreenState screen = currentScreen;
         HostAbi abi = hostAbi;
-        if (abi != null) {
-            try {
-                JSONArray serialized = abi.serializeMessages(messages);
-                int messageCount = 0;
-                int userMessages = 0;
-                int charCount = 0;
-                int byteCount = 0;
-                for (int index = 0; index < serialized.length(); index++) {
-                    JSONObject message = serialized.optJSONObject(index);
-                    if (message == null) continue;
-                    if (isEnhancerStatusContent(message.optString("content", null))) continue;
-                    messageCount++;
-                    if ("user".equalsIgnoreCase(message.optString("role", ""))) {
-                        userMessages++;
-                    }
-                    String encoded = message.toString();
-                    charCount += encoded.length();
-                    byteCount += encoded.getBytes(StandardCharsets.UTF_8).length;
-                }
-                int turnCount = userMessages > 0 ? userMessages : Math.max(1, (messageCount + 1) / 2);
-                return new MessageStats(messageCount, turnCount,
-                        approxTokens(charCount, byteCount));
-            } catch (Throwable error) {
-                DebugLogger.w("serialized context measurement failed; using content fallback: "
-                        + DebugLogger.redact(error.getMessage()));
-            }
-        }
-
-        int messageCount = 0;
-        int userMessages = 0;
-        int charCount = 0;
-        int byteCount = 0;
-        for (Object message : messages) {
-            String content = abi == null ? null : abi.messageContent(message);
-            if (isEnhancerStatusContent(content)) continue;
-            messageCount++;
-            if (content == null) continue;
-            if ("user".equalsIgnoreCase(abi.messageRole(message))) userMessages++;
-            charCount += content.length();
-            byteCount += content.getBytes(StandardCharsets.UTF_8).length;
-        }
-        int turnCount = userMessages > 0 ? userMessages : Math.max(1, (messageCount + 1) / 2);
-        return new MessageStats(messageCount, turnCount, approxTokens(charCount, byteCount));
-    }
-
-    private static int approxTokens(int chars, int bytes) {
-        // A conservative estimate: English is character-bound while CJK/JSON is byte-bound.
-        return Math.max(0, Math.max(Math.round(chars / 4f), Math.round(bytes / 3f)));
-    }
-
-    private static String invokeStringOrNull(Object target, String methodName) {
+        if (screen == null || abi == null) return null;
         try {
-            Object value = invoke(target, methodName);
-            return value == null ? null : String.valueOf(value);
+            return abi.minified ? abi.stateConfig(screen.uiState)
+                    : invoke(screen.uiState, "getSelectedProvider");
         } catch (Throwable ignored) {
             return null;
         }
     }
 
-    private static int charLength(JSONArray messages) {
-        return messages == null ? 0 : messages.toString().length();
+    private static String currentModel() {
+        ScreenState screen = currentScreen;
+        HostAbi abi = hostAbi;
+        if (screen == null || abi == null) return "";
+        try {
+            return safe(abi.minified ? abi.stateSelectedModel(screen.uiState)
+                    : stringValue(invoke(screen.uiState, "getSelectedModel")));
+        } catch (Throwable ignored) {
+            return "";
+        }
     }
 
-    private static int approxTokenLength(JSONArray messages) {
-        if (messages == null) return 0;
-        String text = messages.toString();
-        int bytes = text.getBytes(StandardCharsets.UTF_8).length;
-        return approxTokens(text.length(), bytes);
+    private static String modelName(Object config) {
+        HostAbi abi = hostAbi;
+        if (abi == null || config == null) return "";
+        try {
+            return safe(abi.modelName(config));
+        } catch (Throwable ignored) {
+            return "";
+        }
     }
 
-    private static String providerSignature(Object config) throws Exception {
-        return requireHostAbi().providerSignature(config);
+    private static String providerSignature(Object config) {
+        if (config == null) return "";
+        HostAbi abi = hostAbi;
+        if (abi == null) return String.valueOf(config);
+        try {
+            return safe(abi.providerSignature(config));
+        } catch (Throwable error) {
+            return String.valueOf(config);
+        }
+    }
+
+    private static Object findNamedProvider(HostAbi abi, Object config) throws Exception {
+        Class<?> managerClass = Class.forName(
+                "me.yun.lspilot.data.provider.ProviderManager", false,
+                config.getClass().getClassLoader());
+        Object manager = HostAbi.singletonInstance(managerClass);
+        Object provider = managerClass.getMethod("getProvider", String.class)
+                .invoke(manager, abi.providerId(config));
+        if (!abi.isProvider(provider)) {
+            throw new IllegalStateException("当前 Provider 不支持模型摘要");
+        }
+        return provider;
+    }
+
+    private static MessageStats measureHostMessages(List<?> messages) {
+        if (messages == null) return new MessageStats(0, 0, 0);
+        HostAbi abi = hostAbi;
+        try {
+            JSONArray serialized = cleanMessages(abi.serializeMessages(messages));
+            int users = 0;
+            for (int index = 0; index < serialized.length(); index++) {
+                JSONObject message = serialized.optJSONObject(index);
+                if (message != null && "user".equalsIgnoreCase(message.optString("role"))) users++;
+            }
+            return new MessageStats(serialized.length(), users > 0 ? users
+                    : Math.max(1, (serialized.length() + 1) / 2),
+                    completedContextTokens(serialized));
+        } catch (Throwable ignored) {
+            int chars = 0;
+            int bytes = 0;
+            int users = 0;
+            for (Object message : messages) {
+                String content = abi == null ? null : abi.messageContent(message);
+                if (isEnhancerStatusContent(content)) continue;
+                if ("user".equalsIgnoreCase(abi.messageRole(message))) users++;
+                if (content != null) {
+                    chars += content.length();
+                    bytes += content.getBytes(StandardCharsets.UTF_8).length;
+                }
+            }
+            int tokens = Math.max(Math.round(chars / 4f), Math.round(bytes / 3f));
+            return new MessageStats(messages.size(), users > 0 ? users
+                    : Math.max(1, (messages.size() + 1) / 2), tokens);
+        }
+    }
+
+    private static JSONArray cleanMessages(JSONArray messages) {
+        JSONArray result = new JSONArray();
+        if (messages == null) return result;
+        for (int index = 0; index < messages.length(); index++) {
+            Object value = messages.opt(index);
+            JSONObject message = value instanceof JSONObject ? (JSONObject) value : null;
+            if (message == null || !isEnhancerStatus(message)) result.put(copyValue(value));
+        }
+        return result;
+    }
+
+    private static boolean isEnhancerStatus(JSONObject message) {
+        return message != null && ("system".equals(message.optString("role"))
+                || "assistant".equals(message.optString("role")))
+                && isEnhancerStatusContent(message.optString("content", null));
+    }
+
+    private static boolean isEnhancerStatusContent(String content) {
+        return content != null && (content.startsWith(ENHANCER_MARKER)
+                || content.startsWith(RETRY_STATUS_MARKER));
+    }
+
+    private static JSONArray appendedSuffix(JSONArray previous, JSONArray current) {
+        if (previous == null || current == null || previous.length() > current.length()) {
+            return new JSONArray();
+        }
+        for (int index = 0; index < previous.length(); index++) {
+            if (!sameMessage(previous.opt(index), current.opt(index))) return new JSONArray();
+        }
+        JSONArray result = new JSONArray();
+        for (int index = previous.length(); index < current.length(); index++) {
+            result.put(copyValue(current.opt(index)));
+        }
+        return result;
+    }
+
+    private static void bufferNonUserEvents(JSONArray events) {
+        JSONArray filtered = new JSONArray();
+        for (int index = 0; index < events.length(); index++) {
+            JSONObject event = events.optJSONObject(index);
+            if (event != null && !"user".equals(event.optString("role"))) {
+                filtered.put(copyValue(event));
+            }
+        }
+        bufferRecoveryEvents(filtered);
+    }
+
+    private static int lastSequenceStart(JSONArray haystack, JSONArray needle) {
+        if (haystack == null || needle == null || needle.length() == 0
+                || needle.length() > haystack.length()) return -1;
+        for (int start = haystack.length() - needle.length(); start >= 0; start--) {
+            boolean matches = true;
+            for (int index = 0; index < needle.length(); index++) {
+                if (!sameMessage(haystack.opt(start + index), needle.opt(index))) {
+                    matches = false;
+                    break;
+                }
+            }
+            if (matches) return start;
+        }
+        return -1;
+    }
+
+    private static boolean sameMessage(Object first, Object second) {
+        if (first == second) return true;
+        if (!(first instanceof JSONObject) || !(second instanceof JSONObject)) {
+            return String.valueOf(first).equals(String.valueOf(second));
+        }
+        JSONObject a = (JSONObject) first;
+        JSONObject b = (JSONObject) second;
+        return a.optString("role").equals(b.optString("role"))
+                && stableContent(a.opt("content")).equals(stableContent(b.opt("content")))
+                && a.optString("tool_call_id", a.optString("_lspilot_tool_call_id"))
+                .equals(b.optString("tool_call_id", b.optString("_lspilot_tool_call_id")));
+    }
+
+    private static boolean sameArray(JSONArray first, JSONArray second) {
+        if (first == null || second == null || first.length() != second.length()) return false;
+        for (int index = 0; index < first.length(); index++) {
+            if (!sameMessage(first.opt(index), second.opt(index))) return false;
+        }
+        return true;
+    }
+
+    private static String stableContent(Object value) {
+        return value == null || JSONObject.NULL.equals(value) ? "" : String.valueOf(value);
+    }
+
+    private static int countLeadingSystemMessages(JSONArray messages) {
+        int count = 0;
+        while (count < messages.length()) {
+            JSONObject message = messages.optJSONObject(count);
+            if (message == null || !"system".equals(message.optString("role"))) break;
+            count++;
+        }
+        return count;
+    }
+
+    private static JSONArray prefix(JSONArray source, int length) {
+        JSONArray result = new JSONArray();
+        for (int index = 0; index < length && index < source.length(); index++) {
+            result.put(copyValue(source.opt(index)));
+        }
+        return result;
+    }
+
+    private static JSONArray copyArray(JSONArray source) {
+        JSONArray result = new JSONArray();
+        if (source == null) return result;
+        for (int index = 0; index < source.length(); index++) {
+            result.put(copyValue(source.opt(index)));
+        }
+        return result;
+    }
+
+    private static Object copyValue(Object value) {
+        try {
+            if (value instanceof JSONObject) return new JSONObject(value.toString());
+            if (value instanceof JSONArray) return new JSONArray(value.toString());
+        } catch (Throwable ignored) {
+            // JSON values in provider messages are normally serializable; keep the value if not.
+        }
+        return value;
     }
 
     private static HostAbi requireHostAbi() {
@@ -1126,51 +920,17 @@ static final class Result {
         return abi;
     }
 
-    private static Object findNamedProvider(HostAbi abi, Object config) throws Exception {
-        ClassLoader loader = config.getClass().getClassLoader();
-        Class<?> managerClass = Class.forName(
-                "me.yun.lspilot.data.provider.ProviderManager", false, loader);
-        Object manager = HostAbi.singletonInstance(managerClass);
-        Method getProvider = managerClass.getMethod("getProvider", String.class);
-        Object provider = getProvider.invoke(manager, abi.providerId(config));
-        if (!abi.isProvider(provider)) {
-            throw new IllegalStateException("手动压缩目前仅支持 OpenAI-compatible Provider");
-        }
-        return provider;
-    }
-
-    private static int countLeadingSystemMessages(JSONArray messages) {
-        int count = 0;
-        while (count < messages.length()) {
-            JSONObject message = messages.optJSONObject(count);
-            if (message == null || !"system".equals(message.optString("role"))) {
-                break;
-            }
-            count++;
-        }
-        return count;
-    }
-
     private static Object invoke(Object target, String methodName) throws Exception {
-        if (target == null) {
-            throw new NullPointerException("target");
-        }
-        Method method = cachedNoArgMethod(target.getClass(), methodName);
+        Method method = target.getClass().getMethod(methodName);
         return method.invoke(target);
     }
 
-    private static Method cachedNoArgMethod(Class<?> targetClass, String methodName)
-            throws NoSuchMethodException {
-        String key = targetClass.getName() + '#' + methodName;
-        synchronized (NO_ARG_METHOD_CACHE) {
-            Method cached = NO_ARG_METHOD_CACHE.get(key);
-            if (cached != null && cached.getDeclaringClass().isAssignableFrom(targetClass)) {
-                return cached;
-            }
-            Method method = targetClass.getMethod(methodName);
-            NO_ARG_METHOD_CACHE.put(key, method);
-            return method;
-        }
+    private static String stringValue(Object value) {
+        return value == null ? "" : String.valueOf(value);
+    }
+
+    private static String safe(String value) {
+        return value == null ? "" : value;
     }
 
     private static String readableError(Throwable error) {
@@ -1183,67 +943,82 @@ static final class Result {
                 ? current.getClass().getSimpleName() : message;
     }
 
-    public static void main(String[] args) throws Exception {
-        JSONObject hostToolCall = new JSONObject()
-                .put("role", "assistant")
-                .put("content", "")
-                .put(HOST_INDEX, 1)
-                .put("_lspilot_tool_calls",
-                        "[AiToolCall(id=call_1, functionName=run, functionArguments={})]");
-        JSONObject requestToolCall = new JSONObject()
-                .put("role", "assistant")
-                .put("content", JSONObject.NULL)
-                .put("tool_calls", new JSONArray().put(new JSONObject().put("id", "call_1")));
-        check(sameSerializedMessage(hostToolCall, requestToolCall),
-                "host and request encodings of one tool call must match");
-        check(!sameSerializedMessage(
-                        new JSONObject().put("role", "user").put("content", "before"),
-                        new JSONObject().put("role", "user").put("content", "after")),
-                "changed message content must not match");
-
-        JSONObject hostToolResult = new JSONObject()
-                .put("role", "tool")
-                .put("content", "result")
-                .put(HOST_INDEX, 4)
-                .put("_lspilot_tool_call_id", "call_1");
-        JSONObject requestToolResult = new JSONObject()
-                .put("role", "tool")
-                .put("content", "result")
-                .put("tool_call_id", "call_1");
-        JSONArray source = new JSONArray()
-                .put(new JSONObject().put("role", "user").put("content", "old").put(HOST_INDEX, 0))
-                .put(new JSONObject().put("role", "assistant").put("content", "old reply").put(HOST_INDEX, 1))
-                .put(new JSONObject().put("role", "user").put("content", "question").put(HOST_INDEX, 2))
-                .put(hostToolCall)
-                .put(hostToolResult);
-        JSONArray compacted = new JSONArray()
-                .put(new JSONObject().put("role", "user").put("content", "summary"))
-                .put(hostToolCall)
-                .put(hostToolResult);
-        JSONArray actual = new JSONArray()
-                .put(new JSONObject().put("role", "system").put("content", "prompt"))
-                .put(new JSONObject().put("role", "user").put("content", "old"))
-                .put(new JSONObject().put("role", "assistant").put("content", "old reply"))
-                .put(new JSONObject().put("role", "user").put("content", "question"))
-                .put(requestToolCall)
-                .put(requestToolResult)
-                .put(new JSONObject().put("role", "user").put("content", "new"));
-        JSONArray merged = mergePreparedMessages(source, compacted, actual);
-        check(merged.length() == 5, "prepared request must replace only compressed history");
-        check(merged.getJSONObject(2).has("tool_calls")
-                        && !merged.getJSONObject(2).has("_lspilot_tool_calls"),
-                "retained assistant message must use request tool-call encoding");
-        check(merged.getJSONObject(3).has("tool_call_id")
-                        && !merged.getJSONObject(3).has("_lspilot_tool_call_id"),
-                "retained tool result must use request encoding");
-        check("new".equals(merged.getJSONObject(4).optString("content")),
-                "messages added after compression must be preserved");
-        check(ContextCompression.firstInvalidToolCallIndex(merged) < 0,
-                "merged request must preserve valid tool-call order");
+    static void onProviderUsage(long inputTokens, long outputTokens, long cachedTokens,
+            long totalTokens) {
+        boolean used = compressionUsedForPendingRequest;
+        compressionUsedForPendingRequest = false;
+        if (used && lastMetrics != null) {
+            postCompressionStatus("Provider 已确认压缩上下文参与请求：输入 token "
+                    + display(inputTokens) + "，总 token " + display(totalTokens) + "。");
+        }
     }
 
-    private static void check(boolean condition, String message) {
-        if (!condition) throw new AssertionError(message);
+    private static String display(long value) {
+        return value < 0 ? "不可用" : Long.toString(value);
+    }
+
+    static void postChatStatus(String chatId, String content) {
+        postStatus(chatId, RETRY_STATUS_MARKER, content, false);
+    }
+
+    static void postCompressionStatus(String content) {
+        postCompressionStatus(content, true);
+    }
+
+    static void postCompressionStatusQuiet(String content) {
+        postCompressionStatus(content, false);
+    }
+
+    private static void postCompressionStatus(String content, boolean allowPanel) {
+        postStatus(currentChatId, ENHANCER_MARKER, content, allowPanel);
+    }
+
+    private static void postStatus(String chatId, String content) {
+        postStatus(chatId, ENHANCER_MARKER, content, true);
+    }
+
+    private static void postStatus(String chatId, String marker, String content,
+            boolean allowPanel) {
+        HostAbi abi = hostAbi;
+        if (chatId == null || content == null || abi == null
+                || abi.repositoryAddMessageMethod == null || shouldDropStatus(content)) return;
+        STATUS_EXECUTOR.execute(() -> {
+            try {
+                Object message = abi.newStatusMessage(
+                        "lspilot-enhancer-" + System.currentTimeMillis() + "-"
+                                + STATUS_SEQUENCE.incrementAndGet(),
+                        "system", marker + "\n" + content, System.currentTimeMillis());
+                Object repository = HostAbi.singletonInstance(abi.repositoryClass);
+                abi.repositoryAddMessageMethod.invoke(repository, chatId, message);
+                refreshCompressionUi(allowPanel);
+            } catch (Throwable error) {
+                DebugLogger.e("chat status insertion failed", error);
+            }
+        });
+    }
+
+    private static synchronized boolean shouldDropStatus(String content) {
+        long now = System.currentTimeMillis();
+        if (content.equals(lastStatusFingerprint)
+                && now - lastStatusPostAt < STATUS_MIN_INTERVAL_MS) return true;
+        lastStatusFingerprint = content;
+        lastStatusPostAt = now;
+        return false;
+    }
+
+    static void refreshCompressionUi() {
+        refreshCompressionUi(true);
+    }
+
+    private static void refreshCompressionUi(boolean allowPanel) {
+        try {
+            new Handler(Looper.getMainLooper()).post(() -> {
+                NativeChatTopBarAction.refreshPanel(allowPanel);
+                InjectedUiController.refreshChatCompressionOverlay(allowPanel);
+            });
+        } catch (Throwable error) {
+            Log.d(TAG, "compression UI refresh unavailable", error);
+        }
     }
 
     private static final class MessageStats {
@@ -1260,35 +1035,13 @@ static final class Result {
 
     private static final class Snapshot {
         final Object config;
-        final String providerSignature;
+        final String model;
         final JSONArray messages;
 
-        Snapshot(Object config, String providerSignature, JSONArray messages) {
+        Snapshot(Object config, String model, JSONArray messages) {
             this.config = config;
-            this.providerSignature = providerSignature;
+            this.model = model;
             this.messages = messages;
-        }
-    }
-
-    private static final class Prepared {
-        final String chatId;
-        final String providerSignature;
-        final JSONArray source;
-        final JSONArray compacted;
-        final boolean automatic;
-        final int baseTurnCount;
-        final int baseApproxContextTokens;
-
-        Prepared(String chatId, String providerSignature, JSONArray source,
-                JSONArray compacted, boolean automatic, int baseTurnCount,
-                int baseApproxContextTokens) {
-            this.chatId = chatId;
-            this.providerSignature = providerSignature;
-            this.source = source;
-            this.compacted = compacted;
-            this.automatic = automatic;
-            this.baseTurnCount = baseTurnCount;
-            this.baseApproxContextTokens = baseApproxContextTokens;
         }
     }
 }
