@@ -156,6 +156,39 @@ public final class ModelContextCompressionCheck {
         assertEquals("post-boundary", effective.getJSONObject(2).optString("content"),
                 "rebuilt context must retain post-boundary messages");
 
+        JSONObject summaryBaseline = SummaryProtocol.wrapBaseline(validMarkdown(3));
+        JSONObject pendingSingle = message("user", "blocked request");
+        JSONArray dirtyPostBoundary = new JSONArray()
+                .put(new JSONObject().put("role", "assistant")
+                        .put("content", "[系统提示 · 上下文压缩]\nworking"))
+                .put(new JSONObject().put("role", "assistant").put("content", "after")
+                        .put("_lspilot_tool_calls", new JSONArray()
+                                .put(new JSONObject().put("id", "call_hidden"))));
+        JSONArray rebuiltRequest = SummaryProtocol.rebuildEffectiveRequest(
+                new JSONArray().put(message("system", "system")),
+                summaryBaseline, dirtyPostBoundary, pendingSingle);
+        assertTrue(!hasEnhancerMarker(rebuiltRequest),
+                "marker status must not be provider-visible");
+        assertTrue(!hasInternalFields(rebuiltRequest),
+                "internal fields must not be provider-visible");
+        assertEquals(1, countRoleAndContent(rebuiltRequest, "user",
+                        summaryBaseline.optString("content")),
+                "summary baseline must be one stable user message");
+        assertEquals(1, countMessage(rebuiltRequest, pendingSingle),
+                "pending user request must appear once");
+        assertEquals(0, countRoleAndContent(hostMessages, "assistant",
+                        summaryBaseline.optString("content")),
+                "summary response must not enter host history");
+        assertTrue(ManualCompressionManager.sanitizeRequestMessagesOrThrow(
+                        dirtyPostBoundary).length() == 1,
+                "sanitization must remove marker status messages");
+        try {
+            ManualCompressionManager.sanitizeRequestMessagesOrThrow(null);
+            throw new AssertionError("sanitization must fail closed");
+        } catch (IllegalArgumentException expected) {
+            // expected
+        }
+
         JSONArray providerFallback = ManualCompressionManager.effectiveRequestMessages(
                 hostMessages, "provider-b", "model-a");
         assertEquals(hostMessages.length(), providerFallback.length(),
@@ -312,6 +345,27 @@ public final class ModelContextCompressionCheck {
             }
         }
         return count;
+    }
+
+    private static int countRoleAndContent(JSONArray messages, String role, String content) {
+        int count = 0;
+        for (int index = 0; index < messages.length(); index++) {
+            JSONObject message = messages.optJSONObject(index);
+            if (message != null
+                    && role.equals(message.optString("role"))
+                    && content.equals(message.optString("content"))) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    private static boolean hasEnhancerMarker(JSONArray messages) {
+        return messages.toString().contains("[系统提示 · 上下文压缩]");
+    }
+
+    private static boolean hasInternalFields(JSONArray messages) {
+        return messages.toString().contains("_lspilot_");
     }
 
     private static final class MemoryStore implements SummaryRecordStore.KeyValueStore {

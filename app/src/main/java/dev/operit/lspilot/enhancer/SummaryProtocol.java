@@ -135,6 +135,33 @@ final class SummaryProtocol {
                 .put("content", BASELINE_PREFIX + markdown + BASELINE_SUFFIX);
     }
 
+    static JSONArray rebuildEffectiveRequest(JSONArray systemMessages,
+            JSONObject summaryBaseline, JSONArray postBoundaryMessages,
+            JSONObject pendingUser) throws Exception {
+        if (summaryBaseline == null) {
+            throw new IllegalArgumentException("summaryBaseline == null");
+        }
+        JSONArray result = new JSONArray();
+        appendSanitized(result, systemMessages);
+        result.put(sanitizedMessage(summaryBaseline));
+        appendSanitized(result, postBoundaryMessages);
+        if (pendingUser != null) {
+            JSONObject pending = sanitizedMessage(pendingUser);
+            boolean seen = false;
+            for (int index = 0; index < result.length(); index++) {
+                JSONObject message = result.optJSONObject(index);
+                if (message != null
+                        && message.optString("role").equals(pending.optString("role"))
+                        && message.optString("content").equals(pending.optString("content"))) {
+                    seen = true;
+                    break;
+                }
+            }
+            if (!seen) result.put(pending);
+        }
+        return result;
+    }
+
     static boolean hasCompleteToolPairs(JSONArray messages) {
         if (messages == null) return false;
         Set<String> pending = new HashSet<>();
@@ -215,6 +242,31 @@ final class SummaryProtocol {
                 || lower.contains("<tool_call")
                 || lower.contains("finish_reason")
                 || lower.contains("\"role\":\"tool\"");
+    }
+
+    private static void appendSanitized(JSONArray target, JSONArray source) throws Exception {
+        if (source == null) return;
+        for (int index = 0; index < source.length(); index++) {
+            JSONObject message = source.optJSONObject(index);
+            if (message == null) throw new IllegalArgumentException("message must be object");
+            if (!isEnhancerStatus(message)) target.put(sanitizedMessage(message));
+        }
+    }
+
+    static JSONObject sanitizedMessage(JSONObject message) throws Exception {
+        JSONObject copy = new JSONObject(message.toString());
+        java.util.Iterator<String> names = copy.keys();
+        while (names.hasNext()) {
+            String name = names.next();
+            if (name != null && name.startsWith("_lspilot_")) copy.remove(name);
+        }
+        return copy;
+    }
+
+    static boolean isEnhancerStatus(JSONObject message) {
+        return message != null && ("system".equals(message.optString("role"))
+                || "assistant".equals(message.optString("role")))
+                && message.optString("content", "").startsWith(ENHANCER_MARKER);
     }
 
     private static boolean hasToolCalls(JSONObject message) {

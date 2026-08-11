@@ -3,8 +3,6 @@ package dev.operit.lspilot.enhancer;
 import android.app.Activity;
 import android.content.pm.ApplicationInfo;
 import android.os.Bundle;
-import android.os.Handler;
-import android.os.Looper;
 import android.util.Log;
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -13,8 +11,10 @@ import org.json.JSONObject;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
+import java.lang.reflect.Proxy;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 
@@ -38,7 +38,6 @@ public final class LSPilotEnhancerModule extends XposedModule {
 
     private static final String CACHE_NAMESPACE = "lspilot:v3:";
     private static final ThreadLocal<Boolean> SETTINGS_ENTRY_REPLAYING = new ThreadLocal<>();
-    private static final ThreadLocal<Boolean> AUTO_REPLAY_SEND = new ThreadLocal<>();
     private static volatile boolean settingsEntryRenderReported;
     private static volatile boolean aboutPreferenceObservedReported;
     private static volatile boolean publicChatEntryReported;
@@ -69,6 +68,8 @@ public final class LSPilotEnhancerModule extends XposedModule {
         try {
             abi = HostAbi.resolve(loader, dexPaths, param.getApplicationInfo());
             ManualCompressionManager.configure(abi);
+            ManualCompressionManager.setSummaryRequester(snapshot ->
+                    requestInternalSummary(abi, snapshot));
             log(Log.INFO, TAG, "Resolved LSPilot host ABI minified=" + abi.minified
                     + " provider=" + abi.providerClass.getName()
                     + " config=" + abi.configClass.getName()
@@ -154,41 +155,23 @@ public final class LSPilotEnhancerModule extends XposedModule {
                     Object config = chain.getArg(0);
                     String systemPrompt = (String) chain.getArg(2);
                     JSONObject body = new JSONObject(originalBody);
+                    if (ManualCompressionManager.isInternalSummaryRequest(
+                            body.optJSONArray("messages"))) {
+                        return originalResult;
+                    }
                     String model = requestModel(body, abi, config);
-                    JSONArray messages = body.optJSONArray("messages");
-                    JSONArray requestMessages = ManualCompressionManager.sanitizeRequestMessages(messages);
-                    if (requestMessages != null && requestMessages != messages) {
-                        body.put("messages", requestMessages);
-                        messages = requestMessages;
-                        log(Log.INFO, TAG, "removed enhancer status messages from provider request");
-                    }
-                    JSONArray compacted = ManualCompressionManager.applyPrepared(messages, config);
-                    boolean preparedUsed = compacted != null && compacted != messages;
-                    if (compacted == null && policyEnabled
-                            && ModuleSettings.isContextCompressionEnabled()) {
-                        log(Log.DEBUG, TAG,
-                                "request runtime compression skipped; no prepared context. "
-                                        + "Compress while idle before sending the next message.");
-                    }
-                    if (compacted != null && compacted != messages) {
-                        body.put("messages", compacted);
-                        log(Log.INFO, TAG,
-                                "request context applied mode=" + (preparedUsed ? "manual_prepared" : "none")
-                                        + " originalMessages=" + messages.length()
-                                        + " compactedMessages=" + compacted.length()
-                                        + " originalChars=" + messages.toString().length()
-                                        + " compactedChars=" + compacted.toString().length());
-                    } else {
-                        log(Log.DEBUG, TAG, "request context unchanged mode="
-                                + (preparedUsed ? "manual_prepared_empty" : "none")
-                                + " messages=" + (messages == null ? 0 : messages.length()));
-                    }
+                    JSONArray messages = ManualCompressionManager.sanitizeRequestMessagesOrThrow(
+                            body.optJSONArray("messages"));
+                    JSONArray effective = ManualCompressionManager.effectiveRequestMessages(
+                            messages, config, model);
+                    body.put("messages", effective);
+                    log(Log.DEBUG, TAG, "request context applied originalMessages="
+                            + messages.length() + " effectiveMessages=" + effective.length());
                     applyOpenAiRequestPolicy(body, model, systemPrompt, policyEnabled);
                     return body.toString();
                 } catch (Throwable error) {
-                    log(Log.ERROR, TAG,
-                            "Request enhancement failed; using original body", error);
-                    return originalResult;
+                    log(Log.ERROR, TAG, "Request enhancement failed; rejecting request", error);
+                    throw error;
                 }
             });
 
@@ -272,33 +255,24 @@ public final class LSPilotEnhancerModule extends XposedModule {
                     Object config = chain.getArg(0);
                     String systemPrompt = (String) chain.getArg(2);
                     JSONObject body = new JSONObject((String) originalResult);
+                    if (ManualCompressionManager.isInternalSummaryRequest(
+                            body.optJSONArray("messages"))) {
+                        return originalResult;
+                    }
                     String model = requestModel(body, abi, config);
-                    JSONArray messages = body.optJSONArray("messages");
-                    JSONArray requestMessages = ManualCompressionManager.sanitizeRequestMessages(messages);
-                    if (requestMessages != null && requestMessages != messages) {
-                        body.put("messages", requestMessages);
-                        messages = requestMessages;
-                        log(Log.INFO, TAG, "removed enhancer status messages from minified provider request");
-                    }
-                    JSONArray compacted = ManualCompressionManager.applyPrepared(messages, config);
-                    if (compacted != null && compacted != messages) {
-                        body.put("messages", compacted);
-                        log(Log.INFO, TAG, "minified request context applied originalMessages="
-                                + (messages == null ? 0 : messages.length())
-                                + " compactedMessages=" + compacted.length()
-                                + " originalChars=" + (messages == null ? 0 : messages.toString().length())
-                                + " compactedChars=" + compacted.toString().length());
-                    } else if (compacted == null && policyEnabled
-                            && ModuleSettings.isContextCompressionEnabled()) {
-                        log(Log.DEBUG, TAG,
-                                "minified request runtime compression skipped; no prepared context");
-                    }
+                    JSONArray messages = ManualCompressionManager.sanitizeRequestMessagesOrThrow(
+                            body.optJSONArray("messages"));
+                    JSONArray effective = ManualCompressionManager.effectiveRequestMessages(
+                            messages, config, model);
+                    body.put("messages", effective);
+                    log(Log.DEBUG, TAG, "minified request context applied originalMessages="
+                            + messages.length() + " effectiveMessages=" + effective.length());
                     applyOpenAiRequestPolicy(body, model, systemPrompt, policyEnabled);
                     return body.toString();
                 } catch (Throwable error) {
                     log(Log.ERROR, TAG,
-                            "Minified request enhancement failed; using original body", error);
-                    return originalResult;
+                            "Minified request enhancement failed; rejecting request", error);
+                    throw error;
                 }
             });
 
@@ -317,6 +291,9 @@ public final class LSPilotEnhancerModule extends XposedModule {
         try {
             Method streamMessages = abi.streamMessagesMethod;
             hook(streamMessages).intercept(chain -> {
+                if (ManualCompressionManager.isInternalBuild()) {
+                    return chain.proceed();
+                }
                 Object viewModel = chain.getThisObject();
                 String chatId = abi.currentChatId(viewModel);
                 Object rawMessages = chain.getArg(1);
@@ -413,6 +390,9 @@ public final class LSPilotEnhancerModule extends XposedModule {
         try {
             Method streamMessages = abi.streamMessagesMethod;
             hook(streamMessages).intercept(chain -> {
+                if (ManualCompressionManager.isInternalBuild()) {
+                    return chain.proceed();
+                }
                 Object viewModel = chain.getThisObject();
                 Object[] args = chain.getArgs().toArray();
                 String chatId = currentChatId(abi, viewModel);
@@ -446,6 +426,142 @@ public final class LSPilotEnhancerModule extends XposedModule {
         if (chatId != null && !chatId.trim().isEmpty()) return chatId;
         ManualCompressionManager.ScreenState screen = ManualCompressionManager.getCurrentScreen();
         return screen == null ? null : screen.chatId;
+    }
+
+    private void requestInternalSummary(HostAbi abi,
+            ManualCompressionManager.SummaryTaskSnapshot snapshot) {
+        new android.os.Handler(android.os.Looper.getMainLooper()).post(() -> {
+            try {
+                Object viewModel = ManualCompressionManager.currentViewModel(snapshot.task.chatId);
+                if (viewModel == null) {
+                    throw new IllegalStateException("summary viewModel unavailable");
+                }
+                ArrayList<Object> messages = new ArrayList<>();
+                messages.add(abi.newStatusMessage(
+                        "lspilot-summary-" + snapshot.task.taskId,
+                        "user", snapshot.prompt, System.currentTimeMillis()));
+                Object callback = createInternalSummaryCallback(abi, snapshot);
+                ManualCompressionManager.setInternalBuild(true);
+                try {
+                    abi.streamMessagesMethod.invoke(viewModel, snapshot.config, messages, callback);
+                } finally {
+                    ManualCompressionManager.setInternalBuild(false);
+                }
+                new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(
+                        () -> ManualCompressionManager.onSummaryTimeout(
+                                snapshot.task.taskId, snapshot.task.chatId),
+                        60_000L);
+            } catch (Throwable error) {
+                log(Log.ERROR, TAG, "Internal summary request failed",
+                        unwrapInvocationError(error));
+                ManualCompressionManager.onSummaryResponse(snapshot.task.taskId,
+                        snapshot.task.chatId, "", false, false, false);
+            }
+        });
+    }
+
+    private static Object createInternalSummaryCallback(HostAbi abi,
+            ManualCompressionManager.SummaryTaskSnapshot snapshot) {
+        Class<?> callbackType = abi.streamMessagesMethod.getParameterTypes()[2];
+        StringBuilder markdown = new StringBuilder();
+        boolean[] returnedToolCall = new boolean[]{false};
+        boolean[] completed = new boolean[]{false};
+        return Proxy.newProxyInstance(callbackType.getClassLoader(),
+                new Class<?>[]{callbackType}, (proxy, method, args) -> {
+                    if (method.getDeclaringClass() == Object.class) {
+                        if ("toString".equals(method.getName())) {
+                            return "LSPilotEnhancerSummaryCallback";
+                        }
+                        if ("hashCode".equals(method.getName())) {
+                            return System.identityHashCode(proxy);
+                        }
+                        if ("equals".equals(method.getName())) {
+                            return args != null && args.length == 1 && proxy == args[0];
+                        }
+                    }
+                    if (args != null && args.length > 0) {
+                        onInternalSummaryEvent(snapshot, markdown, returnedToolCall,
+                                completed, args[0]);
+                    }
+                    return null;
+                });
+    }
+
+    private static void onInternalSummaryEvent(
+            ManualCompressionManager.SummaryTaskSnapshot snapshot, StringBuilder markdown,
+            boolean[] returnedToolCall, boolean[] completed, Object event) {
+        if (event == null || completed[0]) return;
+        String name = event.getClass().getName();
+        if (isSummaryErrorEvent(event, name)) {
+            completed[0] = true;
+            ManualCompressionManager.onSummaryResponse(snapshot.task.taskId,
+                    snapshot.task.chatId, "", false, false, false);
+            return;
+        }
+        returnedToolCall[0] |= looksLikeToolCallEvent(event, name);
+        String chunk = summaryEventText(event);
+        if (chunk != null) markdown.append(chunk);
+        if (isSummaryDoneEvent(name)) {
+            completed[0] = true;
+            ManualCompressionManager.onSummaryResponse(snapshot.task.taskId,
+                    snapshot.task.chatId, markdown.toString(), true,
+                    returnedToolCall[0], markdown.length() == 0);
+        }
+    }
+
+    private static boolean isSummaryErrorEvent(Object event, String name) {
+        return event instanceof Throwable || "nyb$c".equals(name)
+                || (name != null && (name.endsWith("$Error") || name.endsWith(".Error")
+                || name.endsWith("$Failure") || name.endsWith(".Failure")
+                || name.endsWith("$Failed") || name.endsWith(".Failed")));
+    }
+
+    private static boolean isSummaryDoneEvent(String name) {
+        return "nyb$b".equals(name)
+                || (name != null && (name.endsWith("$Done") || name.endsWith(".Done")));
+    }
+
+    private static boolean looksLikeToolCallEvent(Object event, String name) {
+        if (name != null && name.toLowerCase(Locale.ROOT).contains("tool")) return true;
+        Object calls = readEventMember(event, "getToolCalls", "toolCalls");
+        Object id = readEventMember(event, "getToolCallId", "toolCallId");
+        return hasValue(calls) || hasValue(id);
+    }
+
+    private static String summaryEventText(Object event) {
+        Object value = readEventMember(event, "getContent", "content", "getText", "text",
+                "getDelta", "delta", "getMessage", "message", "a", "b");
+        if (!(value instanceof CharSequence)) return null;
+        String text = value.toString();
+        return text.isEmpty() || text.equals(event.getClass().getName()) ? null : text;
+    }
+
+    private static Object readEventMember(Object event, String... names) {
+        if (event == null || names == null) return null;
+        for (String name : names) {
+            try {
+                Method method;
+                try {
+                    method = event.getClass().getMethod(name);
+                } catch (NoSuchMethodException ignored) {
+                    method = event.getClass().getDeclaredMethod(name);
+                }
+                if (method.getParameterTypes().length != 0) continue;
+                method.setAccessible(true);
+                Object value = method.invoke(event);
+                if (hasValue(value)) return value;
+            } catch (Throwable ignored) {
+                // Try the next likely Kotlin/Java member shape.
+            }
+        }
+        return null;
+    }
+
+    private static boolean hasValue(Object value) {
+        if (value == null) return false;
+        if (value instanceof CharSequence) return ((CharSequence) value).length() > 0;
+        if (value instanceof List) return !((List<?>) value).isEmpty();
+        return true;
     }
 
     private boolean installSseUsageHook(HostAbi abi) {
@@ -768,9 +884,6 @@ public final class LSPilotEnhancerModule extends XposedModule {
                         InjectedUiController.onChatSessionLoaded();
                     }
                 }
-                if (Boolean.TRUE.equals(AUTO_REPLAY_SEND.get())) {
-                    return chain.proceed();
-                }
                 Object retryViewModel = chain.getThisObject();
                 AutoRetryManager.onUserSend(
                         retryViewModel, currentChatId(abi, retryViewModel));
@@ -778,40 +891,9 @@ public final class LSPilotEnhancerModule extends XposedModule {
                     log(Log.INFO, TAG, "sendMessage blocked while compression is preparing");
                     return null;
                 }
-                if (!ManualCompressionManager.shouldAutoCompressBeforeSend()) {
-                    return chain.proceed();
-                }
-                Object viewModel = chain.getThisObject();
-                log(Log.INFO, TAG, "sendMessage paused for pre-send compression");
-                ManualCompressionManager.prepareCurrentAutomatic(ModuleSettings.getManualKeepRecent(), result ->
-                        new Handler(Looper.getMainLooper()).post(() -> {
-                            try {
-                                log(result.success ? Log.INFO : Log.WARN, TAG,
-                                        "pre-send compression finished success=" + result.success
-                                                + " original=" + result.originalCount
-                                                + " compacted=" + result.compactedCount);
-                                if (!result.success) {
-                                    log(Log.WARN, TAG,
-                                            "pre-send compression failed; send not replayed"
-                                                    + " to avoid uncompressed fallback");
-                                    ManualCompressionManager.postCompressionStatusQuiet(
-                                            "自动压缩失败，本次发送已取消，未回退发送完整历史。"
-                                                    + "请检查压缩状态后重试；需要放行原始历史时请先关闭上下文压缩。");
-                                    return;
-                                }
-                                AUTO_REPLAY_SEND.set(Boolean.TRUE);
-                                try {
-                                    sendMessage.invoke(viewModel);
-                                } finally {
-                                    AUTO_REPLAY_SEND.remove();
-                                }
-                            } catch (Throwable error) {
-                                log(Log.ERROR, TAG, "Failed to replay sendMessage after compression", error);
-                            }
-                        }));
-                return null;
+                return chain.proceed();
             });
-            log(Log.INFO, TAG, "AiChatViewModel.sendMessage pre-send compression hook installed");
+            log(Log.INFO, TAG, "AiChatViewModel.sendMessage compression guard hook installed");
         } catch (Throwable error) {
             log(Log.ERROR, TAG, "Failed to install send-before-compression hook", error);
         }

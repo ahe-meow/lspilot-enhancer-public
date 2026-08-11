@@ -21,6 +21,10 @@ final class ManualCompressionManager {
         void onComplete(Result result);
     }
 
+    interface SummaryRequester {
+        void request(SummaryTaskSnapshot snapshot);
+    }
+
     static final class ScreenState {
         final String chatId;
         final Object uiState;
@@ -130,6 +134,7 @@ final class ManualCompressionManager {
     private static final ThreadLocal<Boolean> INTERNAL_BUILD = new ThreadLocal<>();
 
     private static volatile HostAbi hostAbi;
+    private static volatile SummaryRequester summaryRequester;
     private static volatile ScreenState currentScreen;
     private static volatile WeakReference<Object> viewModelRef = new WeakReference<>(null);
     private static volatile String viewModelChatId;
@@ -169,6 +174,10 @@ final class ManualCompressionManager {
         hostAbi = abi;
     }
 
+    static void setSummaryRequester(SummaryRequester requester) {
+        summaryRequester = requester;
+    }
+
     static HostAbi hostAbi() {
         return hostAbi;
     }
@@ -183,6 +192,11 @@ final class ManualCompressionManager {
 
     static boolean isInternalBuild() {
         return Boolean.TRUE.equals(INTERNAL_BUILD.get());
+    }
+
+    static void setInternalBuild(boolean internal) {
+        if (internal) INTERNAL_BUILD.set(Boolean.TRUE);
+        else INTERNAL_BUILD.remove();
     }
 
     static synchronized CompressionStateMachine.State getCompressionState() {
@@ -206,6 +220,11 @@ final class ManualCompressionManager {
         return new SummaryTaskSnapshot(activeTask, taskSource, taskConfig,
                 SummaryProtocol.buildPrompt(taskSource, activeTask.keepRecent,
                         ModuleSettings.getAutoContextTokens(), ""));
+    }
+
+    static synchronized Object currentViewModel(String chatId) {
+        if (chatId == null || !chatId.equals(viewModelChatId)) return null;
+        return viewModelRef.get();
     }
 
     static void captureViewModel(Object viewModel, String chatId) {
@@ -601,6 +620,36 @@ final class ManualCompressionManager {
         return cleanMessages(messages);
     }
 
+    static boolean isInternalSummaryRequest(JSONArray messages) {
+        if (messages == null || messages.length() != 1) return false;
+        JSONObject message = messages.optJSONObject(0);
+        if (message == null || !"user".equalsIgnoreCase(message.optString("role"))) return false;
+        Object content = message.opt("content");
+        String text = content == null || JSONObject.NULL.equals(content) ? "" : String.valueOf(content);
+        return text.contains("## 核心任务状态") && text.contains("## 后续执行要求");
+    }
+
+    static JSONArray sanitizeRequestMessagesOrThrow(JSONArray messages) {
+        if (messages == null) throw new IllegalArgumentException("messages == null");
+        JSONArray result = new JSONArray();
+        try {
+            for (int index = 0; index < messages.length(); index++) {
+                JSONObject message = messages.optJSONObject(index);
+                if (message == null) {
+                    throw new IllegalArgumentException("message must be object");
+                }
+                if (!isEnhancerStatus(message)) {
+                    result.put(SummaryProtocol.sanitizedMessage(message));
+                }
+            }
+            return result;
+        } catch (IllegalArgumentException error) {
+            throw error;
+        } catch (Throwable error) {
+            throw new IllegalArgumentException("request messages cannot be sanitized", error);
+        }
+    }
+
     static JSONArray applyPrepared(JSONArray actualMessages, Object config) {
         if (actualMessages == null || config == null) return null;
         JSONArray rebuilt = effectiveRequestMessages(actualMessages, config, modelName(config));
@@ -669,6 +718,7 @@ final class ManualCompressionManager {
                 : "等待当前工具调用完成后开始压缩。", source.length(), 0);
         postStatus(chatId, lastResult.message);
         refreshCompressionUi();
+        if (state == CompressionStateMachine.State.SUMMARIZING) dispatchSummaryRequest();
         return true;
     }
 
@@ -690,6 +740,7 @@ final class ManualCompressionManager {
             state = CompressionStateMachine.transition(state,
                     CompressionStateMachine.Event.RETRY_REQUESTED);
             postStatus(activeTask.chatId, "摘要校验失败，正在自动重试一次：" + reason);
+            dispatchSummaryRequest();
             return;
         }
         state = CompressionStateMachine.transition(state,
@@ -760,6 +811,19 @@ final class ManualCompressionManager {
     private static void finish(Callback callback, Result result) {
         lastResult = result;
         if (callback != null) callback.onComplete(result);
+    }
+
+    private static void dispatchSummaryRequest() {
+        SummaryRequester requester = summaryRequester;
+        SummaryTaskSnapshot snapshot = currentSummaryTask();
+        if (requester == null || snapshot == null) return;
+        try {
+            requester.request(snapshot);
+        } catch (Throwable error) {
+            DebugLogger.e("failed to dispatch summary request", error);
+            onSummaryResponse(snapshot.task.taskId, snapshot.task.chatId, "",
+                    false, false, false);
+        }
     }
 
     private static SummaryRecordStore.Record findUsableRecord(String chatId, JSONArray messages,
