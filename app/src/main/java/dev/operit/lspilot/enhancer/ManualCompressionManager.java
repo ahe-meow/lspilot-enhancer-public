@@ -120,6 +120,7 @@ final class ManualCompressionManager {
     static final String RETRY_STATUS_MARKER = "[系统提示 · 自动重试]";
     private static final String TAG = "LSPilotEnhancer";
     private static final long STATUS_MIN_INTERVAL_MS = 1_500L;
+    private static final long SUMMARY_TIMEOUT_MS = 60_000L;
     private static final ExecutorService STATUS_EXECUTOR = Executors.newSingleThreadExecutor(runnable -> {
         Thread thread = new Thread(runnable, "LSPilotCompressionStatus");
         thread.setDaemon(true);
@@ -149,6 +150,10 @@ final class ManualCompressionManager {
     private static int retryCount;
     private static boolean automaticRetryAllowed;
     private static boolean recoveryRequestNeeded;
+    private static boolean recoveryBatchReady;
+    private static boolean hasCompleteSnapshot;
+    private static boolean lastFailureOverThreshold;
+    private static String lastFailureReason;
     private static JSONArray latestHostMessages = new JSONArray();
     private static JSONArray previousCompleteMessages = new JSONArray();
     private static JSONArray pendingUserRequest = new JSONArray();
@@ -216,6 +221,11 @@ final class ManualCompressionManager {
         currentScreen = null;
         latestHostMessages = new JSONArray();
         previousCompleteMessages = new JSONArray();
+        pendingUserRequest = new JSONArray();
+        pendingRecoveryEvents = new JSONArray();
+        recoveryRequestNeeded = false;
+        recoveryBatchReady = false;
+        hasCompleteSnapshot = false;
         usableRecord = null;
     }
 
@@ -307,16 +317,24 @@ final class ManualCompressionManager {
         JSONArray hostMessages = cleanMessages(effectiveMessages);
         Object config = currentConfig();
         String model = currentModel();
-        JSONArray added = appendedSuffix(previousCompleteMessages, hostMessages);
+        JSONArray added = recoveryEventsSince(previousCompleteMessages, hostMessages,
+                hasCompleteSnapshot);
         synchronized (ManualCompressionManager.class) {
             latestHostMessages = copyArray(hostMessages);
             previousCompleteMessages = copyArray(hostMessages);
+            hasCompleteSnapshot = true;
             if (isSummaryTaskActive()) {
-                bufferNonUserEvents(added);
+                if (!isBoundaryPrefix(taskBoundary, hostMessages)) {
+                    SummaryRecordStore.invalidate(chatId);
+                    cancelActive("历史在摘要期间发生变化，原上下文未改变。", true);
+                    return;
+                }
+                bufferRecoveryEvents(added);
                 recoveryRequestNeeded |= !replyFinished;
                 if (state == CompressionStateMachine.State.WAITING_SAFE_BOUNDARY
                         && toolChainComplete) {
-                    JSONArray source = effectiveRequestMessages(hostMessages, config, model);
+                    JSONArray source = effectiveSummaryMessages(
+                            hostMessages, config, model, pendingUserRequest);
                     startTask(chatId, source, hostMessages, config, model,
                             activeTask == null ? ModuleSettings.getSummaryKeepRecent()
                                     : activeTask.keepRecent,
@@ -326,7 +344,8 @@ final class ManualCompressionManager {
             }
         }
         if (!ModuleSettings.isEnabled() || !ModuleSettings.isContextCompressionEnabled()) return;
-        JSONArray source = effectiveRequestMessages(hostMessages, config, model);
+        JSONArray source = effectiveSummaryMessages(
+                hostMessages, config, model, pendingUserRequest);
         if (completedContextTokens(source) < ModuleSettings.getAutoContextTokens()) return;
         bufferRecoveryEvents(added);
         synchronized (ManualCompressionManager.class) {
@@ -339,14 +358,12 @@ final class ManualCompressionManager {
     static synchronized boolean beginPendingUserRequest(String chatId, JSONArray userRequest) {
         if (chatId == null || userRequest == null || userRequest.length() == 0) return false;
         enterChat(chatId);
-        if (pendingUserRequest.length() == 0) pendingUserRequest = copyArray(userRequest);
-        recoveryRequestNeeded = true;
+        bufferPendingUserRequest(userRequest);
         if (isSummaryTaskActive()) return true;
         Object config = currentConfig();
         String model = currentModel();
         JSONArray boundary = copyArray(latestHostMessages);
-        JSONArray source = effectiveRequestMessages(
-                excludePendingUser(boundary, pendingUserRequest), config, model);
+        JSONArray source = effectiveSummaryMessages(boundary, config, model, pendingUserRequest);
         if (completedContextTokens(source) < ModuleSettings.getAutoContextTokens()) {
             pendingUserRequest = new JSONArray();
             recoveryRequestNeeded = false;
@@ -359,20 +376,26 @@ final class ManualCompressionManager {
 
     static synchronized void onSummaryResponse(long taskId, String chatId, String markdown,
             boolean terminalAssistant, boolean returnedToolCall, boolean thinkingOnly) {
-        if (!CompressionStateMachine.isCurrent(activeTask, taskId, chatId)) {
+        if (!isCurrentSummaryResponse(activeTask, taskId, chatId, state,
+                taskBoundary, latestHostMessages, providerSignature(currentConfig()),
+                currentModel())) {
             DebugLogger.w("stale compression response ignored task=" + taskId);
+            if (CompressionStateMachine.isCurrent(activeTask, taskId, chatId)) {
+                SummaryRecordStore.invalidate(chatId);
+                cancelActive("摘要响应已过期，原上下文未改变。", true);
+            }
             return;
         }
         state = CompressionStateMachine.transition(state,
                 CompressionStateMachine.Event.SUMMARY_RESPONSE);
         if (!terminalAssistant || returnedToolCall || thinkingOnly) {
-            handleSummaryFailure("摘要响应不是终态 Markdown");
+            handleSummaryFailure("摘要响应不是终态 Markdown", false);
             return;
         }
         SummaryProtocol.Validation validation = SummaryProtocol.validateTerminalMarkdown(
                 markdown, taskSource, activeTask.keepRecent);
         if (!validation.success) {
-            handleSummaryFailure(validation.reason);
+            handleSummaryFailure(validation.reason, false);
             return;
         }
         try {
@@ -382,7 +405,7 @@ final class ManualCompressionManager {
             int threshold = ModuleSettings.getAutoContextTokens();
             if (completedContextTokens(rebuilt) >= threshold) {
                 handleSummaryFailure("保留最近 " + activeTask.keepRecent
-                        + " 轮后上下文仍超过 " + threshold + " token");
+                        + " 轮后上下文仍超过 " + threshold + " token", true);
                 return;
             }
             SummaryRecordStore.writeComplete(activeTask.chatId, candidate);
@@ -391,6 +414,8 @@ final class ManualCompressionManager {
                     System.currentTimeMillis() - compressionStartedAt);
             lastMetrics = metrics;
             compressionUsedForPendingRequest = recoveryRequestNeeded;
+            recoveryBatchReady = pendingRecoveryEvents.length() > 0
+                    || pendingUserRequest.length() > 0;
             state = CompressionStateMachine.transition(state,
                     CompressionStateMachine.Event.SUMMARY_VALID);
             Result result = new Result(true,
@@ -401,8 +426,15 @@ final class ManualCompressionManager {
             postStatus(activeTask.chatId, result.message);
             finishActive(result);
         } catch (Throwable error) {
-            handleSummaryFailure(readableError(error));
+            handleSummaryFailure(readableError(error), false);
         }
+    }
+
+    static synchronized void onSummaryTimeout(long taskId, String chatId) {
+        if (activeTask == null || !isCurrentSummaryResponse(activeTask, taskId, chatId,
+                state, taskBoundary, latestHostMessages,
+                providerSignature(currentConfig()), currentModel())) return;
+        handleSummaryFailure("摘要请求超时", false);
     }
 
     static synchronized void onCompressionAction(CompressionStateMachine.Action action) {
@@ -412,7 +444,8 @@ final class ManualCompressionManager {
             cancelActive("已取消上下文压缩，原上下文未改变。", true);
             return;
         }
-        if (state != CompressionStateMachine.State.AWAITING_USER_ACTION) return;
+        if (!isCompressionActionAllowed(state, activeTask.keepRecent,
+                lastFailureOverThreshold, action)) return;
         int keep = activeTask.keepRecent;
         if (action == CompressionStateMachine.Action.KEEP_2 && keep > 2) keep = 2;
         else if (action == CompressionStateMachine.Action.KEEP_1 && keep > 1) keep = 1;
@@ -449,11 +482,33 @@ final class ManualCompressionManager {
         for (int index = 0; index < events.length(); index++) {
             pendingRecoveryEvents.put(copyValue(events.opt(index)));
         }
+        if (events.length() > 0) recoveryBatchReady = true;
+    }
+
+    static synchronized void bufferPendingUserRequest(JSONArray request) {
+        if (request != null && request.length() > 0 && pendingUserRequest.length() == 0) {
+            pendingUserRequest = copyArray(request);
+            recoveryRequestNeeded = true;
+            recoveryBatchReady = true;
+        }
     }
 
     static synchronized JSONArray drainRecoveryEvents() {
         JSONArray result = copyArray(pendingRecoveryEvents);
         pendingRecoveryEvents = new JSONArray();
+        if (pendingUserRequest.length() == 0) recoveryBatchReady = false;
+        return result;
+    }
+
+    static synchronized JSONArray drainRecoveryBatch() {
+        JSONArray result = copyArray(pendingRecoveryEvents);
+        pendingRecoveryEvents = new JSONArray();
+        for (int index = 0; index < pendingUserRequest.length(); index++) {
+            result.put(copyValue(pendingUserRequest.opt(index)));
+        }
+        pendingUserRequest = new JSONArray();
+        recoveryRequestNeeded = false;
+        recoveryBatchReady = false;
         return result;
     }
 
@@ -461,6 +516,21 @@ final class ManualCompressionManager {
         JSONArray result = copyArray(pendingUserRequest);
         pendingUserRequest = new JSONArray();
         recoveryRequestNeeded = false;
+        if (pendingRecoveryEvents.length() == 0) recoveryBatchReady = false;
+        return result;
+    }
+
+    static JSONArray recoveryEventsSince(JSONArray previous, JSONArray current,
+            boolean hasSnapshot) {
+        if (!hasSnapshot) return new JSONArray();
+        JSONArray suffix = appendedSuffix(previous, current);
+        JSONArray result = new JSONArray();
+        for (int index = 0; index < suffix.length(); index++) {
+            JSONObject event = suffix.optJSONObject(index);
+            if (event != null && !"user".equalsIgnoreCase(event.optString("role"))) {
+                result.put(copyValue(event));
+            }
+        }
         return result;
     }
 
@@ -470,19 +540,61 @@ final class ManualCompressionManager {
 
     static synchronized JSONArray effectiveRequestMessages(
             JSONArray hostMessages, Object config, String model) {
+        return effectiveRequestMessagesInternal(hostMessages, config, model, true);
+    }
+
+    static synchronized JSONArray effectiveSummaryMessages(
+            JSONArray hostMessages, Object config, String model, JSONArray pendingUser) {
+        return effectiveRequestMessagesInternal(
+                excludePendingUser(hostMessages, pendingUser), config, model, false);
+    }
+
+    private static JSONArray effectiveRequestMessagesInternal(
+            JSONArray hostMessages, Object config, String model, boolean includePending) {
         JSONArray clean = cleanMessages(hostMessages);
         latestHostMessages = copyArray(clean);
-        if (currentChatId == null) return appendPendingUserOnce(clean, pendingUserRequest);
+        if (currentChatId == null) {
+            return includePending ? appendPendingUserOnce(clean, pendingUserRequest) : clean;
+        }
         String signature = providerSignature(config);
         SummaryRecordStore.Record record = findUsableRecord(
                 currentChatId, clean, signature, model);
         if (record == null) {
             SummaryRecordStore.invalidate(currentChatId);
             usableRecord = null;
-            return appendPendingUserOnce(clean, pendingUserRequest);
+            return includePending ? appendPendingUserOnce(clean, pendingUserRequest) : clean;
         }
         usableRecord = record;
-        return appendPendingUserOnce(rebuildEffective(clean, record), pendingUserRequest);
+        JSONArray rebuilt = rebuildEffective(clean, record);
+        return includePending ? appendPendingUserOnce(rebuilt, pendingUserRequest) : rebuilt;
+    }
+
+    static boolean isCurrentSummaryResponse(CompressionStateMachine.Task task, long taskId,
+            String chatId, CompressionStateMachine.State currentState, JSONArray boundary,
+            JSONArray currentMessages, String providerSignature, String model) {
+        if (task == null || currentState != CompressionStateMachine.State.SUMMARIZING
+                || !CompressionStateMachine.isCurrent(task, taskId, chatId)
+                || !task.boundaryFingerprint.equals(SummaryRecordStore.fingerprint(boundary))
+                || !isBoundaryPrefix(boundary, currentMessages)) return false;
+        if (providerSignature != null && !providerSignature.isEmpty()
+                && !task.providerSignature.equals(providerSignature)) return false;
+        return model == null || model.isEmpty() || task.model.equals(safe(model));
+    }
+
+    static boolean isCompressionActionAllowed(CompressionStateMachine.State currentState,
+            int keepRecent, boolean overThreshold, CompressionStateMachine.Action action) {
+        if (currentState != CompressionStateMachine.State.AWAITING_USER_ACTION
+                || action == null) return false;
+        if (action == CompressionStateMachine.Action.CANCEL) return true;
+        if (overThreshold) {
+            return action == CompressionStateMachine.Action.KEEP_2 && keepRecent > 2
+                    || action == CompressionStateMachine.Action.KEEP_1 && keepRecent > 1;
+        }
+        return action == CompressionStateMachine.Action.RETRY;
+    }
+
+    static boolean hasSummaryTimedOut(long startedAt, long now) {
+        return now - startedAt >= SUMMARY_TIMEOUT_MS;
     }
 
     static JSONArray sanitizeRequestMessages(JSONArray messages) {
@@ -546,6 +658,8 @@ final class ManualCompressionManager {
         lastKeepRecent = keepRecent;
         retryCount = 0;
         automaticRetryAllowed = allowAutomaticRetry;
+        lastFailureOverThreshold = false;
+        lastFailureReason = null;
         completionCallback = callback;
         compressionStartedAt = System.currentTimeMillis();
         state = safeBoundary ? CompressionStateMachine.State.SUMMARIZING
@@ -559,8 +673,14 @@ final class ManualCompressionManager {
     }
 
     private static void handleSummaryFailure(String reason) {
+        handleSummaryFailure(reason, false);
+    }
+
+    private static void handleSummaryFailure(String reason, boolean overThreshold) {
         if (activeTask == null) return;
-        if (automaticRetryAllowed && retryCount == 0) {
+        lastFailureReason = reason;
+        lastFailureOverThreshold = overThreshold;
+        if (!overThreshold && automaticRetryAllowed && retryCount == 0) {
             retryCount = 1;
             state = CompressionStateMachine.transition(state,
                     CompressionStateMachine.Event.FIRST_FAILURE);
@@ -611,6 +731,8 @@ final class ManualCompressionManager {
         taskConfig = null;
         retryCount = 0;
         automaticRetryAllowed = false;
+        lastFailureOverThreshold = false;
+        lastFailureReason = null;
         completionCallback = null;
         lastResult = result;
         refreshCompressionUi();
@@ -627,6 +749,8 @@ final class ManualCompressionManager {
         taskSource = new JSONArray();
         taskBoundary = new JSONArray();
         taskConfig = null;
+        lastFailureOverThreshold = false;
+        lastFailureReason = null;
         completionCallback = null;
         lastResult = result;
         if (postNotice) postStatus(chatId, message);
@@ -648,6 +772,14 @@ final class ManualCompressionManager {
             if (record != null) return record;
         }
         return null;
+    }
+
+    private static boolean isBoundaryPrefix(JSONArray boundary, JSONArray current) {
+        if (boundary == null || current == null || boundary.length() > current.length()) return false;
+        for (int index = 0; index < boundary.length(); index++) {
+            if (!sameMessage(boundary.opt(index), current.opt(index))) return false;
+        }
+        return true;
     }
 
     private static JSONArray rebuildEffective(

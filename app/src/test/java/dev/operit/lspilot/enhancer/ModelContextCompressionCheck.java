@@ -133,6 +133,8 @@ public final class ModelContextCompressionCheck {
                 ManualCompressionManager.completedContextTokens(source),
                 "threshold must count completed messages without pending input");
 
+        pendingSourceExcludesBlockedInput();
+
         String effectiveChat = "chat-effective";
         ManualCompressionManager.enterChat(effectiveChat);
         JSONArray boundary = pairedToolMessages();
@@ -164,7 +166,108 @@ public final class ModelContextCompressionCheck {
                 editedHistory, "provider-a", "model-a");
         assertEquals(editedHistory.length(), historyFallback.length(),
                 "covered history change must invalidate and fall back");
+
+        JSONArray pendingSource = copy(source);
+        pendingSource.put(pendingUser.getJSONObject(0));
+        JSONArray effectiveSummary = ManualCompressionManager.effectiveSummaryMessages(
+                pendingSource, "provider-a", "model-a", pendingUser);
+        assertEquals(source.length(), effectiveSummary.length(),
+                "summary reconstruction must not re-append the blocked user");
+
+        ManualCompressionManager.enterChat("chat-queue-a");
+        ManualCompressionManager.bufferPendingUserRequest(pendingUser);
+        ManualCompressionManager.bufferRecoveryEvents(new JSONArray()
+                .put(message("assistant", "queued")));
+        ManualCompressionManager.enterChat("chat-queue-b");
+        assertEquals(0, ManualCompressionManager.drainRecoveryBatch().length(),
+                "chat switch must clear pending and recovery queues");
+
+        JSONArray nextMessages = copy(source);
+        nextMessages.put(message("assistant", "new-event"));
+        JSONArray suffix = ManualCompressionManager.recoveryEventsSince(
+                source, nextMessages, true);
+        assertEquals(1, suffix.length(),
+                "complete snapshots must buffer only newly appended events");
+        assertEquals(0, ManualCompressionManager.recoveryEventsSince(
+                new JSONArray(), nextMessages, false).length(),
+                "first complete snapshot must establish a baseline without replay");
+
+        ManualCompressionManager.bufferRecoveryEvents(new JSONArray()
+                .put(message("assistant", "assistant-event"))
+                .put(message("tool", "tool-event")));
+        ManualCompressionManager.bufferPendingUserRequest(pendingUser);
+        JSONArray recoveryBatch = ManualCompressionManager.drainRecoveryBatch();
+        assertEquals("assistant-event", recoveryBatch.getJSONObject(0).optString("content"),
+                "recovery batch must preserve non-user events first");
+        assertEquals("tool-event", recoveryBatch.getJSONObject(1).optString("content"),
+                "recovery batch must preserve tool event order");
+        assertEquals("blocked request", recoveryBatch.getJSONObject(2).optString("content"),
+                "recovery batch must append pending user last");
+        assertEquals(0, ManualCompressionManager.drainRecoveryBatch().length(),
+                "recovery batch must drain exactly once");
+
+        CompressionStateMachine.Task responseTask = CompressionStateMachine.newTask(
+                "chat-stale", SummaryRecordStore.fingerprint(source),
+                "provider-a", "model-a", 3);
+        JSONArray postBoundary = copy(source);
+        postBoundary.put(message("assistant", "post-boundary"));
+        assertTrue(ManualCompressionManager.isCurrentSummaryResponse(
+                        responseTask, responseTask.taskId, "chat-stale",
+                        CompressionStateMachine.State.SUMMARIZING,
+                        source, postBoundary, "provider-a", "model-a"),
+                "current response may accept messages appended after its boundary");
+        assertTrue(!ManualCompressionManager.isCurrentSummaryResponse(
+                        responseTask, responseTask.taskId, "chat-stale",
+                        CompressionStateMachine.State.AWAITING_USER_ACTION,
+                        source, postBoundary, "provider-a", "model-a"),
+                "late response after failure must be stale");
+        assertTrue(!ManualCompressionManager.isCurrentSummaryResponse(
+                        responseTask, responseTask.taskId, "chat-stale",
+                        CompressionStateMachine.State.SUMMARIZING,
+                        source, postBoundary, "provider-b", "model-a"),
+                "provider changes must make a summary response stale");
+        assertTrue(!ManualCompressionManager.isCurrentSummaryResponse(
+                        responseTask, responseTask.taskId, "chat-stale",
+                        CompressionStateMachine.State.SUMMARIZING,
+                        source, copyWithChangedContent(postBoundary),
+                        "provider-a", "model-a"),
+                "covered history edits must make a summary response stale");
+
+        assertTrue(ManualCompressionManager.isCompressionActionAllowed(
+                        CompressionStateMachine.State.AWAITING_USER_ACTION,
+                        3, true, CompressionStateMachine.Action.KEEP_2),
+                "three-round over-limit failure must allow retain two");
+        assertTrue(!ManualCompressionManager.isCompressionActionAllowed(
+                        CompressionStateMachine.State.AWAITING_USER_ACTION,
+                        3, true, CompressionStateMachine.Action.RETRY),
+                "over-limit failure must not allow same-retention retry");
+        assertTrue(!ManualCompressionManager.isCompressionActionAllowed(
+                        CompressionStateMachine.State.AWAITING_USER_ACTION,
+                        2, true, CompressionStateMachine.Action.KEEP_2),
+                "two-round over-limit failure must narrow choices");
+        assertTrue(ManualCompressionManager.isCompressionActionAllowed(
+                        CompressionStateMachine.State.AWAITING_USER_ACTION,
+                        2, true, CompressionStateMachine.Action.KEEP_1),
+                "two-round over-limit failure must allow retain one");
+        assertTrue(ManualCompressionManager.hasSummaryTimedOut(1_000L, 61_001L),
+                "summary timeout must expire after the fixed deadline");
+        assertTrue(!ManualCompressionManager.hasSummaryTimedOut(1_000L, 60_999L),
+                "summary timeout must not fire early");
         SummaryRecordStore.useStore(null);
+    }
+
+    private static void pendingSourceExcludesBlockedInput() throws Exception {
+        String chatId = "chat-pending-threshold";
+        ManualCompressionManager.enterChat(chatId);
+        JSONArray completed = pairedToolMessages();
+        ManualCompressionManager.effectiveRequestMessages(completed, null, "");
+        JSONArray pending = new JSONArray()
+                .put(message("user", largeText(70_000)));
+        assertTrue(!ManualCompressionManager.beginPendingUserRequest(chatId, pending),
+                "blocked user input must not trigger completed-context compression");
+        assertEquals(CompressionStateMachine.State.IDLE,
+                ManualCompressionManager.getCompressionState(),
+                "below-threshold completed context must remain idle");
     }
 
     private static JSONArray copyWithTransientFields(JSONArray source) throws Exception {
@@ -276,6 +379,12 @@ public final class ModelContextCompressionCheck {
         JSONArray result = pairedToolMessages();
         result.remove(result.length() - 2);
         return result;
+    }
+
+    private static String largeText(int length) {
+        StringBuilder result = new StringBuilder(length);
+        while (result.length() < length) result.append('x');
+        return result.toString();
     }
 
     private static JSONObject message(String role, String content) throws Exception {
