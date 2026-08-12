@@ -630,9 +630,27 @@ final class HostAbi {
                     return accessible(method);
                 }
             }
+            Method method = findBooleanTwoReferenceArgMethod(owner);
+            if (method != null) return accessible(method);
         }
         throw new NoSuchMethodException("StateFlow compare-and-set method unavailable on "
                 + implementationClass.getName());
+    }
+
+    private static Method findBooleanTwoReferenceArgMethod(Class<?> owner) {
+        for (Method method : owner.getDeclaredMethods()) {
+            Class<?>[] types = method.getParameterTypes();
+            if (Modifier.isStatic(method.getModifiers())
+                    || types.length != 2
+                    || types[0].isPrimitive()
+                    || types[1].isPrimitive()
+                    || (method.getReturnType() != boolean.class
+                            && method.getReturnType() != Boolean.class)) {
+                continue;
+            }
+            return method;
+        }
+        return null;
     }
 
     private Method findRepositoryReplaceMessages() throws NoSuchMethodException {
