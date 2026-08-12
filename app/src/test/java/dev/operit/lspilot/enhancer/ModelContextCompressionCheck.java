@@ -127,6 +127,21 @@ public final class ModelContextCompressionCheck {
                 "summary states must block new sends");
         assertTrue(!ManualCompressionManager.blocksNewSend(CompressionStateMachine.State.IDLE),
                 "idle state must allow sends");
+        ManualCompressionManager.UiProjection waiting =
+                ManualCompressionManager.UiProjection.forState(
+                        CompressionStateMachine.State.WAITING_SAFE_BOUNDARY, true);
+        assertTrue(waiting.sendBlocked, "waiting must block new sends");
+        assertTrue(waiting.stopUsesHostState, "waiting must preserve host stop state");
+        ManualCompressionManager.UiProjection summarizing =
+                ManualCompressionManager.UiProjection.forState(
+                        CompressionStateMachine.State.SUMMARIZING, false);
+        assertTrue(summarizing.sendDisabled && summarizing.stopDisabled,
+                "formal compression must disable send and stop");
+        ManualCompressionManager.UiProjection idle =
+                ManualCompressionManager.UiProjection.forState(
+                        CompressionStateMachine.State.IDLE, false);
+        assertTrue(!idle.sendBlocked && !idle.sendDisabled,
+                "idle must restore host controls");
         assertEquals(3, ModuleSettings.getSummaryKeepRecent(),
                 "model summary retention must default to three rounds");
         assertEquals(SummaryProtocol.estimateTokens(source),

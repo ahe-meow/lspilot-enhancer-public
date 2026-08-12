@@ -171,9 +171,8 @@ final class InjectedUiController {
                 body.setText(compressionPanelBody(state, prepared, keepRecent));
             }
             if (start != null) {
-                start.setText(ManualCompressionManager.isPreparing()
-                        ? "压缩中" : (prepared ? "增量更新" : "开始压缩"));
-                start.setEnabled(!ManualCompressionManager.isPreparing());
+                configureCompressionButton(activity, start, panel,
+                        primaryCompressionAction());
             }
             panel.bringToFront();
         });
@@ -449,15 +448,15 @@ final class InjectedUiController {
         row.addView(close, new LinearLayout.LayoutParams(dp(activity, 76), dp(activity, 40)));
         Button start = new Button(activity);
         start.setTag("lspilot-enhancer-chat-compress-start");
-        start.setText(ManualCompressionManager.isPreparing() ? "压缩中" : (prepared ? "增量更新" : "开始压缩"));
-        start.setEnabled(!ManualCompressionManager.isPreparing());
         start.setAllCaps(false);
-        start.setOnClickListener(v -> {
-            Log.i(TAG, "inline compression start clicked");
-            frame.removeView(panel);
-            startManualCompression(activity, null);
-        });
+        CompressionStateMachine.Action primary = primaryCompressionAction();
+        configureCompressionButton(activity, start, panel, primary);
         row.addView(start, new LinearLayout.LayoutParams(dp(activity, 96), dp(activity, 40)));
+        addCompressionActionButton(activity, row, panel, CompressionStateMachine.Action.KEEP_2, primary);
+        addCompressionActionButton(activity, row, panel, CompressionStateMachine.Action.KEEP_1, primary);
+        if (ManualCompressionManager.isSummaryTaskActive()) {
+            addCompressionActionButton(activity, row, panel, CompressionStateMachine.Action.CANCEL, primary);
+        }
         panel.addView(row, matchWrap());
 
         FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(
@@ -469,6 +468,85 @@ final class InjectedUiController {
         frame.addView(panel, params);
         panel.bringToFront();
         Log.i(TAG, "inline compression panel shown");
+    }
+
+    private static void configureCompressionButton(Activity activity, Button button, View panel,
+            CompressionStateMachine.Action action) {
+        boolean preparing = ManualCompressionManager.isPreparing();
+        boolean prepared = ManualCompressionManager.hasPreparedForCurrentChat();
+        if (action != null) {
+            long taskId = ManualCompressionManager.currentCompressionTaskId();
+            String chatId = ManualCompressionManager.currentCompressionChatId();
+            button.setText(compressionActionLabel(action));
+            button.setEnabled(true);
+            button.setOnClickListener(v -> runCompressionAction(activity, panel, action, taskId, chatId));
+            return;
+        }
+        button.setText(preparing ? "压缩中" : (prepared ? "增量更新" : "开始压缩"));
+        button.setEnabled(!preparing);
+        button.setOnClickListener(v -> {
+            Log.i(TAG, "inline compression start clicked");
+            if (panel.getParent() instanceof ViewGroup) {
+                ((ViewGroup) panel.getParent()).removeView(panel);
+            }
+            startManualCompression(activity, null);
+        });
+    }
+
+    private static void addCompressionActionButton(Activity activity, LinearLayout row,
+            View panel, CompressionStateMachine.Action action,
+            CompressionStateMachine.Action primary) {
+        if (action == primary) return;
+        if (!ManualCompressionManager.isCompressionActionAvailable(action)) return;
+        long taskId = ManualCompressionManager.currentCompressionTaskId();
+        String chatId = ManualCompressionManager.currentCompressionChatId();
+        Button button = new Button(activity);
+        button.setText(compressionActionLabel(action));
+        button.setAllCaps(false);
+        button.setOnClickListener(v -> runCompressionAction(activity, panel, action, taskId, chatId));
+        row.addView(button, new LinearLayout.LayoutParams(dp(activity, 86), dp(activity, 40)));
+    }
+
+    static CompressionStateMachine.Action primaryCompressionAction() {
+        if (ManualCompressionManager.isCompressionActionAvailable(CompressionStateMachine.Action.RETRY)) {
+            return CompressionStateMachine.Action.RETRY;
+        }
+        if (ManualCompressionManager.isCompressionActionAvailable(CompressionStateMachine.Action.KEEP_2)) {
+            return CompressionStateMachine.Action.KEEP_2;
+        }
+        if (ManualCompressionManager.isCompressionActionAvailable(CompressionStateMachine.Action.KEEP_1)) {
+            return CompressionStateMachine.Action.KEEP_1;
+        }
+        return null;
+    }
+
+    static boolean runCompressionAction(CompressionStateMachine.Action action) {
+        long taskId = ManualCompressionManager.currentCompressionTaskId();
+        String chatId = ManualCompressionManager.currentCompressionChatId();
+        return runCompressionAction(action, taskId, chatId);
+    }
+
+    static boolean runCompressionAction(CompressionStateMachine.Action action,
+            long taskId, String chatId) {
+        return ManualCompressionManager.onCompressionAction(taskId, chatId, action);
+    }
+
+    private static void runCompressionAction(Activity activity, View panel,
+            CompressionStateMachine.Action action, long taskId, String chatId) {
+        boolean accepted = runCompressionAction(action, taskId, chatId);
+        if (accepted && panel.getParent() instanceof ViewGroup) {
+            ((ViewGroup) panel.getParent()).removeView(panel);
+        }
+        Toast.makeText(activity, accepted ? "已提交压缩操作" : "压缩操作已过期",
+                Toast.LENGTH_SHORT).show();
+    }
+
+    static String compressionActionLabel(CompressionStateMachine.Action action) {
+        if (action == CompressionStateMachine.Action.RETRY) return "重试";
+        if (action == CompressionStateMachine.Action.KEEP_2) return "保留2轮";
+        if (action == CompressionStateMachine.Action.KEEP_1) return "保留1轮";
+        if (action == CompressionStateMachine.Action.CANCEL) return "取消压缩";
+        return "开始压缩";
     }
 
     private static void showCompressionDialog(Activity activity, Button button) {

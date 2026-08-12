@@ -234,15 +234,23 @@ final class NativeChatTopBarAction {
                 ManualCompressionManager.Result result = ManualCompressionManager.getLastResult();
                 drawText("上下文压缩", composer);
                 drawText(panelMessage(result), composer);
-                String button = ManualCompressionManager.isPreparing() ? "压缩中" : (result != null && result.success ? "关闭" : "开始压缩");
+                CompressionStateMachine.Action action = InjectedUiController.primaryCompressionAction();
+                long taskId = ManualCompressionManager.currentCompressionTaskId();
+                String chatId = ManualCompressionManager.currentCompressionChatId();
+                String button = action != null ? InjectedUiController.compressionActionLabel(action)
+                        : (ManualCompressionManager.isPreparing() ? "压缩中" : (result != null && result.success ? "关闭" : "开始压缩"));
                 textButton.invoke(null, button,
                         f0(() -> {
+                            if (action != null) {
+                                if (InjectedUiController.runCompressionAction(action, taskId, chatId)) set(false);
+                                return;
+                            }
                             if (ManualCompressionManager.isPreparing()) return;
                             ManualCompressionManager.Result current = ManualCompressionManager.getLastResult();
                             if (current != null && current.success) set(false);
                             else InjectedUiController.startNativeCompression();
                         }),
-                        null, !ManualCompressionManager.isPreparing(), 0f, 0f, 0f,
+                        null, action != null || !ManualCompressionManager.isPreparing(), 0f, 0f, 0f,
                         null, null, null, null, null, composer, 0, 0, 0xffe);
             }
             Object scope = endRestartGroup.invoke(composer);

@@ -367,6 +367,9 @@ public final class LSPilotEnhancerModule extends XposedModule {
             });
             hook(stopGeneration).intercept(chain -> {
                 Object viewModel = chain.getThisObject();
+                if (ManualCompressionManager.blockStopWhileCompressing()) {
+                    return null;
+                }
                 AutoRetryManager.cancelForStop(viewModel, currentChatId(abi, viewModel));
                 return chain.proceed();
             });

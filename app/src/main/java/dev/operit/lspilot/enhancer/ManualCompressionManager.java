@@ -120,6 +120,36 @@ final class ManualCompressionManager {
         }
     }
 
+    static final class UiProjection {
+        final boolean sendBlocked;
+        final boolean sendDisabled;
+        final boolean stopDisabled;
+        final boolean stopUsesHostState;
+        final boolean inputEditable;
+
+        private UiProjection(boolean sendBlocked, boolean sendDisabled,
+                boolean stopDisabled, boolean stopUsesHostState, boolean inputEditable) {
+            this.sendBlocked = sendBlocked;
+            this.sendDisabled = sendDisabled;
+            this.stopDisabled = stopDisabled;
+            this.stopUsesHostState = stopUsesHostState;
+            this.inputEditable = inputEditable;
+        }
+
+        static UiProjection forState(CompressionStateMachine.State state,
+                boolean hostStopActive) {
+            if (state == CompressionStateMachine.State.WAITING_SAFE_BOUNDARY) {
+                return new UiProjection(true, false, false, true, true);
+            }
+            boolean formal = state == CompressionStateMachine.State.SUMMARIZING
+                    || state == CompressionStateMachine.State.RETRYING
+                    || state == CompressionStateMachine.State.VALIDATING
+                    || state == CompressionStateMachine.State.AWAITING_USER_ACTION;
+            if (formal) return new UiProjection(true, true, true, false, true);
+            return new UiProjection(false, false, false, hostStopActive, true);
+        }
+    }
+
     private static final String ENHANCER_MARKER = "[系统提示 · 上下文压缩]";
     static final String RETRY_STATUS_MARKER = "[系统提示 · 自动重试]";
     private static final String TAG = "LSPilotEnhancer";
@@ -201,6 +231,10 @@ final class ManualCompressionManager {
 
     static synchronized CompressionStateMachine.State getCompressionState() {
         return state;
+    }
+
+    static synchronized UiProjection currentUiProjection(boolean hostStopActive) {
+        return UiProjection.forState(state, hostStopActive);
     }
 
     static synchronized boolean isSummaryTaskActive() {
@@ -319,12 +353,23 @@ final class ManualCompressionManager {
         synchronized (ManualCompressionManager.class) {
             current = state;
         }
-        if (!blocksNewSend(current)) return false;
+        if (!UiProjection.forState(current, false).sendBlocked) return false;
         long now = System.currentTimeMillis();
         if (now - lastBlockedSendNoticeAt >= 3_000L) {
             lastBlockedSendNoticeAt = now;
             postCompressionStatus("上下文压缩仍在进行，已阻止新的发送请求。");
         }
+        refreshCompressionUi();
+        return true;
+    }
+
+    static boolean blockStopWhileCompressing() {
+        CompressionStateMachine.State current;
+        synchronized (ManualCompressionManager.class) {
+            current = state;
+        }
+        if (!UiProjection.forState(current, true).stopDisabled) return false;
+        postCompressionStatus("上下文压缩正在整理摘要，已暂时禁用停止操作。");
         refreshCompressionUi();
         return true;
     }
@@ -457,20 +502,43 @@ final class ManualCompressionManager {
     }
 
     static synchronized void onCompressionAction(CompressionStateMachine.Action action) {
-        if (action == null || activeTask == null) return;
+        long taskId = activeTask == null ? -1L : activeTask.taskId;
+        String chatId = activeTask == null ? null : activeTask.chatId;
+        onCompressionAction(taskId, chatId, action);
+    }
+
+    static synchronized boolean onCompressionAction(long taskId, String chatId,
+            CompressionStateMachine.Action action) {
+        if (action == null || activeTask == null) return false;
+        if (!CompressionStateMachine.isCurrent(activeTask, taskId, chatId)) return false;
         if (action == CompressionStateMachine.Action.CANCEL) {
             SummaryRecordStore.invalidate(activeTask.chatId);
             cancelActive("已取消上下文压缩，原上下文未改变。", true);
-            return;
+            return true;
         }
         if (!isCompressionActionAllowed(state, activeTask.keepRecent,
-                lastFailureOverThreshold, action)) return;
+                lastFailureOverThreshold, action)) return false;
         int keep = activeTask.keepRecent;
         if (action == CompressionStateMachine.Action.KEEP_2 && keep > 2) keep = 2;
         else if (action == CompressionStateMachine.Action.KEEP_1 && keep > 1) keep = 1;
-        else if (action != CompressionStateMachine.Action.RETRY) return;
+        else if (action != CompressionStateMachine.Action.RETRY) return false;
         startTask(activeTask.chatId, taskSource, taskBoundary, taskConfig,
                 activeTask.model, keep, true, false, completionCallback);
+        return true;
+    }
+
+    static synchronized long currentCompressionTaskId() {
+        return activeTask == null ? -1L : activeTask.taskId;
+    }
+
+    static synchronized String currentCompressionChatId() {
+        return activeTask == null ? null : activeTask.chatId;
+    }
+
+    static synchronized boolean isCompressionActionAvailable(
+            CompressionStateMachine.Action action) {
+        return activeTask != null && isCompressionActionAllowed(state,
+                activeTask.keepRecent, lastFailureOverThreshold, action);
     }
 
     static synchronized JSONArray excludePendingUser(
