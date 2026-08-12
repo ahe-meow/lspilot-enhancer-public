@@ -147,11 +147,6 @@ public final class LSPilotEnhancerModule extends XposedModule {
                 try {
                     String originalBody = (String) originalResult;
                     boolean policyEnabled = ModuleSettings.isEnabled();
-                    if (!policyEnabled
-                            && !ManualCompressionManager.hasPreparedForCurrentChat()) {
-                        log(Log.DEBUG, TAG, "request compression bypassed enabled=false prepared=false");
-                        return originalResult;
-                    }
                     Object config = chain.getArg(0);
                     String systemPrompt = (String) chain.getArg(2);
                     JSONObject body = new JSONObject(originalBody);
@@ -159,9 +154,16 @@ public final class LSPilotEnhancerModule extends XposedModule {
                             body.optJSONArray("messages"))) {
                         return originalResult;
                     }
-                    String model = requestModel(body, abi, config);
                     JSONArray messages = ManualCompressionManager.sanitizeRequestMessagesOrThrow(
                             body.optJSONArray("messages"));
+                    body.put("messages", messages);
+                    if (!policyEnabled
+                            && !ManualCompressionManager.hasPreparedForCurrentChat()) {
+                        log(Log.DEBUG, TAG,
+                                "request enhancement bypassed enabled=false prepared=false");
+                        return body.toString();
+                    }
+                    String model = requestModel(body, abi, config);
                     JSONArray effective = ManualCompressionManager.effectiveRequestMessages(
                             messages, config, model);
                     body.put("messages", effective);
@@ -248,10 +250,6 @@ public final class LSPilotEnhancerModule extends XposedModule {
 
                 try {
                     boolean policyEnabled = ModuleSettings.isEnabled();
-                    if (!policyEnabled
-                            && !ManualCompressionManager.hasPreparedForCurrentChat()) {
-                        return originalResult;
-                    }
                     Object config = chain.getArg(0);
                     String systemPrompt = (String) chain.getArg(2);
                     JSONObject body = new JSONObject((String) originalResult);
@@ -259,9 +257,14 @@ public final class LSPilotEnhancerModule extends XposedModule {
                             body.optJSONArray("messages"))) {
                         return originalResult;
                     }
-                    String model = requestModel(body, abi, config);
                     JSONArray messages = ManualCompressionManager.sanitizeRequestMessagesOrThrow(
                             body.optJSONArray("messages"));
+                    body.put("messages", messages);
+                    if (!policyEnabled
+                            && !ManualCompressionManager.hasPreparedForCurrentChat()) {
+                        return body.toString();
+                    }
+                    String model = requestModel(body, abi, config);
                     JSONArray effective = ManualCompressionManager.effectiveRequestMessages(
                             messages, config, model);
                     body.put("messages", effective);

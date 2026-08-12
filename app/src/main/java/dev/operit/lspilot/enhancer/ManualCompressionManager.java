@@ -182,6 +182,7 @@ final class ManualCompressionManager {
     private static JSONArray taskSource = new JSONArray();
     private static JSONArray taskBoundary = new JSONArray();
     private static Object taskConfig;
+    private static String taskPrompt;
     private static int retryCount;
     private static boolean automaticRetryAllowed;
     private static boolean recoveryRequestNeeded;
@@ -251,9 +252,7 @@ final class ManualCompressionManager {
 
     static synchronized SummaryTaskSnapshot currentSummaryTask() {
         if (activeTask == null || state != CompressionStateMachine.State.SUMMARIZING) return null;
-        return new SummaryTaskSnapshot(activeTask, taskSource, taskConfig,
-                SummaryProtocol.buildPrompt(taskSource, activeTask.keepRecent,
-                        ModuleSettings.getAutoContextTokens(), ""));
+        return new SummaryTaskSnapshot(activeTask, taskSource, taskConfig, taskPrompt);
     }
 
     static synchronized Object currentViewModel(String chatId) {
@@ -690,11 +689,13 @@ final class ManualCompressionManager {
 
     static boolean isInternalSummaryRequest(JSONArray messages) {
         if (messages == null || messages.length() != 1) return false;
+        SummaryTaskSnapshot current = currentSummaryTask();
+        if (current == null) return false;
         JSONObject message = messages.optJSONObject(0);
         if (message == null || !"user".equalsIgnoreCase(message.optString("role"))) return false;
         Object content = message.opt("content");
         String text = content == null || JSONObject.NULL.equals(content) ? "" : String.valueOf(content);
-        return text.contains("## 核心任务状态") && text.contains("## 后续执行要求");
+        return text.equals(current.prompt);
     }
 
     static JSONArray sanitizeRequestMessagesOrThrow(JSONArray messages) {
@@ -772,6 +773,8 @@ final class ManualCompressionManager {
         taskSource = copyArray(source);
         taskBoundary = copyArray(boundary);
         taskConfig = config;
+        taskPrompt = SummaryProtocol.buildPrompt(
+                taskSource, keepRecent, ModuleSettings.getAutoContextTokens(), "");
         lastKeepRecent = keepRecent;
         retryCount = 0;
         automaticRetryAllowed = allowAutomaticRetry;
@@ -848,6 +851,7 @@ final class ManualCompressionManager {
         taskSource = new JSONArray();
         taskBoundary = new JSONArray();
         taskConfig = null;
+        taskPrompt = null;
         retryCount = 0;
         automaticRetryAllowed = false;
         lastFailureOverThreshold = false;
@@ -868,6 +872,7 @@ final class ManualCompressionManager {
         taskSource = new JSONArray();
         taskBoundary = new JSONArray();
         taskConfig = null;
+        taskPrompt = null;
         lastFailureOverThreshold = false;
         lastFailureReason = null;
         completionCallback = null;
@@ -1205,6 +1210,17 @@ final class ManualCompressionManager {
         String message = current.getMessage();
         return message == null || message.trim().isEmpty()
                 ? current.getClass().getSimpleName() : message;
+    }
+
+    public static void main(String[] args) throws Exception {
+        JSONArray clean = sanitizeRequestMessagesOrThrow(new JSONArray()
+                .put(new JSONObject().put("role", "assistant")
+                        .put("content", ENHANCER_MARKER + "\nworking"))
+                .put(new JSONObject().put("role", "user").put("content", "continue")
+                        .put("_lspilot_host_index", 1)));
+        if (clean.length() != 1 || clean.getJSONObject(0).has("_lspilot_host_index")) {
+            throw new AssertionError("provider messages must exclude module-only data");
+        }
     }
 
     static void onProviderUsage(long inputTokens, long outputTokens, long cachedTokens,

@@ -206,7 +206,11 @@ public final class ModelContextCompressionCheck {
         } catch (IllegalArgumentException expected) {
             // expected
         }
-
+        assertTrue(!ManualCompressionManager.isInternalSummaryRequest(new JSONArray()
+                        .put(new JSONObject().put("role", "user")
+                                .put("content", "## 核心任务状态\nordinary\n## 后续执行要求\ncontinue")
+                                .put("_lspilot_host_index", 1))),
+                "ordinary user content must not impersonate an internal summary request");
         JSONArray providerFallback = ManualCompressionManager.effectiveRequestMessages(
                 hostMessages, "provider-b", "model-a");
         assertEquals(hostMessages.length(), providerFallback.length(),
@@ -305,7 +309,44 @@ public final class ModelContextCompressionCheck {
         assertTrue(!ManualCompressionManager.hasSummaryTimedOut(1_000L, 60_999L),
                 "summary timeout must not fire early");
         assertLegacyCompressionPathsRemoved();
+        internalSummaryIdentityCheck(source);
         SummaryRecordStore.useStore(null);
+    }
+
+    private static void internalSummaryIdentityCheck(JSONArray source) throws Exception {
+        CompressionStateMachine.Task task = CompressionStateMachine.newTask(
+                "chat-internal-summary-identity", SummaryRecordStore.fingerprint(source),
+                "provider-a", "model-a", 3);
+        String prompt = SummaryProtocol.buildPrompt(source, 3,
+                ModuleSettings.DEFAULT_AUTO_CONTEXT_TOKENS, "");
+        setManagerField("activeTask", task);
+        setManagerField("state", CompressionStateMachine.State.SUMMARIZING);
+        setManagerField("taskSource", copy(source));
+        setManagerField("taskConfig", null);
+        setManagerField("taskPrompt", prompt);
+        try {
+            ManualCompressionManager.SummaryTaskSnapshot snapshot =
+                    ManualCompressionManager.currentSummaryTask();
+            assertTrue(snapshot != null && prompt.equals(snapshot.prompt),
+                    "active summary task must expose its stable prompt");
+            assertTrue(ManualCompressionManager.isInternalSummaryRequest(new JSONArray()
+                            .put(message("user", prompt))),
+                    "active task prompt must identify the internal summary request");
+            assertTrue(!ManualCompressionManager.isInternalSummaryRequest(new JSONArray()
+                            .put(message("user", prompt + "x"))),
+                    "similar ordinary content must not identify as the internal request");
+        } finally {
+            setManagerField("activeTask", null);
+            setManagerField("state", CompressionStateMachine.State.IDLE);
+            setManagerField("taskSource", new JSONArray());
+            setManagerField("taskPrompt", null);
+        }
+    }
+
+    private static void setManagerField(String name, Object value) throws Exception {
+        java.lang.reflect.Field field = ManualCompressionManager.class.getDeclaredField(name);
+        field.setAccessible(true);
+        field.set(null, value);
     }
 
     private static void assertLegacyCompressionPathsRemoved() throws Exception {
@@ -314,17 +355,56 @@ public final class ModelContextCompressionCheck {
                 "app/src/main/java/dev/operit/lspilot/enhancer/ManualCompressionManager.java");
         File moduleFile = new File(sourceRoot,
                 "app/src/main/java/dev/operit/lspilot/enhancer/LSPilotEnhancerModule.java");
-        if (!managerFile.isFile() || !moduleFile.isFile()) return;
+        File sequenceFile = new File(sourceRoot,
+                "app/src/test/java/dev/operit/lspilot/enhancer/CompressionSequenceCheck.java");
+        assertTrue(managerFile.isFile() && moduleFile.isFile() && sequenceFile.isFile(),
+                "Task 6 source guard requires sourceRoot=" + sourceRoot.getCanonicalPath());
 
         String manager = read(managerFile);
         String module = read(moduleFile);
+        String sequence = read(sequenceFile);
         assertTrue(!manager.contains("ContextCompression.compact(")
                         && !module.contains("ContextCompression.compact("),
                 "normal compression paths must not call the legacy local compactor");
-        assertContains(section(manager, "static void onCompleteEvent(",
+        assertTrue(!sequence.contains("ContextCompression.compact(")
+                        && !sequence.contains("firstInvalidToolCallIndex("),
+                "sequence check must exercise the active model-summary protocol");
+        assertContains(sequence, "SummaryProtocol.hasCompleteToolPairs(");
+        assertContains(manager, "public static void main(String[] args)");
+
+        assertContains(methodBody(manager, "static void onCompleteEvent("), "startTask(");
+        assertContains(methodBody(manager,
                 "static synchronized boolean beginPendingUserRequest("), "startTask(");
-        assertContains(section(manager, "private static void prepareCurrent(",
-                "private static boolean startTask("), "startTask(");
+        assertContains(methodBody(manager, "private static void prepareCurrent("), "startTask(");
+        String compressionAction = methodBody(manager,
+                "static synchronized boolean onCompressionAction(long");
+        assertContains(compressionAction, "startTask(");
+        String startTask = methodBody(manager, "private static boolean startTask(");
+        assertContains(startTask, "CompressionStateMachine.newTask(");
+        assertContains(startTask, "taskPrompt = SummaryProtocol.buildPrompt(");
+        String summaryFailure = methodBody(manager,
+                "private static void handleSummaryFailure(String reason, boolean overThreshold)");
+        assertTrue(!summaryFailure.contains("taskPrompt =")
+                        && !summaryFailure.contains("SummaryProtocol.buildPrompt("),
+                "automatic retry must preserve the task's dispatched prompt");
+        assertContains(methodBody(manager, "private static void finishActive("),
+                "taskPrompt = null;");
+        assertContains(methodBody(manager, "private static void cancelActive("),
+                "taskPrompt = null;");
+        String internalSummary = methodBody(manager,
+                "static boolean isInternalSummaryRequest(");
+        assertContains(internalSummary, "currentSummaryTask()");
+        assertContains(internalSummary, "text.equals(current.prompt)");
+        String currentSummaryTask = methodBody(manager,
+                "static synchronized SummaryTaskSnapshot currentSummaryTask(");
+        assertContains(currentSummaryTask, "taskPrompt");
+        assertTrue(!currentSummaryTask.contains("ModuleSettings.getAutoContextTokens()"),
+                "active summary prompt must not be rebuilt from mutable settings");
+
+        assertRequestHookSanitizesBeforePolicyBypass(
+                methodBody(module, "private StartupProbe installRequestHook("), "named");
+        assertRequestHookSanitizesBeforePolicyBypass(
+                methodBody(module, "private boolean installMinifiedRequestBodyHook("), "minified");
     }
 
     private static String read(File file) throws Exception {
@@ -340,12 +420,35 @@ public final class ModelContextCompressionCheck {
         return new String(bytes, StandardCharsets.UTF_8);
     }
 
-    private static String section(String source, String start, String end) {
-        int startIndex = source.indexOf(start);
-        int endIndex = source.indexOf(end, startIndex + start.length());
-        assertTrue(startIndex >= 0 && endIndex > startIndex,
-                "expected source section was absent: " + start);
-        return source.substring(startIndex, endIndex);
+    private static String methodBody(String source, String signature) {
+        int signatureIndex = source.indexOf(signature);
+        int start = source.indexOf('{', signatureIndex);
+        assertTrue(signatureIndex >= 0 && start >= 0,
+                "expected source method was absent: " + signature);
+        int depth = 1;
+        for (int index = start + 1; index < source.length(); index++) {
+            char value = source.charAt(index);
+            if (value == '{') depth++;
+            else if (value == '}' && --depth == 0) return source.substring(start + 1, index);
+        }
+        throw new AssertionError("unterminated source method: " + signature);
+    }
+
+    private static void assertRequestHookSanitizesBeforePolicyBypass(
+            String body, String hookName) {
+        int internalSummary = body.indexOf("isInternalSummaryRequest(");
+        int sanitize = body.indexOf("sanitizeRequestMessagesOrThrow(");
+        int writeBack = body.indexOf("body.put(\"messages\", messages)", sanitize);
+        int disabled = body.indexOf("if (!policyEnabled");
+        assertTrue(internalSummary >= 0 && sanitize > internalSummary
+                        && writeBack > sanitize && disabled > writeBack,
+                hookName + " request hook must sanitize and write back before policy bypass");
+        assertTrue(!body.substring(internalSummary, sanitize).contains("!policyEnabled"),
+                hookName + " request hook has a pre-sanitization policy bypass");
+        int branchEnd = body.indexOf('}', disabled);
+        assertTrue(branchEnd > disabled
+                        && body.substring(disabled, branchEnd).contains("return body.toString();"),
+                hookName + " disabled-policy bypass must return sanitized JSON");
     }
 
     private static void pendingSourceExcludesBlockedInput() throws Exception {
