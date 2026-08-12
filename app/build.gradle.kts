@@ -71,23 +71,22 @@ tasks.register("buildModelCompressionCheckDex") {
                 ?: System.getenv("ANDROID_SDK_ROOT")
                 ?: throw GradleException("Android SDK path is unavailable")
         val sdkDirectory = File(sdkPath)
-        val d8 = File(sdkDirectory, "build-tools/29.0.3/d8")
+        val d8 = File(sdkDirectory, "build-tools/36.0.0/d8")
         val androidJar = File(sdkDirectory, "platforms/android-29/android.jar")
-        val mainClasses = file("build/intermediates/javac/debug/compileDebugJavaWithJavac/classes")
-        val unitTestClasses = file(
-                "build/intermediates/javac/debugUnitTest/compileDebugUnitTestJavaWithJavac/classes")
-        val classpath = (configurations.getByName("debugCompileClasspath").files
-                + configurations.getByName("debugRuntimeClasspath").files)
-                .filter { it.isDirectory || it.extension == "jar" || it.extension == "zip" }
-                .distinct()
-        val compiledClasses = listOf(mainClasses, unitTestClasses)
-                .flatMap { fileTree(it).files }
-                .filter { it.extension == "class" }
-        val inputs = compiledClasses + classpath
+        val mainClasses = file(
+                "build/intermediates/compile_app_classes_jar/debug/bundleDebugClassesToCompileJar/classes.jar")
+        val unitTestClasses = file("build/tmp/model-compression-check/unit-tests.jar")
+        project.delete(unitTestClasses)
+        ant.withGroovyBuilder {
+            "jar"("destfile" to unitTestClasses.absolutePath,
+                    "basedir" to file(
+                            "build/intermediates/javac/debugUnitTest/compileDebugUnitTestJavaWithJavac/classes")
+                            .absolutePath)
+        }
 
         val command = mutableListOf(d8.absolutePath, "--lib", androidJar.absolutePath,
                 "--output", outputDir.absolutePath)
-        command.addAll(inputs.map { it.absolutePath })
+        command.addAll(listOf(mainClasses, unitTestClasses).map { it.absolutePath })
         val process = ProcessBuilder(command).redirectErrorStream(true).start()
         process.inputStream.bufferedReader().useLines { lines -> lines.forEach { println(it) } }
         val exitCode = process.waitFor()
