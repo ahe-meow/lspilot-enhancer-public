@@ -120,6 +120,20 @@ final class HostAbiDescriptor {
         }
         validateAccessors(abi);
         if (abi.minified) validateState(abi);
+        validateAiChatRouteClass(abi);
+    }
+
+    private static void validateAiChatRouteClass(HostAbi abi) throws Exception {
+        if (!abi.minified || abi.aiChatRouteClass == null) return;
+        Constructor<?> constructor = abi.aiChatRouteClass.getDeclaredConstructor(
+                String.class, String.class);
+        constructor.setAccessible(true);
+        Object route = constructor.newInstance("pkg_probe", "chat_probe");
+        String value = String.valueOf(route);
+        if (!value.contains("AiChat(packageName=pkg_probe")
+                || !value.contains("chatId=chat_probe")) {
+            throw new NoSuchMethodException("cached AiChat route class is incompatible");
+        }
     }
 
     private static void validateAccessors(HostAbi abi) throws Exception {

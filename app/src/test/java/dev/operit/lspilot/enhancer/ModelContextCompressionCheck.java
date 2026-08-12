@@ -309,8 +309,35 @@ public final class ModelContextCompressionCheck {
         assertTrue(!ManualCompressionManager.hasSummaryTimedOut(1_000L, 60_999L),
                 "summary timeout must not fire early");
         assertLegacyCompressionPathsRemoved();
+        assertAiChatRouteAbiGuard();
         internalSummaryIdentityCheck(source);
         SummaryRecordStore.useStore(null);
+    }
+
+    private static void assertAiChatRouteAbiGuard() throws Exception {
+        File sourceRoot = new File(System.getProperty("modelCompression.sourceRoot", "."));
+        File hostAbiFile = new File(sourceRoot,
+                "app/src/main/java/dev/operit/lspilot/enhancer/HostAbi.java");
+        File descriptorFile = new File(sourceRoot,
+                "app/src/main/java/dev/operit/lspilot/enhancer/HostAbiDescriptor.java");
+        File moduleFile = new File(sourceRoot,
+                "app/src/main/java/dev/operit/lspilot/enhancer/LSPilotEnhancerModule.java");
+        assertTrue(hostAbiFile.isFile() && descriptorFile.isFile() && moduleFile.isFile(),
+                "AiChat route ABI guard requires sourceRoot="
+                        + sourceRoot.getCanonicalPath());
+
+        String hostAbi = read(hostAbiFile);
+        String descriptor = read(descriptorFile);
+        String module = read(moduleFile);
+        assertContains(hostAbi, "optionalClass(loader, \"lka$b\")");
+        assertTrue(!hostAbi.contains("optionalClass(loader, \"ela$b\")"),
+                "preview.23 AiChat route fallback must not use ela$b");
+        assertContains(module, "Class.forName(\"lka$b\", false, loader)");
+        assertTrue(!module.contains("Class.forName(\"ela$b\", false, loader)"),
+                "minified route hook fallback must not use ela$b");
+        assertContains(descriptor, "validateAiChatRouteClass(abi)");
+        assertContains(descriptor, "AiChat(packageName=");
+        assertContains(descriptor, "chatId=chat_probe");
     }
 
     private static void internalSummaryIdentityCheck(JSONArray source) throws Exception {

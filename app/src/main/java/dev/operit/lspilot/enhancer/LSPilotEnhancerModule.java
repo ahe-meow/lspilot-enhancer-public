@@ -804,7 +804,7 @@ public final class LSPilotEnhancerModule extends XposedModule {
         Class<?> aiChatRouteClass = abi.aiChatRouteClass;
         if (aiChatRouteClass == null) {
             try {
-                aiChatRouteClass = Class.forName("ela$b", false, loader);
+                aiChatRouteClass = Class.forName("lka$b", false, loader);
             } catch (ClassNotFoundException error) {
                 log(Log.ERROR, TAG, "Minified AiChat route class unavailable", error);
                 return;
