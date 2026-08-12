@@ -3,6 +3,9 @@ package dev.operit.lspilot.enhancer;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import java.io.File;
+import java.io.FileInputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -301,7 +304,48 @@ public final class ModelContextCompressionCheck {
                 "summary timeout must expire after the fixed deadline");
         assertTrue(!ManualCompressionManager.hasSummaryTimedOut(1_000L, 60_999L),
                 "summary timeout must not fire early");
+        assertLegacyCompressionPathsRemoved();
         SummaryRecordStore.useStore(null);
+    }
+
+    private static void assertLegacyCompressionPathsRemoved() throws Exception {
+        File sourceRoot = new File(System.getProperty("modelCompression.sourceRoot", "."));
+        File managerFile = new File(sourceRoot,
+                "app/src/main/java/dev/operit/lspilot/enhancer/ManualCompressionManager.java");
+        File moduleFile = new File(sourceRoot,
+                "app/src/main/java/dev/operit/lspilot/enhancer/LSPilotEnhancerModule.java");
+        if (!managerFile.isFile() || !moduleFile.isFile()) return;
+
+        String manager = read(managerFile);
+        String module = read(moduleFile);
+        assertTrue(!manager.contains("ContextCompression.compact(")
+                        && !module.contains("ContextCompression.compact("),
+                "normal compression paths must not call the legacy local compactor");
+        assertContains(section(manager, "static void onCompleteEvent(",
+                "static synchronized boolean beginPendingUserRequest("), "startTask(");
+        assertContains(section(manager, "private static void prepareCurrent(",
+                "private static boolean startTask("), "startTask(");
+    }
+
+    private static String read(File file) throws Exception {
+        byte[] bytes = new byte[(int) file.length()];
+        try (FileInputStream input = new FileInputStream(file)) {
+            int offset = 0;
+            while (offset < bytes.length) {
+                int count = input.read(bytes, offset, bytes.length - offset);
+                if (count < 0) break;
+                offset += count;
+            }
+        }
+        return new String(bytes, StandardCharsets.UTF_8);
+    }
+
+    private static String section(String source, String start, String end) {
+        int startIndex = source.indexOf(start);
+        int endIndex = source.indexOf(end, startIndex + start.length());
+        assertTrue(startIndex >= 0 && endIndex > startIndex,
+                "expected source section was absent: " + start);
+        return source.substring(startIndex, endIndex);
     }
 
     private static void pendingSourceExcludesBlockedInput() throws Exception {
