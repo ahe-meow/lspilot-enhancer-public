@@ -1,4 +1,5 @@
 # Changelog
+
 ## 1.7.4-preview.23
 - Match prepared compression snapshots against the host's OpenAI request encoding so automatic compression is applied instead of rejected on tool-call messages.
 - Reuse request-encoded retained messages when merging compressed history, preserving valid `tool_calls` and `tool_call_id` fields.

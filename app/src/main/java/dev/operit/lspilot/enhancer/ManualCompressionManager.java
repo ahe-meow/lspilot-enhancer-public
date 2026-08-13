@@ -154,7 +154,7 @@ final class ManualCompressionManager {
     static final String RETRY_STATUS_MARKER = "[系统提示 · 自动重试]";
     private static final String TAG = "LSPilotEnhancer";
     private static final long STATUS_MIN_INTERVAL_MS = 1_500L;
-    private static final long SUMMARY_TIMEOUT_MS = 60_000L;
+    static final long SUMMARY_TIMEOUT_MS = 300_000L;
     private static final ExecutorService STATUS_EXECUTOR = Executors.newSingleThreadExecutor(runnable -> {
         Thread thread = new Thread(runnable, "LSPilotCompressionStatus");
         thread.setDaemon(true);
@@ -494,9 +494,8 @@ final class ManualCompressionManager {
     }
 
     static synchronized void onSummaryTimeout(long taskId, String chatId) {
-        if (activeTask == null || !isCurrentSummaryResponse(activeTask, taskId, chatId,
-                state, taskBoundary, latestHostMessages,
-                providerSignature(currentConfig()), currentModel())) return;
+        if (state != CompressionStateMachine.State.SUMMARIZING
+                || !CompressionStateMachine.isCurrent(activeTask, taskId, chatId)) return;
         handleSummaryFailure("摘要请求超时", false);
     }
 
@@ -688,14 +687,53 @@ final class ManualCompressionManager {
     }
 
     static boolean isInternalSummaryRequest(JSONArray messages) {
-        if (messages == null || messages.length() != 1) return false;
+        if (messages == null || messages.length() == 0) return false;
         SummaryTaskSnapshot current = currentSummaryTask();
         if (current == null) return false;
-        JSONObject message = messages.optJSONObject(0);
-        if (message == null || !"user".equalsIgnoreCase(message.optString("role"))) return false;
-        Object content = message.opt("content");
-        String text = content == null || JSONObject.NULL.equals(content) ? "" : String.valueOf(content);
-        return text.equals(current.prompt);
+        boolean promptFound = false;
+        for (int index = 0; index < messages.length(); index++) {
+            JSONObject message = messages.optJSONObject(index);
+            if (message == null) return false;
+            String role = message.optString("role");
+            if ("system".equalsIgnoreCase(role)) continue;
+            String text = messageText(message.opt("content"));
+            if (promptFound || !"user".equalsIgnoreCase(role)
+                    || !isInternalPromptText(text, current.prompt)) return false;
+            promptFound = true;
+        }
+        return promptFound;
+    }
+
+    private static boolean isInternalPromptText(String text, String prompt) {
+        if (text == null || prompt == null || prompt.isEmpty()) return false;
+        if (text.equals(prompt)) return true;
+        int start = text.indexOf(prompt);
+        if (start < 0) return false;
+        int end = start + prompt.length();
+        return isPromptBoundary(text, start - 1) && isPromptBoundary(text, end);
+    }
+
+    private static boolean isPromptBoundary(String text, int index) {
+        return index < 0 || index >= text.length()
+                || !Character.isLetterOrDigit(text.charAt(index));
+    }
+
+    private static String messageText(Object content) {
+        if (content == null || JSONObject.NULL.equals(content)) return "";
+        if (content instanceof JSONArray) {
+            StringBuilder result = new StringBuilder();
+            JSONArray array = (JSONArray) content;
+            for (int index = 0; index < array.length(); index++) {
+                result.append(messageText(array.opt(index)));
+            }
+            return result.toString();
+        }
+        if (content instanceof JSONObject) {
+            JSONObject object = (JSONObject) content;
+            if (object.has("text")) return messageText(object.opt("text"));
+            if (object.has("content")) return messageText(object.opt("content"));
+        }
+        return String.valueOf(content);
     }
 
     static JSONArray sanitizeRequestMessagesOrThrow(JSONArray messages) {
@@ -799,6 +837,10 @@ final class ManualCompressionManager {
 
     private static void handleSummaryFailure(String reason, boolean overThreshold) {
         if (activeTask == null) return;
+        if (state == CompressionStateMachine.State.SUMMARIZING) {
+            state = CompressionStateMachine.transition(state,
+                    CompressionStateMachine.Event.SUMMARY_RESPONSE);
+        }
         lastFailureReason = reason;
         lastFailureOverThreshold = overThreshold;
         if (!overThreshold && automaticRetryAllowed && retryCount == 0) {

@@ -3,7 +3,6 @@ package dev.operit.lspilot.enhancer;
 import android.os.Handler;
 import android.os.Looper;
 
-import java.lang.reflect.Field;
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
@@ -19,8 +18,6 @@ final class AutoRetryManager {
     private static final int MAX_RETRIES = AutoRetryPolicy.maxRetries();
     private static final long RETRY_START_TIMEOUT_MS = 15_000L;
     private static final long RETRY_PERSIST_INTERVAL_MS = 1_000L;
-    private static final String ERROR_EVENT = "nyb$c";
-    private static final String DONE_EVENT = "nyb$b";
     private static final Object LOCK = new Object();
     private static final Map<Object, RetryState> STATES = new WeakHashMap<>();
     private static final ThreadLocal<Boolean> INTERNAL_RETRY = new ThreadLocal<>();
@@ -468,26 +465,13 @@ private static int findTargetIndex(HostAbi abi, List<?> messages, String targetI
     private static void onStreamEvent(HostAbi abi, Object viewModel, String chatId, Object event) {
         if (event == null) return;
         String name = event.getClass().getName();
-        if (isErrorEvent(event, name)) {
+        if (HostAbi.isStreamErrorEvent(event, name)) {
             rememberFailureTarget(abi, viewModel, chatId);
             RetryState state = findByChat(chatId);
             if (state != null) scheduleRetry(state, eventMessage(event));
-        } else if (DONE_EVENT.equals(name) || isNamedDone(name)) {
+        } else if (HostAbi.isStreamDoneEvent(name)) {
             onAttemptSuccess(viewModel, chatId);
         }
-    }
-
-    private static boolean isErrorEvent(Object event, String name) {
-        return event instanceof Throwable || ERROR_EVENT.equals(name) || isNamedError(name);
-    }
-    private static boolean isNamedError(String name) {
-        return name != null && (name.endsWith("$Error") || name.endsWith(".Error")
-                || name.endsWith("$Failure") || name.endsWith(".Failure")
-                || name.endsWith("$Failed") || name.endsWith(".Failed"));
-    }
-
-    private static boolean isNamedDone(String name) {
-        return name != null && (name.endsWith("$Done") || name.endsWith(".Done"));
     }
 
     private static String eventMessage(Object event) {
@@ -524,7 +508,7 @@ private static int findTargetIndex(HostAbi abi, List<?> messages, String targetI
             // Some Kotlin error carriers expose fields instead of accessors.
         }
         try {
-            Field field = event.getClass().getDeclaredField(memberName);
+            java.lang.reflect.Field field = event.getClass().getDeclaredField(memberName);
             field.setAccessible(true);
             return valueMessage(field.get(event));
         } catch (Throwable ignored) {
@@ -753,9 +737,8 @@ private static int findTargetIndex(HostAbi abi, List<?> messages, String targetI
             }
             Object event = args[0];
             String eventName = event == null ? null : event.getClass().getName();
-            boolean errorEvent = isErrorEvent(event, eventName);
-            boolean doneEvent = eventName != null
-                    && (DONE_EVENT.equals(eventName) || isNamedDone(eventName));
+            boolean errorEvent = HostAbi.isStreamErrorEvent(event, eventName);
+            boolean doneEvent = HostAbi.isStreamDoneEvent(eventName);
             if (errorEvent) {
                 // Capture the target before the host may replace the transient stream message.
                 onStreamEvent(abi, viewModel, chatId, event);

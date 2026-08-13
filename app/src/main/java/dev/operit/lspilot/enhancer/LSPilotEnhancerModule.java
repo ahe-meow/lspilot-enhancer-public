@@ -17,6 +17,8 @@ import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 import io.github.libxposed.api.XposedModule;
 
@@ -43,6 +45,12 @@ public final class LSPilotEnhancerModule extends XposedModule {
     private static volatile boolean publicChatEntryReported;
     private static volatile boolean chatStateCapturedReported;
     private static volatile boolean reasoningDeltaNormalizedReported;
+    private static final ExecutorService SUMMARY_EXECUTOR =
+            Executors.newSingleThreadExecutor(runnable -> {
+                Thread thread = new Thread(runnable, "lspilot-summary-request");
+                thread.setDaemon(true);
+                return thread;
+            });
 
     private static final class StartupProbe {
         boolean requestBody;
@@ -436,7 +444,12 @@ public final class LSPilotEnhancerModule extends XposedModule {
 
     private void requestInternalSummary(HostAbi abi,
             ManualCompressionManager.SummaryTaskSnapshot snapshot) {
-        new android.os.Handler(android.os.Looper.getMainLooper()).post(() -> {
+        android.os.Handler mainHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+        mainHandler.postDelayed(
+                () -> ManualCompressionManager.onSummaryTimeout(
+                        snapshot.task.taskId, snapshot.task.chatId),
+                ManualCompressionManager.SUMMARY_TIMEOUT_MS);
+        SUMMARY_EXECUTOR.execute(() -> {
             try {
                 Object viewModel = ManualCompressionManager.currentViewModel(snapshot.task.chatId);
                 if (viewModel == null) {
@@ -453,10 +466,6 @@ public final class LSPilotEnhancerModule extends XposedModule {
                 } finally {
                     ManualCompressionManager.setInternalBuild(false);
                 }
-                new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(
-                        () -> ManualCompressionManager.onSummaryTimeout(
-                                snapshot.task.taskId, snapshot.task.chatId),
-                        60_000L);
             } catch (Throwable error) {
                 log(Log.ERROR, TAG, "Internal summary request failed",
                         unwrapInvocationError(error));
@@ -516,58 +525,19 @@ public final class LSPilotEnhancerModule extends XposedModule {
     }
 
     private static boolean isSummaryErrorEvent(Object event, String name) {
-        return event instanceof Throwable || "nyb$c".equals(name)
-                || (name != null && (name.endsWith("$Error") || name.endsWith(".Error")
-                || name.endsWith("$Failure") || name.endsWith(".Failure")
-                || name.endsWith("$Failed") || name.endsWith(".Failed")));
+        return HostAbi.isStreamErrorEvent(event, name);
     }
 
     private static boolean isSummaryDoneEvent(String name) {
-        return "nyb$b".equals(name)
-                || (name != null && (name.endsWith("$Done") || name.endsWith(".Done")));
+        return HostAbi.isStreamDoneEvent(name);
     }
 
     private static boolean looksLikeToolCallEvent(Object event, String name) {
-        if (name != null && name.toLowerCase(Locale.ROOT).contains("tool")) return true;
-        Object calls = readEventMember(event, "getToolCalls", "toolCalls");
-        Object id = readEventMember(event, "getToolCallId", "toolCallId");
-        return hasValue(calls) || hasValue(id);
+        return HostAbi.streamEventHasToolCall(event);
     }
 
     private static String summaryEventText(Object event) {
-        Object value = readEventMember(event, "getContent", "content", "getText", "text",
-                "getDelta", "delta", "getMessage", "message", "a", "b");
-        if (!(value instanceof CharSequence)) return null;
-        String text = value.toString();
-        return text.isEmpty() || text.equals(event.getClass().getName()) ? null : text;
-    }
-
-    private static Object readEventMember(Object event, String... names) {
-        if (event == null || names == null) return null;
-        for (String name : names) {
-            try {
-                Method method;
-                try {
-                    method = event.getClass().getMethod(name);
-                } catch (NoSuchMethodException ignored) {
-                    method = event.getClass().getDeclaredMethod(name);
-                }
-                if (method.getParameterTypes().length != 0) continue;
-                method.setAccessible(true);
-                Object value = method.invoke(event);
-                if (hasValue(value)) return value;
-            } catch (Throwable ignored) {
-                // Try the next likely Kotlin/Java member shape.
-            }
-        }
-        return null;
-    }
-
-    private static boolean hasValue(Object value) {
-        if (value == null) return false;
-        if (value instanceof CharSequence) return ((CharSequence) value).length() > 0;
-        if (value instanceof List) return !((List<?>) value).isEmpty();
-        return true;
+        return HostAbi.streamEventText(event);
     }
 
     private boolean installSseUsageHook(HostAbi abi) {
@@ -679,7 +649,7 @@ public final class LSPilotEnhancerModule extends XposedModule {
                             + ", cache_write_tokens=" + displayTokenCount(cacheWriteTokens));
         } catch (Throwable error) {
             if (ModuleSettings.isDebugLogEnabled()) {
-                log(Log.DEBUG, TAG, "Ignored non-JSON SSE data event", error);
+                log(Log.DEBUG, TAG, "Ignored non-JSON SSE data event");
             }
         }
     }

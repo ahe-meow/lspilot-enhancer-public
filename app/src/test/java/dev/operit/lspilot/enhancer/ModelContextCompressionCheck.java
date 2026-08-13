@@ -304,13 +304,15 @@ public final class ModelContextCompressionCheck {
                         CompressionStateMachine.State.AWAITING_USER_ACTION,
                         2, true, CompressionStateMachine.Action.KEEP_1),
                 "two-round over-limit failure must allow retain one");
-        assertTrue(ManualCompressionManager.hasSummaryTimedOut(1_000L, 61_001L),
+        assertTrue(ManualCompressionManager.hasSummaryTimedOut(1_000L, 301_001L),
                 "summary timeout must expire after the fixed deadline");
-        assertTrue(!ManualCompressionManager.hasSummaryTimedOut(1_000L, 60_999L),
+        assertTrue(!ManualCompressionManager.hasSummaryTimedOut(1_000L, 300_999L),
                 "summary timeout must not fire early");
         assertLegacyCompressionPathsRemoved();
         assertAiChatRouteAbiGuard();
+        currentHostSummaryEventsCheck();
         internalSummaryIdentityCheck(source);
+        summaryTimeoutCheck(source);
         SummaryRecordStore.useStore(null);
     }
 
@@ -359,6 +361,23 @@ public final class ModelContextCompressionCheck {
             assertTrue(ManualCompressionManager.isInternalSummaryRequest(new JSONArray()
                             .put(message("user", prompt))),
                     "active task prompt must identify the internal summary request");
+            assertTrue(ManualCompressionManager.isInternalSummaryRequest(new JSONArray()
+                            .put(message("system", "provider system prompt"))
+                            .put(message("user", prompt))),
+                    "provider-added messages must not hide the internal summary request");
+            assertTrue(ManualCompressionManager.isInternalSummaryRequest(new JSONArray()
+                            .put(message("system", "provider system prompt"))
+                            .put(new JSONObject().put("role", "user").put("content",
+                                    new JSONArray().put(new JSONObject()
+                                            .put("type", "text").put("text", prompt))))),
+                    "provider content parts must not hide the internal summary request");
+            assertTrue(ManualCompressionManager.isInternalSummaryRequest(new JSONArray()
+                            .put(message("system", "provider system prompt"))
+                            .put(new JSONObject().put("role", "user").put("content",
+                                    new JSONArray().put(new JSONObject()
+                                            .put("type", "text")
+                                            .put("text", "wrapped\n" + prompt + "\nend"))))),
+                    "provider text wrappers must not hide the internal summary request");
             assertTrue(!ManualCompressionManager.isInternalSummaryRequest(new JSONArray()
                             .put(message("user", prompt + "x"))),
                     "similar ordinary content must not identify as the internal request");
@@ -368,6 +387,103 @@ public final class ModelContextCompressionCheck {
             setManagerField("taskSource", new JSONArray());
             setManagerField("taskPrompt", null);
         }
+    }
+
+    private static void summaryTimeoutCheck(JSONArray source) throws Exception {
+        CompressionStateMachine.Task task = CompressionStateMachine.newTask(
+                "chat-summary-timeout", SummaryRecordStore.fingerprint(source),
+                "provider-a", "model-a", 3);
+        setManagerField("activeTask", task);
+        setManagerField("state", CompressionStateMachine.State.SUMMARIZING);
+        setManagerField("taskSource", copy(source));
+        setManagerField("taskBoundary", copy(source));
+        setManagerField("latestHostMessages", new JSONArray()
+                .put(message("system", "provider system prompt"))
+                .put(message("user", "internal summary prompt")));
+        setManagerField("automaticRetryAllowed", false);
+        try {
+            try {
+                ManualCompressionManager.onSummaryTimeout(task.taskId, task.chatId);
+            } catch (UnsatisfiedLinkError ignored) {
+                // The standalone dalvikvm harness cannot initialize android.util.Log natives.
+            }
+            assertEquals(CompressionStateMachine.State.AWAITING_USER_ACTION,
+                    ManualCompressionManager.getCompressionState(),
+                    "current summary timeout must leave the summarizing state");
+        } finally {
+            setManagerField("activeTask", null);
+            setManagerField("state", CompressionStateMachine.State.IDLE);
+            setManagerField("taskSource", new JSONArray());
+            setManagerField("taskBoundary", new JSONArray());
+            setManagerField("latestHostMessages", new JSONArray());
+            setManagerField("automaticRetryAllowed", false);
+        }
+    }
+
+    private static void currentHostSummaryEventsCheck() throws Exception {
+        assertTrue(HostAbi.isStreamDoneEvent("lwb$b"),
+                "current host Done event must finish the internal summary");
+        assertTrue(HostAbi.isStreamErrorEvent(new Object(), "lwb$c"),
+                "current host Error event must fail the internal summary");
+        Object chunk = new Chunk(new SummaryMessageChunk(java.util.Arrays.asList(
+                new Reasoning("private reasoning"), new Text("summary "),
+                new Text("markdown"))));
+        assertEquals("summary markdown", HostAbi.streamEventText(chunk),
+                "current host Chunk parts must yield only assistant text");
+        assertTrue(HostAbi.streamEventHasToolCall(new Chunk(new SummaryMessageChunk(
+                        java.util.Collections.singletonList(new Tool())))),
+                "current host tool-call parts must reject an internal summary");
+    }
+
+    private static final class Chunk {
+        private final SummaryMessageChunk value;
+
+        Chunk(SummaryMessageChunk value) {
+            this.value = value;
+        }
+
+        public SummaryMessageChunk a() {
+            return value;
+        }
+    }
+
+    private static final class SummaryMessageChunk {
+        private final java.util.List<Object> parts;
+
+        SummaryMessageChunk(java.util.List<Object> parts) {
+            this.parts = parts;
+        }
+
+        public java.util.List<Object> b() {
+            return parts;
+        }
+    }
+
+    private static final class Reasoning {
+        private final String value;
+
+        Reasoning(String value) {
+            this.value = value;
+        }
+
+        public String c() {
+            return value;
+        }
+    }
+
+    private static final class Text {
+        private final String value;
+
+        Text(String value) {
+            this.value = value;
+        }
+
+        public String c() {
+            return value;
+        }
+    }
+
+    private static final class Tool {
     }
 
     private static void setManagerField(String name, Object value) throws Exception {
@@ -421,7 +537,7 @@ public final class ModelContextCompressionCheck {
         String internalSummary = methodBody(manager,
                 "static boolean isInternalSummaryRequest(");
         assertContains(internalSummary, "currentSummaryTask()");
-        assertContains(internalSummary, "text.equals(current.prompt)");
+        assertContains(internalSummary, "isInternalPromptText(text, current.prompt)");
         String currentSummaryTask = methodBody(manager,
                 "static synchronized SummaryTaskSnapshot currentSummaryTask(");
         assertContains(currentSummaryTask, "taskPrompt");
@@ -432,6 +548,17 @@ public final class ModelContextCompressionCheck {
                 methodBody(module, "private StartupProbe installRequestHook("), "named");
         assertRequestHookSanitizesBeforePolicyBypass(
                 methodBody(module, "private boolean installMinifiedRequestBodyHook("), "minified");
+
+        String internalSummaryRequest = methodBody(module,
+                "private void requestInternalSummary(");
+        assertContains(internalSummaryRequest, "SUMMARY_EXECUTOR.execute(");
+        assertTrue(internalSummaryRequest.indexOf("postDelayed(")
+                        < internalSummaryRequest.indexOf("abi.streamMessagesMethod.invoke("),
+                "summary timeout must be armed before the provider stream can block");
+        assertTrue(!internalSummaryRequest.substring(0,
+                        internalSummaryRequest.indexOf("abi.streamMessagesMethod.invoke("))
+                        .contains("getMainLooper()).post("),
+                "internal summary provider stream must not run on the main thread");
     }
 
     private static String read(File file) throws Exception {

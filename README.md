@@ -18,18 +18,20 @@ An LSPosed module for `me.yun.lspilot` that adds request-level enhancements and 
 
 Context compression is designed to avoid mutating an active model response:
 
-- If the user sends a message and compression is needed, the module pauses the send, compresses while the chat is idle, then replays the same send.
-- During provider request construction, the module only applies a previously prepared summary or sends the sanitized original messages.
-- A prepared summary remains the chat baseline across responses until the chat or provider changes, or the baseline is explicitly cleared.
+- If the user sends a message and compression is needed, the module holds the provider request while leaving the user message visible in host history.
+- An internal model request produces a validated Markdown summary without inserting that response into host chat.
+- Later provider requests use the persisted summary baseline plus post-boundary messages while the visible conversation remains unchanged.
+- History, provider, model, or relevant configuration changes invalidate an incompatible baseline.
 
-## Design References
+## Design Reference
 
-The context-compression workflow was informed by the mature Android AI-agent patterns in:
+The context-compression workflow was informed by mature Android AI-agent patterns around configurable compression prompts, context budgeting, recent-tail retention, and tool-transaction boundaries:
 
-- [AAswordman/Operit](https://github.com/AAswordman/Operit), particularly model-assisted conversation summaries and structured context handoff.
-- [AAAelina/rikkahub-agent](https://github.com/AAAelina/rikkahub-agent), an extended fork of [ExTV/rikkahub-agent](https://github.com/ExTV/rikkahub-agent), particularly configurable compression prompts, context budgeting, recent-tail retention, and tool-transaction boundaries.
+- [AAAelina/rikkahub-agent](https://github.com/AAAelina/rikkahub-agent), an extended fork of [ExTV/rikkahub-agent](https://github.com/ExTV/rikkahub-agent).
 
-These are architectural and behavioral references, not copied source. The current deterministic local window/excerpt implementation in `ContextCompression.java` is an independent Java adaptation for LSPilot's runtime request path.
+This is an architectural and behavioral reference, not copied source. The current implementation uses its own request-layer state machine, summary protocol, persistence, and host ABI integration.
+
+The maintained architecture and current execution state are indexed in [docs/README.md](docs/README.md).
 
 ## Build
 
@@ -64,9 +66,10 @@ The module uses `lib/libxposed-api-102.0.0.aar` as a `compileOnly` dependency an
 ## Project Layout
 
 ```text
-app/src/main/java/dev/operit/lspilot/enhancer/  Module source
+app/src/main/java/                             Module source
 app/src/main/resources/META-INF/xposed/         LSPosed metadata
-docs/                                           Public design notes
+docs/                                           Project documentation and current work state
+docs/README.md                                  Documentation map and conventions
 lib/                                            Public compile-only dependency
 gradle/                                         Gradle wrapper
 ```

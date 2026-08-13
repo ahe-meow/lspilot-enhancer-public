@@ -27,6 +27,10 @@ final class HostAbi {
     private static final String MINIFIED_CONFIG = "jb";
     private static final String MINIFIED_MESSAGE = "g8";
     private static final String MINIFIED_REPOSITORY = "me.yun.lspilot.data.repository.b";
+    private static final String LEGACY_STREAM_DONE = "nyb$b";
+    private static final String LEGACY_STREAM_ERROR = "nyb$c";
+    private static final String CURRENT_STREAM_DONE = "lwb$b";
+    private static final String CURRENT_STREAM_ERROR = "lwb$c";
     private static final String HOST_INDEX = "_lspilot_host_index";
     private static final String HOST_TOOL_CALLS = "_lspilot_tool_calls";
     private static final String HOST_TOOL_CALL_ID = "_lspilot_tool_call_id";
@@ -939,6 +943,77 @@ final class HostAbi {
             if (value != null) return value;
         }
         return null;
+    }
+
+    static boolean isStreamDoneEvent(String name) {
+        return LEGACY_STREAM_DONE.equals(name) || CURRENT_STREAM_DONE.equals(name)
+                || (name != null && (name.endsWith("$Done") || name.endsWith(".Done")));
+    }
+
+    static boolean isStreamErrorEvent(Object event, String name) {
+        return event instanceof Throwable || LEGACY_STREAM_ERROR.equals(name)
+                || CURRENT_STREAM_ERROR.equals(name)
+                || (name != null && (name.endsWith("$Error") || name.endsWith(".Error")
+                || name.endsWith("$Failure") || name.endsWith(".Failure")
+                || name.endsWith("$Failed") || name.endsWith(".Failed")));
+    }
+
+    static String streamEventText(Object event) {
+        Object chunk = readFirst(event, "getChunk", "chunk", "a");
+        Object parts = readFirst(chunk, "getParts", "parts", "b");
+        if (parts instanceof Iterable) {
+            StringBuilder text = new StringBuilder();
+            for (Object part : (Iterable<?>) parts) {
+                if (part == null) continue;
+                String name = part.getClass().getName();
+                if (!"cb$b".equals(name) && !name.endsWith("$Text")
+                        && !name.endsWith(".Text")) continue;
+                Object value = readFirst(part, "getText", "text", "c");
+                if (value instanceof CharSequence) text.append(value);
+            }
+            return text.length() == 0 ? null : text.toString();
+        }
+        Object value = readFirst(event, "getContent", "content", "getText", "text",
+                "getDelta", "delta", "getMessage", "message", "a", "b");
+        if (!(value instanceof CharSequence)) return null;
+        String text = value.toString();
+        return text.isEmpty() || text.equals(event.getClass().getName()) ? null : text;
+    }
+
+    static boolean streamEventHasToolCall(Object event) {
+        if (event == null) return false;
+        String eventName = event.getClass().getName().toLowerCase(java.util.Locale.ROOT);
+        if (eventName.contains("tool")) return true;
+        Object calls = readFirst(event, "getToolCalls", "toolCalls");
+        Object id = readFirst(event, "getToolCallId", "toolCallId");
+        if (hasValue(calls) || hasValue(id)) return true;
+        Object chunk = readFirst(event, "getChunk", "chunk", "a");
+        Object parts = readFirst(chunk, "getParts", "parts", "b");
+        if (!(parts instanceof Iterable)) return false;
+        for (Object part : (Iterable<?>) parts) {
+            if (part == null) continue;
+            String name = part.getClass().getName();
+            if ("cb$c".equals(name) || name.toLowerCase(java.util.Locale.ROOT).contains("tool")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static Object readFirst(Object target, String... names) {
+        if (target == null) return null;
+        for (String name : names) {
+            Object value = invokeNoArgOrNull(target, optionalNoArg(target.getClass(), name));
+            if (hasValue(value)) return value;
+        }
+        return null;
+    }
+
+    private static boolean hasValue(Object value) {
+        if (value == null) return false;
+        if (value instanceof CharSequence) return ((CharSequence) value).length() > 0;
+        if (value instanceof List) return !((List<?>) value).isEmpty();
+        return true;
     }
 
     private static Field optionalSingletonField(Class<?> type, String fieldName) {
