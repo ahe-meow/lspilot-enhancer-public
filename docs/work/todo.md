@@ -6,15 +6,17 @@
 
 ## In progress
 
-- `v1.7.4-preview.26` is published, installed, enabled, scoped, hash-verified, and cold-start verified with automatic retry/context writes absent and all-model 24-hour retention enabled.
+- `v1.7.4-preview.27` candidate is built and statically verified with a separate host-native Miuix settings page, independent card, and `Rounded.AutoAwesome` icon. It is not published or installed; device remains on `v1.7.4-preview.26`.
 
 ## Next
 
-- [ ] Complete remaining manual request/usage/settings acceptance separately.
+- [ ] Publish/install `v1.7.4-preview.27` after explicit approval, then manually verify the independent icon, native page navigation, settings persistence, request mutation, and usage.
 - [ ] Replace the private AAPT2 APK-container workaround when an arm64-compatible AGP 9.3 AAPT2 is available.
 
 ## Completed
 
+- [x] Replace the module settings Overlay/Dialog with host-native Miuix navigation; separate the entry from `关于`, use `Rounded.AutoAwesome`, and add navigation-state regression coverage.
+- [x] Pass release/lint, LSP, pi-lens, DEX marker, APK integrity/signature, and `NativeSettingsNavigationCheck` verification for the `preview.27` candidate.
 - [x] Publish and install `v1.7.4-preview.26`; verify SHA-256 across source, GitHub download, Termux-private stage, `/data/local/tmp`, and installed `base.apk`.
 - [x] Verify LSPosed state/scope/database integrity and two host cold starts: schema `7` rebuild followed by `cache_hit`, request/SSE/settings hooks installed, and no automatic-retry hook log.
 - [x] Remove automatic retry, host retry/session/stream/repository hooks, StateFlow message replacement, repository persistence, retry ABI discovery/cache fields, and retry-only tests.

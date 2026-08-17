@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Replace the settings Overlay/Dialog with a separate host-native Miuix settings page reached through host navigation.
+- Add the module entry as an independent settings card with the unused-in-settings `Rounded.AutoAwesome` icon, separate from the host `关于` row.
+
 ## 1.7.4-preview.26
 
 - Remove automatic retry, including retry/stop/session/repository hooks, host StateFlow message replacement, repository persistence, and retry-specific ABI discovery/cache fields.

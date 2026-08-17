@@ -14,6 +14,7 @@ Ship a cache-focused LSPilot LSPosed module that adapts conservatively to the cu
 - Structural `DexFile` request/SSE endpoint discovery with ambiguity rejection.
 - ABI descriptor caching by host APK and split-APK content hashes; changed content invalidates the cache before hooks and triggers structural DEX self-adaptation.
 - Read-only reverse engineering of host APKs and runtime evidence.
+- Host-native Miuix module settings entry/page, separate from `关于`, with no module-created Overlay/Dialog.
 
 ## Out of scope
 
@@ -25,7 +26,8 @@ Ship a cache-focused LSPilot LSPosed module that adapts conservatively to the cu
 ## Done when
 
 - Production source, UI, settings, tests, and current documentation contain no active context-compression feature.
-- The updated installed host APK SHA-256 `af2283a2978ea650986988ac3d9c01a39474cdd6410d30b842dd8f15e686149c` (still version `1.1.0 (11)`) resolves provider `zj8` with the retained request/SSE and retry endpoint groups; the staged `b6ea30f6...debe` and prior `d4eb3066...f5d56` profiles remain compatibility evidence.
+- The updated installed host APK SHA-256 `af2283a2978ea650986988ac3d9c01a39474cdd6410d30b842dd8f15e686149c` (still version `1.1.0 (11)`) resolves provider `zj8` with the retained request/SSE group; the staged `b6ea30f6...debe` and prior `d4eb3066...f5d56` profiles remain compatibility evidence.
+- The module entry is an independent host-native settings card using `Rounded.AutoAwesome`; its page uses host navigation and native preference components.
 - Ambiguous or incomplete scans disable only the affected feature group.
 - Focused checks, release build, lint, and `git diff --check` pass.
 - The exact module APK is hash-verified, installed, loaded by LSPosed, and startup-verified against the updated host: `provider=zj8`, `requestBody=true`, `sseUsage=true`, and `Host ABI resolution reason=cache_hit` on the subsequent startup.

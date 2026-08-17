@@ -6,12 +6,13 @@
 
 ## Source state
 
-- Branch: `main`; release commit/tag: `2e44ff103ac793e16bbff3e966b045cae0debedf` / `v1.7.4-preview.26`.
+- Branch: `main`; latest released commit/tag: `07a57b0d95bfe3f061bdb5260b342aceb3422c91` / `v1.7.4-preview.26`; current candidate is `v1.7.4-preview.27`.
 - Module identity uses `com.lspilot.enhancer`; the exact preview artifact is installed, enabled, and scoped to `me.yun.lspilot` in LSPosed.
 - Context compression was explicitly removed from production source, chat UI, settings, tests, and active documentation.
 - Removed legacy preference keys and stored summary-record prefixes are cleaned from host-local module preferences during initialization; other settings are untouched.
 - Retained features are Prompt Cache policy, compatible retention, usage reporting, reasoning effort, diagnostics, and settings UI. Automatic retry and its host-context writes are removed from source and the installed artifact.
 - Current source and installed `v1.7.4-preview.26` apply the configured `reasoning_effort` and `prompt_cache_retention=24h` fallback to every non-empty model name. Blank models remain unchanged and GPT-5.6 explicit breakpoints take precedence.
+- The current source adds a separate host-native Miuix settings card with `Rounded.AutoAwesome`, routes through the host settings navigation, and renders native switch/dropdown preferences. The installed `v1.7.4-preview.26` predates this UI change.
 - DexKit runtime packaging was removed. Runtime discovery uses platform `dalvik.system.DexFile` to avoid colliding with the host's DexKit/JNI state.
 
 ## Repository verification — 2026-08-17
@@ -22,7 +23,7 @@
 - `aapt2 dump badging` reports package `com.lspilot.enhancer`, version code `63`, and version name `1.7.4-preview.26`; ZIP integrity, required Xposed entries, APK v2 signature, signer continuity, DEX markers, `git diff --check`, pi-lens, and LSP diagnostics passed.
 - `RequestAbiCheck`, `HostUpdateDetectionCheck`, `PromptCachePolicy`, and `ReasoningPolicy` passed on Dalvik; retry-only checks were removed with the feature.
 - Production and release DEX scans contain no automatic retry manager, retry/stop/session/stream/repository hooks, StateFlow message replacement, repository message persistence, or retry-specific ABI descriptor fields. The request ABI cache schema is `7`.
-- The all-model retention policy passed release/debug Java compilation, pi-lens, LSP diagnostics, and the persistent Dalvik `PromptCachePolicy` check for GPT, Claude, blank-model rejection, and explicit-breakpoint precedence.
+- The `v1.7.4-preview.27` candidate release build, lint, LSP, pi-lens, DEX marker, APK integrity/signature checks, `NativeSettingsNavigationCheck`, and an on-device current-host multi-DEX ABI resolution check passed. Candidate APK is 677,939 bytes with SHA-256 `24702f702ee67c6b37a5305f7f5e983f4523f7d2da18c4475c82609b16d2dff1`; badging reports version code `64`, version name `1.7.4-preview.27`. It is not published or installed.
 - The three pi-lens `unsafe-reflection` findings were removed by replacing equivalent `Class.forName(name, false, loader)` calls with `ClassLoader.loadClass(name)`. A final pi-lens session scan reports no issues; LSP reports no diagnostics for `HostAbi.java` and `DexAbiScanner.java`.
 - GitHub pre-release `v1.7.4-preview.26` is published at <https://github.com/ahe-meow/lspilot-enhancer-public/releases/tag/v1.7.4-preview.26>. The downloaded asset is 675,895 bytes and reproduces SHA-256 `7051672f6a2335927abf3cc5bb1e4af7ec70f897bec921a9e7553fb564397e73`.
 
@@ -41,7 +42,7 @@
 - Installed `v1.7.4-preview.26` contains no automatic-retry host-context write path and no longer discovers or invokes host ViewModel StateFlow, retry/session/stream methods, message accessors, or repository message methods.
 - Production source contains no direct Room, SQLite, `android.database`, `ContentResolver`, chat-database file API, or indirect host repository persistence path.
 - SSE `reasoning` normalization remains active independently of the request master switch.
-- The module also writes its own host-private SharedPreferences, ABI descriptor cache, and optional diagnostic log; it injects a settings entry/dialog. No active context compression or summary generation remains, but initialization deletes legacy compression/summary preference keys.
+- The module also writes its own host-private SharedPreferences, ABI descriptor cache, and optional diagnostic log; it injects a separate native settings card/page. No module-created Android overlay or dialog remains.
 - Current installed all-model retention sends `prompt_cache_retention=24h` for every non-empty model request. If the upstream accepts it, external context retention expands to those models; actual provider storage is outside this repository and unverified.
 
 ## Git ownership recovery — 2026-08-17
@@ -53,10 +54,10 @@
 - Installed package: `me.yun.lspilot`
 - Version: `1.1.0 (11)`
 - Installed host content SHA-256: `af2283a2978ea650986988ac3d9c01a39474cdd6410d30b842dd8f15e686149c` (version metadata remains `1.1.0 (11)` despite the content update).
-- Size: `16,700,026` bytes
-- Runtime staging path: `/storage/emulated/0/MT2Explorer/mcp/lspilot_installed_20260816_1958/base.apk`
-- MT2 workspace: `rvlxvm8q`
-- The earlier installed host SHA-256 `d4eb3066c82a791f6d11bbe8a4c6a9f0d2990c8282f91a815d14d7bfc05f5d56` and staged SHA-256 `b6ea30f6...debe` remain separate compatibility evidence.
+- Size: `16,716,410` bytes
+- Runtime staging path: `/storage/emulated/0/MT2Explorer/mcp/lspilot_installed_20260817_host_update/base.apk`
+- MT2 workspace: `enml4cuy`
+- The earlier installed host SHA-256 `d4eb3066c82a791f6d11bbe8a4c6a9f0d2990c8282f91a815d14d7bfc05f5d56`, size `16,700,026`, is workspace `rvlxvm8q`; staged SHA-256 `b6ea30f6...debe` remains separate compatibility evidence.
 - The prior `8541...` APK and workspace `tpmuti9o` are historical evidence only.
 
 ## Verified retained ABI

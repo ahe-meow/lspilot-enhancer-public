@@ -8,7 +8,6 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 
-import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.nio.charset.StandardCharsets;
@@ -26,15 +25,9 @@ public final class LSPilotEnhancerModule extends XposedModule {
             "me.yun.lspilot.data.model.AiProviderConfig";
     private static final String MAIN_ACTIVITY_CLASS =
             "me.yun.lspilot.ui.MainActivity";
-    private static final String SUB_SCREEN_ACTIVITY_CLASS =
-            "me.yun.lspilot.ui.SubScreenActivity";
-    private static final String ARROW_PREFERENCE_CLASS =
-            "top.yukonga.miuix.kmp.preference.ArrowPreferenceKt";
 
     private static final String CACHE_NAMESPACE = "lspilot:v3:";
-    private static final ThreadLocal<Boolean> SETTINGS_ENTRY_REPLAYING = new ThreadLocal<>();
-    private static volatile boolean settingsEntryRenderReported;
-    private static volatile boolean aboutPreferenceObservedReported;
+    private static final ThreadLocal<Boolean> NATIVE_TOP_BAR_REPLAYING = new ThreadLocal<>();
     private static volatile boolean reasoningDeltaNormalizedReported;
 
     private static final class StartupProbe {
@@ -346,31 +339,9 @@ public final class LSPilotEnhancerModule extends XposedModule {
         return value >= 0L ? Long.toString(value) : "unavailable";
     }
 
-    private void installSubScreenCreateHook(ClassLoader loader) {
-        try {
-            Class<?> activityClass = Class.forName(SUB_SCREEN_ACTIVITY_CLASS, false, loader);
-            Method onCreate = activityClass.getDeclaredMethod("onCreate", Bundle.class);
-            onCreate.setAccessible(true);
-            hook(onCreate).intercept(chain -> {
-                Object instance = chain.getThisObject();
-                Object result = chain.proceed();
-                if (instance instanceof Activity) {
-                    log(Log.INFO, TAG, "SubScreenActivity.onCreate captured");
-                    InjectedUiController.setActiveActivity((Activity) instance);
-                }
-                return result;
-            });
-            log(Log.INFO, TAG, "SubScreenActivity.onCreate hook installed");
-        } catch (ClassNotFoundException ignored) {
-            log(Log.INFO, TAG, "SubScreenActivity absent; using MainActivity overlay");
-        } catch (Throwable error) {
-            log(Log.ERROR, TAG, "Failed to install SubScreenActivity.onCreate hook", error);
-        }
-    }
-
     private void installUiHooks(ClassLoader loader, String[] dexPaths) {
         try {
-            Class<?> activityClass = Class.forName(MAIN_ACTIVITY_CLASS, false, loader);
+            Class<?> activityClass = loader.loadClass(MAIN_ACTIVITY_CLASS);
             Method onCreate = activityClass.getDeclaredMethod("onCreate", Bundle.class);
             onCreate.setAccessible(true);
             hook(onCreate).intercept(chain -> {
@@ -384,66 +355,71 @@ public final class LSPilotEnhancerModule extends XposedModule {
                 }
                 return result;
             });
-            installSubScreenCreateHook(loader);
-            // Observe LSPilot's own working ArrowPreference calls. When its native "About"
-            // row is rendered, replay the exact same valid argument set while changing only
-            // title, summary and click action. This preserves the host's colors, icon, padding,
-            // Composer flags and Kotlin default mask instead of guessing their ABI.
-            Class<?> arrowClass = findArrowPreferenceClass(loader, dexPaths);
-            Method arrowPreference = findArrowPreferenceMethod(arrowClass);
-            arrowPreference.setAccessible(true);
-            final Method nativeArrowPreference = arrowPreference;
-            final Object settingsClickAction =
-                    InjectedUiController.createSettingsClickAction(loader);
-            hook(nativeArrowPreference).intercept(chain -> {
-                Object result = chain.proceed();
-                if (Boolean.TRUE.equals(SETTINGS_ENTRY_REPLAYING.get())) {
-                    return result;
+
+            Method arrowPreference = findArrowPreferenceMethod(
+                    findArrowPreferenceClass(loader, dexPaths));
+            HostNativeSettings.resolve(loader, arrowPreference);
+
+            hook(HostNativeSettings.settingsPagerMethod()).intercept(chain -> {
+                if (!HostNativeSettings.isRenderingPage()) {
+                    HostNativeSettings.captureSettings(
+                            chain.getArg(0), chain.getArg(1),
+                            ((Number) chain.getArg(2)).floatValue());
                 }
+                return chain.proceed();
+            });
 
-                Object title = chain.getArg(0);
-                if (isAboutTitle(title)) {
-                    if (!aboutPreferenceObservedReported) {
-                        aboutPreferenceObservedReported = true;
-                        log(Log.INFO, TAG,
-                                "Native About preference observed; replaying module entry");
-                    }
+            hook(HostNativeSettings.settingsListMethod()).intercept(chain -> {
+                if (HostNativeSettings.isRenderingPage()) {
                     try {
-                        Object[] copiedArgs = new Object[16];
-                        for (int index = 0; index < copiedArgs.length; index++) {
-                            copiedArgs[index] = chain.getArg(index);
-                        }
-                        copiedArgs[0] = "模型请求增强";
-                        copiedArgs[3] = requestHookSummary();
-                        copiedArgs[9] = settingsClickAction;
-
-                        SETTINGS_ENTRY_REPLAYING.set(Boolean.TRUE);
-                        try {
-                            nativeArrowPreference.invoke(null, copiedArgs);
-                        } finally {
-                            SETTINGS_ENTRY_REPLAYING.remove();
-                        }
-                        if (!settingsEntryRenderReported) {
-                            settingsEntryRenderReported = true;
-                            log(Log.INFO, TAG,
-                                    "Settings-page entry rendered by replaying About preference");
-                        }
+                        return HostNativeSettings.addSettings(chain.getArg(2));
                     } catch (Throwable error) {
-                        SETTINGS_ENTRY_REPLAYING.remove();
-                        if (!settingsEntryRenderReported) {
-                            settingsEntryRenderReported = true;
-                            log(Log.ERROR, TAG,
-                                    "Failed to replay native About preference",
-                                    unwrapInvocationError(error));
-                        }
+                        log(Log.ERROR, TAG, "Failed to render native module settings", error);
+                        return chain.proceed();
                     }
+                }
+                Object result = chain.proceed();
+                try {
+                    HostNativeSettings.addEntry(chain.getArg(2));
+                } catch (Throwable error) {
+                    log(Log.ERROR, TAG, "Failed to append native settings entry", error);
                 }
                 return result;
             });
 
-            log(Log.INFO, TAG, "Native ArrowPreference replay hook installed");
+            hook(HostNativeSettings.aboutScreenMethod()).intercept(chain -> {
+                if (!HostNativeSettings.shouldRenderPage()) return chain.proceed();
+                try {
+                    return HostNativeSettings.renderPage(chain.getArg(0));
+                } catch (Throwable error) {
+                    log(Log.ERROR, TAG, "Failed to open native module settings page", error);
+                    return chain.proceed();
+                }
+            });
+
+            final Method topAppBar = HostNativeSettings.topAppBarMethod();
+            hook(topAppBar).intercept(chain -> {
+                if (!HostNativeSettings.isRenderingPage()
+                        || Boolean.TRUE.equals(NATIVE_TOP_BAR_REPLAYING.get())) {
+                    return chain.proceed();
+                }
+                Object[] args = new Object[topAppBar.getParameterTypes().length];
+                for (int index = 0; index < args.length; index++) {
+                    args[index] = chain.getArg(index);
+                }
+                args[0] = "模型请求增强";
+                NATIVE_TOP_BAR_REPLAYING.set(Boolean.TRUE);
+                try {
+                    return topAppBar.invoke(null, args);
+                } finally {
+                    NATIVE_TOP_BAR_REPLAYING.remove();
+                }
+            });
+
+            log(Log.INFO, TAG,
+                    "Native host settings page hooks installed with AutoAwesome icon");
         } catch (Throwable error) {
-            log(Log.ERROR, TAG, "Failed to install settings UI hooks", error);
+            log(Log.ERROR, TAG, "Failed to install native settings UI hooks", error);
         }
     }
 
@@ -509,26 +485,6 @@ public final class LSPilotEnhancerModule extends XposedModule {
         return result.append("): ").append(method.getReturnType().getName()).toString();
     }
 
-    private static boolean isAboutTitle(Object title) {
-        if (!(title instanceof CharSequence)) {
-            return false;
-        }
-        String value = title.toString().trim();
-        return "关于".equals(value) || "About".equalsIgnoreCase(value);
-    }
-
-    private static Throwable unwrapInvocationError(Throwable error) {
-        Throwable current = error;
-        while (current instanceof InvocationTargetException
-                && ((InvocationTargetException) current).getTargetException() != null) {
-            current = ((InvocationTargetException) current).getTargetException();
-        }
-        return current;
-    }
-
-    private static String requestHookSummary() {
-        return "推理强度、Prompt Cache 与上下文策略";
-    }
     private static String cacheIdentity(JSONObject body, String fallback) {
         if (body != null) {
             JSONArray messages = body.optJSONArray("messages");

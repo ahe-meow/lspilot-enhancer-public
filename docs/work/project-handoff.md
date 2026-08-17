@@ -7,12 +7,12 @@
 ## Repository
 
 - Branch: `main`
-- Release commit/tag: `2e44ff1` / `v1.7.4-preview.26`
+- Latest released commit/tag: `07a57b0` / `v1.7.4-preview.26`
 - Inspect `git status` before changes and preserve unrelated tracked or untracked files.
 - Module package: `com.lspilot.enhancer`
 - Host package: `me.yun.lspilot`
 - Android treats the module identity as a new package. GitHub pre-release `v1.7.4-preview.26` is published, installed, enabled, scoped, and hash-verified.
-- Current source and installed `v1.7.4-preview.26` apply reasoning effort and 24-hour retention to every non-empty model name, and remove automatic retry/context writes.
+- Current source has a `v1.7.4-preview.27` candidate with a separate host-native Miuix settings page, independent settings card, and `Rounded.AutoAwesome` icon. It is not published or installed; the device remains on `v1.7.4-preview.26`.
 
 ## Active objective
 
@@ -23,10 +23,10 @@ Preserve conservative request/SSE DEX adaptation, unique coherent candidate sele
 ## Current host
 
 - Installed version: `1.1.0 (11)`
-- Installed SHA-256: `af2283a2978ea650986988ac3d9c01a39474cdd6410d30b842dd8f15e686149c` (content changed from the prior `d4eb3066...f5d56` while version remained `1.1.0 (11)`)
-- Size: `16,700,026` bytes
-- MT2 workspace: `rvlxvm8q`
-- Earlier staged profile: `b6ea30f6...debe`, workspace `g66o2a9l`
+- Installed SHA-256: `af2283a2978ea650986988ac3d9c01a39474cdd6410d30b842dd8f15e686149c` (current host update)
+- Size: `16,716,410` bytes
+- MT2 workspace: `enml4cuy`
+- Earlier installed host SHA-256: `d4eb3066...f5d56`, size `16,700,026`, workspace `rvlxvm8q`
 
 Verified request/SSE mappings used by current source:
 
@@ -63,11 +63,12 @@ The current update resolved provider `zj8`; the previous `d4eb3066...f5d56` host
 - Removed automatic retry manager/policy, retry/stop/session/stream/repository hooks, host StateFlow writes, repository message persistence, retry ABI discovery/cache fields, and retry-only tests.
 - Published and installed `v1.7.4-preview.26`; source, GitHub download, Termux-private stage, `/data/local/tmp`, and installed `base.apk` match SHA-256 `7051672f6a2335927abf3cc5bb1e4af7ec70f897bec921a9e7553fb564397e73`.
 - Verified LSPosed `enabled=1`, `scope_request_blocked=0`, scope `me.yun.lspilot`, and database integrity `ok` without modifying LSPosed data.
-- Verified two cold starts: schema `7` rebuild then `cache_hit`, `provider=zj8`, request/SSE/settings hooks installed, version `1.7.4-preview.26 (63)`, and no automatic-retry hook log.
+- Replaced the old settings Overlay/Dialog with host-native Miuix navigation; the module entry is independent from `关于`, uses `Rounded.AutoAwesome`, and settings state is backed by host Compose `MutableState` bridges.
+- `NativeSettingsNavigationCheck` passes; release/lint/LSP/pi-lens/APK checks pass for the uninstalled `preview.27` candidate.
 
 ## Next action
 
-Manual request/usage/settings acceptance remains user-driven.
+Publish/install `v1.7.4-preview.27` only after explicit approval. Then manually verify icon separation, native page back navigation, switch/dropdown persistence, request mutation, and usage.
 
 ## Constraints
 

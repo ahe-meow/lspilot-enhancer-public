@@ -1,6 +1,6 @@
 # LSPilot Enhancer
 
-An LSPosed module for `me.yun.lspilot` that adds request-level caching, usage reporting, reasoning controls, and bounded automatic retries without modifying or repackaging the host app.
+An LSPosed module for `me.yun.lspilot` that adds request-level caching, usage reporting, and reasoning controls without modifying or repackaging the host app.
 
 > This repository contains source code only. It intentionally excludes local SDKs, build outputs, APKs, logs, device-specific files, signing material, and user credentials.
 
@@ -10,6 +10,7 @@ An LSPosed module for `me.yun.lspilot` that adds request-level caching, usage re
 - Adds explicit prompt-cache breakpoints where supported, with a compatible 24-hour retention fallback.
 - Requests streaming usage data and records redacted cache-token metrics.
 - Adds selectable reasoning effort to every named model request and normalizes compatible reasoning SSE fields.
+- Adds a separate `Rounded.AutoAwesome` entry and native Miuix settings page inside the host settings navigation.
 - Resolves minified host endpoints with conservative `DexFile` structural discovery and rejects ambiguous candidates.
 - Detects host APK content changes at startup, invalidates stale ABI mappings, and re-adapts before installing cache hooks.
 - Caches validated ABI descriptors by host APK and split-APK content hashes.
@@ -49,7 +50,7 @@ The module uses `lib/libxposed-api-102.0.0.aar` as a `compileOnly` dependency. R
 - Do not commit API keys, tokens, credentials, logs, APK outputs, local SDK files, or signing material.
 - Runtime provider credentials remain owned by the host and are never persisted by this module.
 - Diagnostics avoid message bodies, request bodies, and credentials.
-- The module never edits the host APK or manipulates its database directly; retry persistence uses the host repository API.
+- The module never edits the host APK, manipulates its database, or persists host chat messages.
 
 ## Project layout
 
