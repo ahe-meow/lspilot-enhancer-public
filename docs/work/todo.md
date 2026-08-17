@@ -6,15 +6,18 @@
 
 ## In progress
 
-- `v1.7.4-preview.24` is published, installed, enabled, scoped, and startup-verified. Manual request/usage/settings and automatic-retry/stop acceptance remain user-driven.
+- `v1.7.4-preview.25` candidate is built and statically verified with SHA-256 `596635b240f1b6733e54dabc784862e9afccf73edcbad702773f274779df9e5a`; it is not yet committed, published, or installed.
 
 ## Next
 
+- [ ] Commit, publish, and hash-verified install `v1.7.4-preview.25`.
 - [ ] Complete any remaining manual automatic-retry and stop-behavior acceptance separately.
 - [ ] Replace the private AAPT2 APK-container workaround when an arm64-compatible AGP 9.3 AAPT2 is available.
 
 ## Completed
 
+- [x] Clear all three pi-lens `unsafe-reflection` warnings with equivalent non-initializing `ClassLoader.loadClass` calls; pass LSP, Java compilation, and focused Dalvik checks.
+- [x] Remove the `gpt-5.6-sol` reasoning-effort restriction for all non-empty model names; pass Java compilation and the Dalvik `ReasoningPolicy` check.
 - [x] Install `com.lspilot.enhancer` with SHA-256 `51e0c3c044ee1f79a4b93ac5e6c6767e2a22cb81c5dd96ac2a1086fd7f7928aa`; source, Termux-private stage, `/data/local/tmp`, and installed `base.apk` hashes match.
 - [x] Verify LSPosed state `enabled=1`, `scope_request_blocked=0`, scope `me.yun.lspilot`, and database integrity `ok`.
 - [x] Verify two cold starts: schema `6` rebuild followed by `cache_hit`, `provider=zj8`, request/SSE probes true, and retry/settings hooks installed.

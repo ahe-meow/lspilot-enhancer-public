@@ -411,7 +411,7 @@ final class HostAbi {
 
     private static HostAbi resolveMinifiedProfile(ClassLoader loader, String providerName)
         throws Exception {
-        Class<?> providerClass = Class.forName(providerName, false, loader);
+        Class<?> providerClass = loader.loadClass(providerName);
         Class<?> configClass = Class.forName(MINIFIED_CONFIG, false, loader);
         Class<?> viewModelClass = Class.forName(MINIFIED_VIEW_MODEL, false, loader);
         Class<?> messageClass = Class.forName(MINIFIED_MESSAGE, false, loader);
@@ -759,7 +759,7 @@ final class HostAbi {
 
     private static Class<?> optionalClass(ClassLoader loader, String name) {
         try {
-            return Class.forName(name, false, loader);
+            return loader.loadClass(name);
         } catch (Throwable ignored) {
             return null;
         }

@@ -500,7 +500,7 @@ final class DexAbiScanner {
 
     private static Class<?> loadClass(ClassLoader loader, String name) {
         try {
-            return Class.forName(name, false, loader);
+            return loader.loadClass(name);
         } catch (Throwable ignored) {
             return null;
         }

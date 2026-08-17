@@ -3,16 +3,14 @@ package com.lspilot.enhancer;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-import java.util.Locale;
-
 final class ReasoningPolicy {
     static final String DEFAULT_EFFORT = "high";
-    private static final String MODEL = "gpt-5.6-sol";
 
     private ReasoningPolicy() {}
 
     static boolean applyRequest(JSONObject body, String model, String effort) throws Exception {
-        if (body == null || !MODEL.equals(normalize(model)) || !isSupportedEffort(effort)) {
+        if (body == null || model == null || model.trim().isEmpty()
+                || !isSupportedEffort(effort)) {
             return false;
         }
         if (effort.equals(body.optString("reasoning_effort", null))) return false;
@@ -55,20 +53,18 @@ final class ReasoningPolicy {
         return false;
     }
 
-    private static String normalize(String model) {
-        return model == null ? "" : model.trim().toLowerCase(Locale.ROOT);
-    }
-
     public static void main(String[] args) throws Exception {
-        JSONObject request = new JSONObject().put("model", MODEL);
-        for (String effort : new String[]{"low", "medium", "high", "xhigh", "max", "ultra"}) {
-            assert isSupportedEffort(effort);
-            assert applyRequest(request, MODEL, effort);
-            assert effort.equals(request.getString("reasoning_effort"));
+        JSONObject request = new JSONObject().put("model", "gpt-5.6-sol");
+        for (String model : new String[]{"gpt-5.6-sol", "gpt-5", "claude-3-7-sonnet"}) {
+            for (String effort : new String[]{"low", "medium", "high", "xhigh", "max", "ultra"}) {
+                assert isSupportedEffort(effort);
+                assert applyRequest(request, model, effort);
+                assert effort.equals(request.getString("reasoning_effort"));
+            }
         }
-        assert !applyRequest(request, MODEL, "ultra");
-        assert !applyRequest(new JSONObject(), "gpt-5.6", DEFAULT_EFFORT);
-        assert !applyRequest(new JSONObject(), MODEL, "invalid");
+        assert !applyRequest(request, " ", DEFAULT_EFFORT);
+        assert !applyRequest(request, null, DEFAULT_EFFORT);
+        assert !applyRequest(request, "gpt-5", "invalid");
 
         String payload = "{\"choices\":[{\"delta\":{\"reasoning\":\"check\"}}]}";
         JSONObject normalized = new JSONObject(normalizeSseDelta(payload));

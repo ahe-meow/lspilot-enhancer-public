@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 1.7.4-preview.25
+
+- Apply the configured reasoning effort to every named model instead of only `gpt-5.6-sol`; retain the reasoning SSE compatibility normalization.
+- Remove the weak hash-code fallback when SHA-256 is unavailable; request enhancement now fails open to the unchanged host request.
+- Replace flagged reflective class lookup with non-initializing `ClassLoader.loadClass` calls; pi-lens now reports no issues.
+
 ## 1.7.4-preview.24
 
 - Rename the module package to `com.lspilot.enhancer`; LSPosed must enable and scope it as a new module package.

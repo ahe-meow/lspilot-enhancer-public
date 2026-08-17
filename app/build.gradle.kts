@@ -10,8 +10,8 @@ android {
         applicationId = "com.lspilot.enhancer"
         minSdk = 26
         targetSdk = 29
-        versionCode = 61
-        versionName = "1.7.4-preview.24"
+        versionCode = 62
+        versionName = "1.7.4-preview.25"
     }
 
     buildTypes {

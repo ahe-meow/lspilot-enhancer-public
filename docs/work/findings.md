@@ -11,6 +11,8 @@
 - Context compression was explicitly removed from production source, chat UI, settings, tests, and active documentation.
 - Removed legacy preference keys and stored summary-record prefixes are cleaned from host-local module preferences during initialization; other settings are untouched.
 - Retained features are Prompt Cache policy, compatible retention, usage reporting, reasoning effort, diagnostics, and bounded automatic retries.
+- Unreleased source applies the configured `reasoning_effort` to every non-empty model name. Blank or missing model names remain unchanged; the installed `v1.7.4-preview.24` artifact still contains the prior `gpt-5.6-sol` restriction.
+- Candidate `v1.7.4-preview.25` uses version code `62`; it is built but not yet published or installed.
 - DexKit runtime packaging was removed. Runtime discovery uses platform `dalvik.system.DexFile` to avoid colliding with the host's DexKit/JNI state.
 
 ## Repository verification — 2026-08-17
@@ -19,7 +21,10 @@
 - With JDK 17 and the documented arm64 AAPT2 flags, the final `1.7.4-preview.24` release assembly, test compilation, and lint succeeded in 33s.
 - APK `app/build/outputs/apk/release/app-release.apk` is 697,879 bytes with SHA-256 `51e0c3c044ee1f79a4b93ac5e6c6767e2a22cb81c5dd96ac2a1086fd7f7928aa`.
 - `aapt2 dump badging` reports package `com.lspilot.enhancer`, version code `61`, and version name `1.7.4-preview.24`; ZIP integrity, APK v2 signature, required Xposed entries, retired-feature markers, and `git diff --check` passed.
-- `RequestGroupIsolationCheck`, `HostUpdateDetectionCheck`, `AutoRetryManagerCheck`, `PromptCachePolicy`, and `ReasoningPolicy` passed on Dalvik.
+- `RequestGroupIsolationCheck`, `HostUpdateDetectionCheck`, `AutoRetryManagerCheck`, `PromptCachePolicy`, and the released `ReasoningPolicy` passed on Dalvik.
+- The unreleased all-model reasoning policy, strict SHA-256 fallback, and non-initializing class-loader cleanup passed release/debug/test Java compilation in 27s plus the assertion-enabled Dalvik checks.
+- Candidate APK `app/build/outputs/apk/release/app-release.apk` is 697,823 bytes with SHA-256 `596635b240f1b6733e54dabc784862e9afccf73edcbad702773f274779df9e5a`; badging reports `com.lspilot.enhancer`, version code `62`, and version name `1.7.4-preview.25`. ZIP integrity, required Xposed entries, v2 signature, signer continuity, lint, DEX marker checks, and standalone Dalvik checks passed. `HostStateRestoreCheck` requires an Android main Looper and is deferred to installed-host runtime verification.
+- The three pi-lens `unsafe-reflection` findings were removed by replacing equivalent `Class.forName(name, false, loader)` calls with `ClassLoader.loadClass(name)`. A final pi-lens session scan reports no issues; LSP reports no diagnostics for `HostAbi.java` and `DexAbiScanner.java`.
 - GitHub pre-release `v1.7.4-preview.24` is published at <https://github.com/ahe-meow/lspilot-enhancer-public/releases/tag/v1.7.4-preview.24>. Re-downloading `LSPilot-Enhancer-v1.7.4-preview.24.apk` reproduced SHA-256 `51e0c3c044ee1f79a4b93ac5e6c6767e2a22cb81c5dd96ac2a1086fd7f7928aa`.
 
 ## Device runtime verification — 2026-08-17

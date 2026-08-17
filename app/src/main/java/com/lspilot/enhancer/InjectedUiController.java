@@ -137,7 +137,7 @@ final class InjectedUiController {
         String[] reasoningLabels = {"low", "Medium", "high", "xhigh", "max", "ultra"};
         String[] reasoningValues = {"low", "medium", "high", "xhigh", "max", "ultra"};
         TextView reasoningEffort = addChoiceSetting(content, activity,
-                "GPT-5.6 sol 推理强度", ModuleSettings.KEY_REASONING_EFFORT,
+                "模型推理强度", ModuleSettings.KEY_REASONING_EFFORT,
                 reasoningLabels, reasoningValues,
                 ModuleSettings::getReasoningEffort, ModuleSettings::setReasoningEffort);
         Switch cacheKey = addSwitch(content, activity, "稳定缓存路由键",
@@ -165,7 +165,7 @@ final class InjectedUiController {
             cacheKey.setChecked(ModuleSettings.isCacheKeyEnabled());
             retention.setChecked(ModuleSettings.isRetentionEnabled());
             usage.setChecked(ModuleSettings.isIncludeUsageEnabled());
-            reasoningEffort.setText(choiceSettingText("GPT-5.6 sol 推理强度",
+            reasoningEffort.setText(choiceSettingText("模型推理强度",
                     ModuleSettings.getReasoningEffort(), reasoningLabels, reasoningValues));
             debug.setChecked(false);
             verboseDebug.setChecked(false);

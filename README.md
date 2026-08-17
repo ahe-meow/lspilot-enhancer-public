@@ -9,7 +9,7 @@ An LSPosed module for `me.yun.lspilot` that adds request-level caching, usage re
 - Generates stable, non-plaintext `prompt_cache_key` values from the model and system/developer prompt.
 - Adds explicit prompt-cache breakpoints where supported, with a compatible 24-hour retention fallback.
 - Requests streaming usage data and records redacted cache-token metrics.
-- Adds selectable GPT-5.6 sol reasoning effort and normalizes compatible reasoning SSE fields.
+- Adds selectable reasoning effort to every named model request and normalizes compatible reasoning SSE fields.
 - Retries failed responses up to five times with bounded delays and native stop-button cancellation.
 - Resolves minified host endpoints with conservative `DexFile` structural discovery and rejects ambiguous candidates.
 - Detects host APK content changes at startup, invalidates stale ABI mappings, and re-adapts before installing cache hooks.

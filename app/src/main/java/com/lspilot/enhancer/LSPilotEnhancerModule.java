@@ -189,7 +189,7 @@ public final class LSPilotEnhancerModule extends XposedModule {
         }
 
         if (reasoningApplied) {
-            log(Log.INFO, TAG, "GPT-5.6 sol reasoning effort applied="
+            log(Log.INFO, TAG, "Reasoning effort applied="
                     + ModuleSettings.getReasoningEffort());
         }
         if (ModuleSettings.isDebugLogEnabled()) {
@@ -765,8 +765,8 @@ public final class LSPilotEnhancerModule extends XposedModule {
                 result.append(String.format(Locale.ROOT, "%02x", hash[i] & 0xff));
             }
             return result.toString();
-        } catch (Throwable ignored) {
-            return Integer.toHexString(input.hashCode());
+        } catch (Throwable error) {
+            throw new IllegalStateException("SHA-256 unavailable", error);
         }
     }
 }

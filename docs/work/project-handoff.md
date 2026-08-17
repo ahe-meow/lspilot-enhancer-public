@@ -7,11 +7,12 @@
 ## Repository
 
 - Branch: `main`
-- Release commit/tag target: `5b2e8b5` / `v1.7.4-preview.24`
+- Release target: `v1.7.4-preview.25`, version code `62`, candidate SHA-256 `596635b240f1b6733e54dabc784862e9afccf73edcbad702773f274779df9e5a`.
 - Inspect `git status` before changes and preserve unrelated tracked or untracked files.
 - Module package: `com.lspilot.enhancer`
 - Host package: `me.yun.lspilot`
 - Android treats the module identity as a new package. GitHub pre-release `v1.7.4-preview.24` is published, installed, enabled, scoped, and hash-verified.
+- Unreleased source now applies reasoning effort to every non-empty model name; the `v1.7.4-preview.25` candidate is built but not yet committed, published, or installed.
 
 ## Active objective
 
@@ -73,7 +74,7 @@ The current update resolved provider `zj8`; the previous `d4eb3066...f5d56` host
 
 ## Next action
 
-Complete the remaining user-driven request/usage/settings and automatic-retry/stop scenarios. No repository, installation, LSPosed, or startup blocker remains.
+Commit, push, publish, and hash-verified install `v1.7.4-preview.25`. User-driven request/usage/settings and automatic-retry/stop scenarios remain separate.
 
 ## Constraints
 
