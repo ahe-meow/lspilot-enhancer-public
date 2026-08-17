@@ -6,11 +6,11 @@
 
 ## In progress
 
-- `v1.7.4-preview.25` candidate is built and statically verified with SHA-256 `596635b240f1b6733e54dabc784862e9afccf73edcbad702773f274779df9e5a`; it is not yet committed, published, or installed.
+- `v1.7.4-preview.25` is published, installed, enabled, scoped, and startup-verified. Manual request/usage/settings and automatic-retry/stop acceptance remains user-driven.
 
 ## Next
 
-- [ ] Commit, publish, and hash-verified install `v1.7.4-preview.25`.
+- [ ] Complete any remaining manual automatic-retry and stop-behavior acceptance separately.
 - [ ] Complete any remaining manual automatic-retry and stop-behavior acceptance separately.
 - [ ] Replace the private AAPT2 APK-container workaround when an arm64-compatible AGP 9.3 AAPT2 is available.
 

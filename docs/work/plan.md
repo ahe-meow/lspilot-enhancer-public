@@ -6,15 +6,13 @@
 
 ## Current phase
 
-Repository-side feature removal, package migration to `com.lspilot.enhancer`, conservative ABI discovery, and release verification are complete. The `1.7.4-preview.24` candidate keeps request/SSE available when retry discovery fails, rejects ambiguous request candidates, and stores request-only descriptors with cache schema `6`.
+Repository-side feature removal, package migration to `com.lspilot.enhancer`, conservative ABI discovery, and release verification are complete. The `1.7.4-preview.25` release keeps request/SSE available when retry discovery fails, rejects ambiguous request candidates, and stores request-only descriptors with cache schema `6`.
 
-The verified APK is published as GitHub pre-release `v1.7.4-preview.24`, installed as `com.lspilot.enhancer`, enabled in LSPosed, and scoped to `me.yun.lspilot`. Source, private stage, `/data/local/tmp`, installed `base.apk`, and re-downloaded release asset all match SHA-256 `51e0c3c044ee1f79a4b93ac5e6c6767e2a22cb81c5dd96ac2a1086fd7f7928aa`.
-
-The `v1.7.4-preview.25` candidate is built with version code `62`, SHA-256 `596635b240f1b6733e54dabc784862e9afccf73edcbad702773f274779df9e5a`, valid APK structure, v2 signature, and lint results. It is not yet committed, published, or installed.
+The verified APK is published as GitHub pre-release `v1.7.4-preview.25`, installed as `com.lspilot.enhancer`, enabled in LSPosed, and scoped to `me.yun.lspilot`. Source, Termux-private stage, `/data/local/tmp`, installed `base.apk`, and re-downloaded release asset all match SHA-256 `596635b240f1b6733e54dabc784862e9afccf73edcbad702773f274779df9e5a`.
 
 Two cold starts passed: the first rebuilt cache schema `6`, and the second logged `cache_hit`, `provider=zj8`, `requestBody=true`, `sseUsage=true`, and installed retry/settings hooks.
 
-The current unreleased source applies the selected `reasoning_effort` to every non-empty model name instead of only `gpt-5.6-sol`; Java compilation and the Dalvik policy check pass. The installed `v1.7.4-preview.24` artifact predates this change. Publishing/installing a later preview and user-driven request/usage/settings plus retry/stop scenarios remain separate work.
+The current source and installed `v1.7.4-preview.25` apply the selected `reasoning_effort` to every non-empty model name instead of only `gpt-5.6-sol`; Java compilation, focused Dalvik checks, and installed-host startup verification pass. User-driven request/usage/settings plus retry/stop scenarios remain separate.
 
 ## Execution order
 

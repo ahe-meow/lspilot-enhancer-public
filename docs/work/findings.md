@@ -6,35 +6,33 @@
 
 ## Source state
 
-- Branch: `main`; HEAD before this work: `4e7a212`.
+- Branch: `main`; release commit: `4b0724eda6d5cb9dee39f3dbd1aaffd28881ab7e`.
 - Module identity uses `com.lspilot.enhancer`; the exact preview artifact is installed, enabled, and scoped to `me.yun.lspilot` in LSPosed.
 - Context compression was explicitly removed from production source, chat UI, settings, tests, and active documentation.
 - Removed legacy preference keys and stored summary-record prefixes are cleaned from host-local module preferences during initialization; other settings are untouched.
 - Retained features are Prompt Cache policy, compatible retention, usage reporting, reasoning effort, diagnostics, and bounded automatic retries.
-- Unreleased source applies the configured `reasoning_effort` to every non-empty model name. Blank or missing model names remain unchanged; the installed `v1.7.4-preview.24` artifact still contains the prior `gpt-5.6-sol` restriction.
-- Candidate `v1.7.4-preview.25` uses version code `62`; it is built but not yet published or installed.
+- Current source and installed `v1.7.4-preview.25` apply the configured `reasoning_effort` to every non-empty model name. Blank or missing model names remain unchanged.
 - DexKit runtime packaging was removed. Runtime discovery uses platform `dalvik.system.DexFile` to avoid colliding with the host's DexKit/JNI state.
 
 ## Repository verification — 2026-08-17
 
 - Source/package migration to `com.lspilot.enhancer` is complete.
-- With JDK 17 and the documented arm64 AAPT2 flags, the final `1.7.4-preview.24` release assembly, test compilation, and lint succeeded in 33s.
-- APK `app/build/outputs/apk/release/app-release.apk` is 697,879 bytes with SHA-256 `51e0c3c044ee1f79a4b93ac5e6c6767e2a22cb81c5dd96ac2a1086fd7f7928aa`.
-- `aapt2 dump badging` reports package `com.lspilot.enhancer`, version code `61`, and version name `1.7.4-preview.24`; ZIP integrity, APK v2 signature, required Xposed entries, retired-feature markers, and `git diff --check` passed.
+- With JDK 17 and the documented arm64 AAPT2 flags, the `1.7.4-preview.25` release assembly and lint succeeded in 41s.
+- APK `app/build/outputs/apk/release/app-release.apk` is 697,823 bytes with SHA-256 `596635b240f1b6733e54dabc784862e9afccf73edcbad702773f274779df9e5a`.
+- `aapt2 dump badging` reports package `com.lspilot.enhancer`, version code `62`, and version name `1.7.4-preview.25`; ZIP integrity, required Xposed entries, APK v2 signature, signer continuity, DEX markers, `git diff --check`, pi-lens, and LSP diagnostics passed.
 - `RequestGroupIsolationCheck`, `HostUpdateDetectionCheck`, `AutoRetryManagerCheck`, `PromptCachePolicy`, and the released `ReasoningPolicy` passed on Dalvik.
 - The unreleased all-model reasoning policy, strict SHA-256 fallback, and non-initializing class-loader cleanup passed release/debug/test Java compilation in 27s plus the assertion-enabled Dalvik checks.
 - Candidate APK `app/build/outputs/apk/release/app-release.apk` is 697,823 bytes with SHA-256 `596635b240f1b6733e54dabc784862e9afccf73edcbad702773f274779df9e5a`; badging reports `com.lspilot.enhancer`, version code `62`, and version name `1.7.4-preview.25`. ZIP integrity, required Xposed entries, v2 signature, signer continuity, lint, DEX marker checks, and standalone Dalvik checks passed. `HostStateRestoreCheck` requires an Android main Looper and is deferred to installed-host runtime verification.
 - The three pi-lens `unsafe-reflection` findings were removed by replacing equivalent `Class.forName(name, false, loader)` calls with `ClassLoader.loadClass(name)`. A final pi-lens session scan reports no issues; LSP reports no diagnostics for `HostAbi.java` and `DexAbiScanner.java`.
-- GitHub pre-release `v1.7.4-preview.24` is published at <https://github.com/ahe-meow/lspilot-enhancer-public/releases/tag/v1.7.4-preview.24>. Re-downloading `LSPilot-Enhancer-v1.7.4-preview.24.apk` reproduced SHA-256 `51e0c3c044ee1f79a4b93ac5e6c6767e2a22cb81c5dd96ac2a1086fd7f7928aa`.
+- GitHub pre-release `v1.7.4-preview.25` is published at <https://github.com/ahe-meow/lspilot-enhancer-public/releases/tag/v1.7.4-preview.25>. The downloaded asset is 697,823 bytes and reproduces SHA-256 `596635b240f1b6733e54dabc784862e9afccf73edcbad702773f274779df9e5a`.
 
 ## Device runtime verification — 2026-08-17
 
 - KernelSU RunCommandService reported Android `uid=0(root)` with SELinux domain `u:r:ksu:s0`.
-- Source, Termux-private stage, `/data/local/tmp`, and installed `base.apk` all match SHA-256 `51e0c3c044ee1f79a4b93ac5e6c6767e2a22cb81c5dd96ac2a1086fd7f7928aa`; the installed package reports version code `61` and version name `1.7.4-preview.24`.
+- Source, Termux-private stage, `/data/local/tmp`, and installed `base.apk` all match SHA-256 `596635b240f1b6733e54dabc784862e9afccf73edcbad702773f274779df9e5a`; the installed package reports version code `62` and version name `1.7.4-preview.25`.
 - LSPosed automatically registered the new package at the installed APK path. State is `enabled=1`, `scope_request_blocked=0`, scope is exactly `me.yun.lspilot`, and `pragma integrity_check` returned `ok`.
 - The installed host remains SHA-256 `af2283a2978ea650986988ac3d9c01a39474cdd6410d30b842dd8f15e686149c`.
-- First cold start logged `cache_schema_changed`, stored schema `6`, resolved `provider=zj8`, and installed request/SSE/retry/settings hooks.
-- Second cold start logged `Host ABI resolution reason=cache_hit`, `provider=zj8`, `requestBody=true`, `sseUsage=true`, `Auto retry hooks installed`, and `LSPilotEnhancer loaded version=1.7.4-preview.24 (61)`.
+- First cold start after installation logged the module replacement transition; the subsequent cold start logged `Host ABI resolution reason=cache_hit`, `provider=zj8`, `requestBody=true`, `sseUsage=true`, `Auto retry hooks installed`, and `LSPilotEnhancer loaded version=1.7.4-preview.25 (62)`.
 - Manual request/usage/settings and automatic-retry/stop scenarios remain user-driven and are not claimed from startup logs.
 
 ## Git ownership recovery — 2026-08-17
