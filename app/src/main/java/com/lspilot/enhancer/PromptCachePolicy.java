@@ -16,6 +16,10 @@ public final class PromptCachePolicy {
         return normalize(model).startsWith("gpt-5.6");
     }
 
+    static boolean supportsRetention(String model) {
+        return !normalize(model).isEmpty();
+    }
+
     static int applyExplicitBreakpoints(JSONObject body) throws Exception {
         JSONArray messages = body.optJSONArray("messages");
         if (messages == null || messages.length() == 0) {
@@ -126,6 +130,10 @@ public final class PromptCachePolicy {
     }
 
     public static void main(String[] args) throws Exception {
+        check(supportsRetention("gpt-4o"), "GPT retention missing");
+        check(supportsRetention("claude-3-7-sonnet"), "non-GPT retention missing");
+        check(!supportsRetention(" "), "blank model retention must stay disabled");
+
         JSONObject body = new JSONObject().put("prompt_cache_retention", "24h");
         JSONArray messages = new JSONArray()
                 .put(message("system", "instructions"))

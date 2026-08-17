@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 1.7.4-preview.26
+
+- Remove automatic retry, including retry/stop/session/repository hooks, host StateFlow message replacement, repository persistence, and retry-specific ABI discovery/cache fields.
+- Apply the 24-hour Prompt Cache retention fallback to every named model request instead of using model-family whitelists.
+
 ## 1.7.4-preview.25
 
 - Apply the configured reasoning effort to every named model instead of only `gpt-5.6-sol`; retain the reasoning SSE compatibility normalization.

@@ -144,7 +144,7 @@ final class InjectedUiController {
                 "按模型与系统提示词生成无明文 prompt_cache_key",
                 ModuleSettings.KEY_CACHE_KEY, ModuleSettings.isCacheKeyEnabled());
         Switch retention = addSwitch(content, activity, "24 小时缓存保留",
-                "仅对白名单中的 GPT-4.1、GPT-5、o1/o3/o4 系列启用",
+                "适用于所有具名模型请求",
                 ModuleSettings.KEY_RETENTION, ModuleSettings.isRetentionEnabled());
         Switch usage = addSwitch(content, activity, "请求缓存用量统计",
                 "让流式响应返回 cached_tokens 等 usage 信息",

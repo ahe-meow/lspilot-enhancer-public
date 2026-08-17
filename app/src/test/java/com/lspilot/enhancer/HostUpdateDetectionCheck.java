@@ -32,7 +32,7 @@ public final class HostUpdateDetectionCheck {
         }
 
         JSONObject cached = new JSONObject()
-                .put("schema", 6)
+                .put("schema", 7)
                 .put("hostFingerprint", "old-host-content")
                 .put("moduleVersionCode", BuildConfig.VERSION_CODE)
                 .put("fingerprint", "old-composite")
@@ -46,7 +46,7 @@ public final class HostUpdateDetectionCheck {
                 HostAbiCache.rebuildReason(cached, "new-host-content", "new-composite"),
                 "unchanged content must keep the cache");
 
-        cached.put("schema", 5);
+        cached.put("schema", 6);
         assertEquals("cache_schema_changed",
                 HostAbiCache.rebuildReason(cached, "new-host-content", "new-composite"),
                 "scanner schema change must invalidate cache");

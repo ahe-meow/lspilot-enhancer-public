@@ -13,7 +13,6 @@ import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
-import java.util.List;
 import java.util.Locale;
 
 import io.github.libxposed.api.XposedModule;
@@ -69,9 +68,7 @@ public final class LSPilotEnhancerModule extends XposedModule {
             }
             log(Log.INFO, TAG, "Resolved LSPilot host ABI minified=" + abi.minified
                     + " provider=" + abi.providerClass.getName()
-                    + " config=" + abi.configClass.getName()
-                    + " viewModel=" + (abi.viewModelClass == null
-                            ? "unavailable" : abi.viewModelClass.getName()));
+                    + " config=" + abi.configClass.getName());
         } catch (Throwable error) {
             ModuleSettings.disableSettings("宿主 ABI 解析失败：" + shortError(error),
                     ModuleSettings.KEY_ENABLED,
@@ -86,9 +83,6 @@ public final class LSPilotEnhancerModule extends XposedModule {
         boolean sseUsageHook = installSseUsageHook(abi);
         applyStartupProbe(probe, sseUsageHook, abi);
         installUiHooks(loader, dexPaths);
-        installChatViewModelHook(loader, abi);
-        installAutoRetryHooks(abi);
-        installUserSendHook(abi);
         log(Log.INFO, TAG,
                 "LSPilotEnhancer loaded version=" + BuildConfig.VERSION_NAME
                         + " (" + BuildConfig.VERSION_CODE + ") dexkit-free-abi");
@@ -114,7 +108,6 @@ public final class LSPilotEnhancerModule extends XposedModule {
     private StartupProbe installRequestHook(ClassLoader loader, HostAbi abi) {
         StartupProbe probe = new StartupProbe();
         if (abi.minified) {
-            if (abi.streamMessagesMethod != null) installMinifiedStreamHook(abi);
             probe.requestBody = installMinifiedRequestBodyHook(abi);
             InjectedUiController.setRequestHookInstalled(probe.requestBody);
             return probe;
@@ -164,8 +157,9 @@ public final class LSPilotEnhancerModule extends XposedModule {
                 && ModuleSettings.isCacheKeyEnabled();
         boolean explicitCacheEnabled = cacheKeyEnabled
                 && PromptCachePolicy.supportsExplicitBreakpoints(model);
-        boolean retentionEnabled = policyEnabled && openAiModel && !explicitCacheEnabled
-                && ModuleSettings.isRetentionEnabled() && supportsExtendedRetention(model);
+        boolean retentionEnabled = policyEnabled
+                && PromptCachePolicy.supportsRetention(model) && !explicitCacheEnabled
+                && ModuleSettings.isRetentionEnabled();
         boolean usageEnabled = policyEnabled && ModuleSettings.isIncludeUsageEnabled();
         String cacheKey = openAiModel
                 ? buildCacheKey(model, cacheIdentity(body, systemPrompt)) : "not-applicable";
@@ -236,142 +230,6 @@ public final class LSPilotEnhancerModule extends XposedModule {
             log(Log.ERROR, TAG, "Failed to install minified cache request hook", error);
             return false;
         }
-    }
-
-    private boolean installMinifiedStreamHook(HostAbi abi) {
-        try {
-            Method streamMessages = abi.streamMessagesMethod;
-            hook(streamMessages).intercept(chain -> {
-                Object viewModel = chain.getThisObject();
-                String chatId = abi.currentChatId(viewModel);
-                Object rawMessages = chain.getArg(1);
-                Object[] args = chain.getArgs().toArray();
-                List<?> messages = rawMessages instanceof List ? (List<?>) rawMessages : null;
-                if (messages != null) {
-                    List<?> retryRequest = AutoRetryManager.retryRequestMessages(
-                            abi, viewModel, chatId, messages);
-                    boolean customRetry = retryRequest != null;
-                    if (customRetry) {
-                        messages = retryRequest;
-                        log(Log.WARN, TAG, "auto retry request starts before failed assistant"
-                                + " requestMessages=" + messages.size());
-                    } else {
-                        AutoRetryManager.captureAttemptMessages(viewModel, chatId, messages);
-                        List<?> restored = AutoRetryManager.restoreAttemptMessages(
-                                viewModel, chatId, messages);
-                        if (restored != messages) {
-                            messages = restored;
-                            log(Log.WARN, TAG, "auto retry restored original stream context messages="
-                                    + messages.size());
-                        }
-                    }
-                    if (messages != rawMessages) {
-                        args[1] = messages;
-                    }
-                }
-                args[2] = AutoRetryManager.wrapStreamCallback(
-                        chain.getArg(2), viewModel, chatId, abi);
-                return chain.proceed(args);
-            });
-            InjectedUiController.setRequestHookInstalled(true);
-            log(Log.INFO, TAG, "Adaptive stream/retry hook installed for "
-                    + streamMessages.getDeclaringClass().getName() + "#" + streamMessages.getName());
-            return true;
-        } catch (Throwable error) {
-            InjectedUiController.setRequestHookInstalled(false);
-            log(Log.ERROR, TAG, "Failed to install minified stream/retry hook", error);
-            return false;
-        }
-    }
-
-    private void installAutoRetryHooks(HostAbi abi) {
-        if (!abi.hasRetryAbi()) {
-            log(Log.WARN, TAG, "Auto retry ABI incomplete; retry hooks disabled");
-            return;
-        }
-        Method retryResponse = abi.retryResponseMethod;
-        Method stopGeneration = abi.stopGenerationMethod;
-        AutoRetryManager.configure(retryResponse);
-
-        if (!abi.minified) installNamedStreamRetryHook(abi);
-        if (retryResponse == null || stopGeneration == null) {
-            log(Log.ERROR, TAG, "Auto retry control ABI unavailable retry="
-                    + (retryResponse != null) + " stop=" + (stopGeneration != null));
-            return;
-        }
-
-        try {
-            hook(retryResponse).intercept(chain -> {
-                Object viewModel = chain.getThisObject();
-                String chatId = currentChatId(abi, viewModel);
-                if (!AutoRetryManager.isInternalRetry()) {
-                    AutoRetryManager.beginTurn(viewModel, chatId);
-                    AutoRetryManager.setRetryMethod(viewModel, retryResponse);
-                    return chain.proceed();
-                }
-                AutoRetryManager.prepareHostRetry(abi, viewModel, chatId);
-                try {
-                    return chain.proceed();
-                } catch (Throwable error) {
-                    AutoRetryManager.restoreHostRetry(abi, viewModel, chatId);
-                    throw error;
-                }
-            });
-            hook(stopGeneration).intercept(chain -> {
-                Object viewModel = chain.getThisObject();
-                AutoRetryManager.cancelForStop(viewModel, currentChatId(abi, viewModel));
-                return chain.proceed();
-            });
-            hook(abi.repositoryAddMessageMethod).intercept(chain -> {
-                String chatId = String.valueOf(chain.getArg(0));
-                Object message = chain.getArg(1);
-                Object result = chain.proceed();
-                AutoRetryManager.onRepositoryMessage(abi, chatId,
-                        abi.messageRole(message), abi.messageContent(message), message);
-                return result;
-            });
-            log(Log.INFO, TAG, "Auto retry hooks installed retry="
-                    + retryResponse.getName() + " stop=" + stopGeneration.getName()
-                    + " delays=5s,10s,30s,2m,5m");
-        } catch (Throwable error) {
-            log(Log.ERROR, TAG, "Failed to install auto retry control hooks", error);
-        }
-    }
-
-    private boolean installNamedStreamRetryHook(HostAbi abi) {
-        try {
-            Method streamMessages = abi.streamMessagesMethod;
-            hook(streamMessages).intercept(chain -> {
-                Object viewModel = chain.getThisObject();
-                Object[] args = chain.getArgs().toArray();
-                String chatId = currentChatId(abi, viewModel);
-                Object rawMessages = chain.getArg(1);
-                if (rawMessages instanceof List) {
-                    List<?> messages = (List<?>) rawMessages;
-                    AutoRetryManager.captureAttemptMessages(viewModel, chatId, messages);
-                    List<?> restored = AutoRetryManager.restoreAttemptMessages(
-                            viewModel, chatId, messages);
-                    if (restored != messages) {
-                        args[1] = restored;
-                        log(Log.WARN, TAG, "auto retry restored named stream context messages="
-                                + restored.size());
-                    }
-                }
-                args[2] = AutoRetryManager.wrapStreamCallback(
-                        chain.getArg(2), viewModel, chatId, abi);
-                return chain.proceed(args);
-            });
-            log(Log.INFO, TAG, "Named stream retry hook installed for "
-                    + streamMessages.getDeclaringClass().getName() + "#" + streamMessages.getName());
-            return true;
-        } catch (Throwable error) {
-            log(Log.ERROR, TAG, "Failed to install named stream retry hook", error);
-            return false;
-        }
-    }
-
-    private static String currentChatId(HostAbi abi, Object viewModel) {
-        return abi.currentChatId(viewModel);
     }
 
     private boolean installSseUsageHook(HostAbi abi) {
@@ -507,43 +365,6 @@ public final class LSPilotEnhancerModule extends XposedModule {
             log(Log.INFO, TAG, "SubScreenActivity absent; using MainActivity overlay");
         } catch (Throwable error) {
             log(Log.ERROR, TAG, "Failed to install SubScreenActivity.onCreate hook", error);
-        }
-    }
-
-    private void installChatViewModelHook(ClassLoader loader, HostAbi abi) {
-        if (abi.loadSessionMethod == null) {
-            log(Log.WARN, TAG, "Load-session ABI unavailable; chat retry hook disabled");
-            return;
-        }
-        try {
-            Method loadSession = abi.loadSessionMethod;
-            hook(loadSession).intercept(chain -> {
-                Object viewModel = chain.getThisObject();
-                String chatId = (String) chain.getArg(1);
-                AutoRetryManager.onChatLoaded(viewModel, chatId);
-                return chain.proceed();
-            });
-            log(Log.INFO, TAG, "AiChatViewModel.loadSession hook installed");
-        } catch (Throwable error) {
-            log(Log.ERROR, TAG, "Failed to install AiChatViewModel.loadSession hook", error);
-        }
-    }
-
-    private void installUserSendHook(HostAbi abi) {
-        if (abi.sendMessageMethod == null) {
-            log(Log.WARN, TAG, "Send-message ABI unavailable; user-send retry hook disabled");
-            return;
-        }
-        try {
-            Method sendMessage = abi.sendMessageMethod;
-            hook(sendMessage).intercept(chain -> {
-                Object viewModel = chain.getThisObject();
-                AutoRetryManager.onUserSend(viewModel, currentChatId(abi, viewModel));
-                return chain.proceed();
-            });
-            log(Log.INFO, TAG, "AiChatViewModel.sendMessage retry hook installed");
-        } catch (Throwable error) {
-            log(Log.ERROR, TAG, "Failed to install user-send hook", error);
         }
     }
 
@@ -737,15 +558,6 @@ public final class LSPilotEnhancerModule extends XposedModule {
         return value.startsWith("gpt-")
                 || value.startsWith("chatgpt-")
                 || value.matches("o[134](-.*)?");
-    }
-
-    private static boolean supportsExtendedRetention(String model) {
-        String value = normalize(model);
-        return value.startsWith("gpt-4.1")
-                || value.startsWith("gpt-5")
-                || value.startsWith("o1")
-                || value.startsWith("o3")
-                || value.startsWith("o4");
     }
 
     private static String normalize(String value) {

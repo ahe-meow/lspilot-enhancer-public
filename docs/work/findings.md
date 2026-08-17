@@ -10,8 +10,9 @@
 - Module identity uses `com.lspilot.enhancer`; the exact preview artifact is installed, enabled, and scoped to `me.yun.lspilot` in LSPosed.
 - Context compression was explicitly removed from production source, chat UI, settings, tests, and active documentation.
 - Removed legacy preference keys and stored summary-record prefixes are cleaned from host-local module preferences during initialization; other settings are untouched.
-- Retained features are Prompt Cache policy, compatible retention, usage reporting, reasoning effort, diagnostics, and bounded automatic retries.
+- Retained features are Prompt Cache policy, compatible retention, usage reporting, reasoning effort, diagnostics, and settings UI. Automatic retry and its host-context writes are removed from unreleased source.
 - Current source and installed `v1.7.4-preview.25` apply the configured `reasoning_effort` to every non-empty model name. Blank or missing model names remain unchanged.
+- Unreleased source applies `prompt_cache_retention=24h` to every non-empty model name rather than GPT/o-series whitelists; blank models remain unchanged and GPT-5.6 explicit breakpoints still take precedence. Installed `v1.7.4-preview.25` does not include this retention change.
 - DexKit runtime packaging was removed. Runtime discovery uses platform `dalvik.system.DexFile` to avoid colliding with the host's DexKit/JNI state.
 
 ## Repository verification — 2026-08-17
@@ -20,9 +21,13 @@
 - With JDK 17 and the documented arm64 AAPT2 flags, the `1.7.4-preview.25` release assembly and lint succeeded in 41s.
 - APK `app/build/outputs/apk/release/app-release.apk` is 697,823 bytes with SHA-256 `596635b240f1b6733e54dabc784862e9afccf73edcbad702773f274779df9e5a`.
 - `aapt2 dump badging` reports package `com.lspilot.enhancer`, version code `62`, and version name `1.7.4-preview.25`; ZIP integrity, required Xposed entries, APK v2 signature, signer continuity, DEX markers, `git diff --check`, pi-lens, and LSP diagnostics passed.
-- `RequestGroupIsolationCheck`, `HostUpdateDetectionCheck`, `AutoRetryManagerCheck`, `PromptCachePolicy`, and the released `ReasoningPolicy` passed on Dalvik.
+- `RequestAbiCheck`, `HostUpdateDetectionCheck`, `PromptCachePolicy`, and `ReasoningPolicy` cover the retained request/SSE and policy paths; retry-only checks are removed with the feature.
 - The unreleased all-model reasoning policy, strict SHA-256 fallback, and non-initializing class-loader cleanup passed release/debug/test Java compilation in 27s plus the assertion-enabled Dalvik checks.
 - Candidate APK `app/build/outputs/apk/release/app-release.apk` is 697,823 bytes with SHA-256 `596635b240f1b6733e54dabc784862e9afccf73edcbad702773f274779df9e5a`; badging reports `com.lspilot.enhancer`, version code `62`, and version name `1.7.4-preview.25`. ZIP integrity, required Xposed entries, v2 signature, signer continuity, lint, DEX marker checks, and standalone Dalvik checks passed. `HostStateRestoreCheck` requires an Android main Looper and is deferred to installed-host runtime verification.
+- Current unreleased source contains no automatic retry manager, retry/stop/session/stream/repository hooks, StateFlow message replacement, repository message persistence, or retry-specific ABI descriptor fields. The request ABI cache schema is `7`.
+- The `1.7.4-preview.26` release build, lint, test compilation, LSP and pi-lens checks passed in 33s. `RequestAbiCheck`, `HostUpdateDetectionCheck`, `PromptCachePolicy`, and `ReasoningPolicy` passed on Dalvik.
+- The `1.7.4-preview.26` candidate APK is 675,895 bytes with SHA-256 `7051672f6a2335927abf3cc5bb1e4af7ec70f897bec921a9e7553fb564397e73`; badging reports version code `63`, ZIP integrity and v2 signature pass, and DEX marker scans confirm no automatic-retry classes or host-context write symbols. It is not yet published or installed.
+- The unreleased all-model retention policy passed release/debug Java compilation in 28s, pi-lens, LSP diagnostics, and the persistent Dalvik `PromptCachePolicy` check for GPT, Claude, blank-model rejection, and explicit-breakpoint precedence.
 - The three pi-lens `unsafe-reflection` findings were removed by replacing equivalent `Class.forName(name, false, loader)` calls with `ClassLoader.loadClass(name)`. A final pi-lens session scan reports no issues; LSP reports no diagnostics for `HostAbi.java` and `DexAbiScanner.java`.
 - GitHub pre-release `v1.7.4-preview.25` is published at <https://github.com/ahe-meow/lspilot-enhancer-public/releases/tag/v1.7.4-preview.25>. The downloaded asset is 697,823 bytes and reproduces SHA-256 `596635b240f1b6733e54dabc784862e9afccf73edcbad702773f274779df9e5a`.
 
@@ -33,7 +38,16 @@
 - LSPosed automatically registered the new package at the installed APK path. State is `enabled=1`, `scope_request_blocked=0`, scope is exactly `me.yun.lspilot`, and `pragma integrity_check` returned `ok`.
 - The installed host remains SHA-256 `af2283a2978ea650986988ac3d9c01a39474cdd6410d30b842dd8f15e686149c`.
 - First cold start after installation logged the module replacement transition; the subsequent cold start logged `Host ABI resolution reason=cache_hit`, `provider=zj8`, `requestBody=true`, `sseUsage=true`, `Auto retry hooks installed`, and `LSPilotEnhancer loaded version=1.7.4-preview.25 (62)`.
-- Manual request/usage/settings and automatic-retry/stop scenarios remain user-driven and are not claimed from startup logs.
+- Manual request/usage/settings scenarios remain user-driven and are not claimed from startup logs. Automatic retry acceptance is no longer applicable to current source.
+
+## Host context audit — 2026-08-17
+
+- Normal request enhancement modifies a newly parsed outbound JSON string, not the host message `List` or chat database directly. GPT-5.6 explicit cache mode changes the outbound JSON message-content shape while preserving text.
+- Installed `v1.7.4-preview.25` still contains the historical automatic-retry host-context write path. Current unreleased source removes that feature and no longer discovers or invokes host ViewModel StateFlow, retry/session/stream methods, message accessors, or repository message methods.
+- Production source contains no direct Room, SQLite, `android.database`, `ContentResolver`, chat-database file API, or indirect host repository persistence path.
+- SSE `reasoning` normalization remains active independently of the request master switch.
+- The module also writes its own host-private SharedPreferences, ABI descriptor cache, and optional diagnostic log; it injects a settings entry/dialog. No active context compression or summary generation remains, but initialization deletes legacy compression/summary preference keys.
+- Current unreleased all-model retention sends `prompt_cache_retention=24h` for every non-empty model request. If the upstream accepts it, external context retention expands to those models; actual provider storage is outside this repository and unverified.
 
 ## Git ownership recovery — 2026-08-17
 
@@ -54,7 +68,8 @@
 
 - Current request/SSE: `zj8.p(cb,List,String,boolean):String` and `zj8.t(String,Function1):boolean`
 - Compatibility request/SSE profiles: `xj8` for `d4eb3066...f5d56` and `vj8` for `b6ea30f6...debe`, with the same method shapes.
-- ViewModel/retry: `va.w(cb,List,Function1):void`, `va.F`, `va.P`, `va.J`, `va.Q`
+- Host retry/ViewModel/state/message/repository mappings below are historical compatibility evidence only; unreleased source no longer discovers or hooks them.
+- Historical ViewModel/retry: `va.w(cb,List,Function1):void`, `va.F`, `va.P`, `va.J`, `va.Q`
 - State/session: `va.b:sk7 -> oa`, `oa.e():List`, `oa.j():na`, `na.d():String`
 - Message: `u7`; ID `f()`, role `i()`, content `c()`
 - Repository singleton: `me.yun.lspilot.data.repository.b`; add/replace `c(String,u7)` / `r(String,List)`
@@ -65,8 +80,8 @@
 
 - Candidate resolution enumerates coherent combinations and rejects zero or ambiguous winners.
 - Known minified profiles are attempted conservatively (`vj8`, then `xj8`) before structural DEX fallback.
-- Descriptor caching is schema `6`, hashes every base/split APK, and records `host_update` / `host_and_module_update` before DEX self-adaptation.
-- Structural discovery resolves request/SSE first. Missing or ambiguous retry candidates produce a cacheable request-only descriptor instead of disabling request caching; request/SSE ambiguity still rejects the request group.
+- Descriptor caching is schema `7`, hashes every base/split APK, and stores request/SSE ABI only.
+- Structural discovery resolves a unique coherent request/SSE candidate and rejects zero or ambiguous matches.
 - Cached evidence does not yet include per-group candidate scores or a durable ambiguity result.
 
 - Historical predecessor-package runtime evidence (2026-08-17): host update adaptation passed Java 17 compilation, D8, Dalvik (`HostUpdateDetectionCheck: PASS`, `LegacyContextRepairCheck` exit 0), release assembly, `git diff --check`, APK ZIP/signature/DEX-marker checks, and private hash-verified install. The recorded module hash and subsequent startup logs are historical and do not establish installation of `com.lspilot.enhancer`.

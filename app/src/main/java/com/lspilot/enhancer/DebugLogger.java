@@ -49,18 +49,6 @@ final class DebugLogger {
         write(Log.ERROR, message, error, true);
     }
 
-    static String redact(String value) {
-        if (value == null) return "null";
-        String compact = value.replace('\n', ' ').replace('\r', ' ');
-        if (compact.length() <= 160) return compact;
-        return compact.substring(0, 157) + "...";
-    }
-
-    static String id(String value) {
-        if (value == null || value.isEmpty()) return "none";
-        return Integer.toHexString(value.hashCode());
-    }
-
     private static void write(int priority, String message, Throwable error, boolean force) {
         boolean enabled = force || ModuleSettings.isDebugLogEnabled();
         if (!enabled) {

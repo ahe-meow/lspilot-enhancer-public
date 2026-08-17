@@ -11,14 +11,14 @@
 - Inspect `git status` before changes and preserve unrelated tracked or untracked files.
 - Module package: `com.lspilot.enhancer`
 - Host package: `me.yun.lspilot`
-- Android treats the module identity as a new package. GitHub pre-release `v1.7.4-preview.24` is published, installed, enabled, scoped, and hash-verified.
-- Current source and installed `v1.7.4-preview.25` apply reasoning effort to every non-empty model name; the APK is published, installed, enabled, scoped, and startup-verified.
+- Android treats the module identity as a new package. GitHub pre-release `v1.7.4-preview.25` is published, installed, enabled, scoped, and hash-verified.
+- Current `v1.7.4-preview.26` candidate applies reasoning effort and 24-hour retention to every non-empty model name, and removes automatic retry/context writes. Installed `v1.7.4-preview.25` includes only the all-model reasoning change.
 
 ## Active objective
 
-Keep only request caching, usage, reasoning, diagnostics, and automatic retry. Context compression, its chat UI, settings, summaries, state machine, persistence, tests, and architecture document have been removed.
+Keep only request caching, usage, reasoning, diagnostics, and settings UI. Context compression and automatic retry—including host message-state replacement and repository persistence—are removed from current source.
 
-Preserve conservative DEX adaptation with independent request/SSE and retry capability groups, unique coherent candidate selection, ambiguity failure, and host-content-hash descriptor caching.
+Preserve conservative request/SSE DEX adaptation, unique coherent candidate selection, ambiguity failure, and host-content-hash descriptor caching.
 
 ## Current host
 
@@ -28,24 +28,14 @@ Preserve conservative DEX adaptation with independent request/SSE and retry capa
 - MT2 workspace: `rvlxvm8q`
 - Earlier staged profile: `b6ea30f6...debe`, workspace `g66o2a9l`
 
-Verified current mappings:
+Verified request/SSE mappings used by current source:
 
 ```text
 request: zj8.p(cb, List, String, boolean) -> String
 SSE:     zj8.t(String, Function1) -> boolean
-stream:  va.w(cb, List, Function1) -> void
-load:    va.F(String, String, Context) -> void
-send:    va.P() -> void
-retry:   va.J() -> void
-stop:    va.Q() -> void
-state:   va.b:sk7 -> oa
-session: oa.j() -> na; na.d() -> String
-messages: oa.e() -> List
-message: u7; id=f(), role=i(), content=c()
-repo: me.yun.lspilot.data.repository.b
-add:  b.c(String, u7) -> void
-replace: b.r(String, List) -> void
 ```
+
+The host's `va` ViewModel, retry/session/state/message and repository mappings are historical evidence only; current source no longer discovers, caches, or hooks them.
 
 The current update resolved provider `zj8`; the previous `d4eb3066...f5d56` host used `xj8`, and the earlier `b6ea30f6...debe` host used `vj8`. The resolver now prefers structural DEX discovery on a content change and caches the validated descriptor afterward.
 
@@ -70,11 +60,12 @@ The current update resolved provider `zj8`; the previous `d4eb3066...f5d56` host
 - Detects host content changes at every `onPackageReady` startup, independent of version name/code.
 - Invalidates stale descriptors before hook installation and runs structural `dalvik.system.DexFile` adaptation only for first start or changed host content.
 - Historical predecessor final artifact/runtime evidence: module APK `69c25122d70e97bb506712ea3b611a463eef43fdf4f16105f6d13eedeb5a53a6` was staged through `/data/data/com.termux/files/usr/tmp` and `/data/local/tmp`; all hashes matched. Final startup logged `Host ABI resolution reason=cache_hit`, `provider=zj8`, `requestBody=true`, and `sseUsage=true`.
-- Request/SSE discovery now survives missing or ambiguous retry endpoints, request-only descriptors round-trip under cache schema `6`, and raw SSE content is not logged.
+- Removed automatic retry manager/policy, retry/stop/session/stream/repository hooks, host StateFlow writes, repository message persistence, retry ABI discovery/cache fields, and retry-only tests.
+- Reduced descriptor caching to request/SSE ABI schema `7`; raw SSE content is not logged.
 
 ## Next action
 
-Manual request/usage/settings and automatic-retry/stop scenarios remain separate user-driven acceptance.
+Publish/install a later preview if the automatic-retry removal and all-model 24-hour retention change should reach the device. Manual request/usage/settings acceptance remains user-driven.
 
 ## Constraints
 

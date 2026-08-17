@@ -11,14 +11,14 @@ Ship a cache-focused LSPilot LSPosed module that adapts conservatively to the cu
 ## In scope
 
 - Prompt cache keys, explicit cache breakpoints, compatible retention, usage reporting, and reasoning effort.
-- Bounded automatic response retries and native stop cancellation.
-- Structural `DexFile` endpoint discovery with ambiguity rejection.
+- Structural `DexFile` request/SSE endpoint discovery with ambiguity rejection.
 - ABI descriptor caching by host APK and split-APK content hashes; changed content invalidates the cache before hooks and triggers structural DEX self-adaptation.
 - Read-only reverse engineering of host APKs and runtime evidence.
 
 ## Out of scope
 
 - Context compression, summaries, compacted baselines, compression status rows, chat overlays, or compression settings.
+- Automatic retry, host message-list replacement, or host repository persistence.
 - Patching, rebuilding, signing, or installing the host APK.
 - Guessing hook endpoints from strings alone.
 

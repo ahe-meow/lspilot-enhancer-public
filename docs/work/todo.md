@@ -6,16 +6,18 @@
 
 ## In progress
 
-- `v1.7.4-preview.25` is published, installed, enabled, scoped, and startup-verified. Manual request/usage/settings and automatic-retry/stop acceptance remains user-driven.
+- `v1.7.4-preview.26` candidate is built and statically verified with automatic retry/context writes removed and all-model 24-hour retention enabled. It is not yet published or installed; `v1.7.4-preview.25` remains active on the device.
 
 ## Next
 
-- [ ] Complete any remaining manual automatic-retry and stop-behavior acceptance separately.
-- [ ] Complete any remaining manual automatic-retry and stop-behavior acceptance separately.
+- [ ] Publish and install a later preview if the automatic-retry removal and all-model 24-hour retention change should reach the device.
+- [ ] Complete remaining manual request/usage/settings acceptance separately.
 - [ ] Replace the private AAPT2 APK-container workaround when an arm64-compatible AGP 9.3 AAPT2 is available.
 
 ## Completed
 
+- [x] Remove automatic retry, host retry/session/stream/repository hooks, StateFlow message replacement, repository persistence, retry ABI discovery/cache fields, and retry-only tests.
+- [x] Remove the 24-hour retention model-family whitelist; retain blank-model protection and explicit GPT-5.6 breakpoint precedence, then pass Java and Dalvik policy checks.
 - [x] Clear all three pi-lens `unsafe-reflection` warnings with equivalent non-initializing `ClassLoader.loadClass` calls; pass LSP, Java compilation, and focused Dalvik checks.
 - [x] Remove the `gpt-5.6-sol` reasoning-effort restriction for all non-empty model names; pass Java compilation and the Dalvik `ReasoningPolicy` check.
 - [x] Install `com.lspilot.enhancer` with SHA-256 `51e0c3c044ee1f79a4b93ac5e6c6767e2a22cb81c5dd96ac2a1086fd7f7928aa`; source, Termux-private stage, `/data/local/tmp`, and installed `base.apk` hashes match.
