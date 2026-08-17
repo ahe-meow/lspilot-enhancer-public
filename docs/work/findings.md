@@ -6,19 +6,20 @@
 
 ## Source state
 
-- Branch: `main`; latest released commit/tag: `5ac334b5369c915daaa3a940b36b4c74b72a2834` / `v1.7.4-preview.27`.
+- Branch: `main`; stable release commit/tag: `23bbcbbe476cb2685d1f1d57121af480993ee049` / `v1.7.4`.
 - Module identity uses `com.lspilot.enhancer`; the exact preview artifact is installed, enabled, and scoped to `me.yun.lspilot` in LSPosed.
 - Context compression was explicitly removed from production source, chat UI, settings, tests, and active documentation.
 - Removed legacy preference keys and stored summary-record prefixes are cleaned from host-local module preferences during initialization; other settings are untouched.
 - Retained features are Prompt Cache policy, compatible retention, usage reporting, reasoning effort, diagnostics, and settings UI. Automatic retry and its host-context writes are removed from source and the installed artifact.
 - Current source and installed `v1.7.4` apply the configured `reasoning_effort` and `prompt_cache_retention=24h` fallback to every non-empty model name. Blank models remain unchanged and GPT-5.6 explicit breakpoints take precedence.
-- The user accepted the locally installed `v1.7.4-preview.28` navigation and settings behavior on 2026-08-18. The exact stable `1.7.4 (66)` artifact is now built, installed, and runtime-verified pending publication.
+- The user accepted the locally installed `v1.7.4-preview.28` navigation and settings behavior on 2026-08-18. The exact stable `1.7.4 (66)` artifact is built, installed, runtime-verified, and published as a non-prerelease GitHub Release.
 - DexKit runtime packaging was removed. Runtime discovery uses platform `dalvik.system.DexFile` to avoid colliding with the host's DexKit/JNI state.
 
 ## Repository verification — 2026-08-18
 
 - Stable APK `app/build/outputs/apk/release/app-release.apk` is 678,659 bytes with SHA-256 `e3ba4ba5d7241c29a04923592996a67e91b8f2d90a2c1688add0880034972102`; badging reports package `com.lspilot.enhancer`, version code `66`, and version name `1.7.4`.
 - JDK 17 release assembly, lint, debug test compilation, `RequestAbiCheck`, `HostUpdateDetectionCheck`, `NativeSettingsNavigationCheck`, current-host `HostNativeSettingsAbiCheck`, APK ZIP/resources/Xposed entries, v2 signature, retained/forbidden DEX markers, LSP, pi-lens, and `git diff --check` pass.
+- Non-prerelease GitHub Release <https://github.com/ahe-meow/lspilot-enhancer-public/releases/tag/v1.7.4> points to tag commit `23bbcbbe476cb2685d1f1d57121af480993ee049`. Its uploaded and freshly downloaded asset `lspilot-enhancer-v1.7.4.apk` is 678,659 bytes and matches SHA-256 `e3ba4ba5d7241c29a04923592996a67e91b8f2d90a2c1688add0880034972102`.
 
 ## Historical repository verification — 2026-08-17
 

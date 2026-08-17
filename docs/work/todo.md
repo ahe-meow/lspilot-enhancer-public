@@ -6,15 +6,15 @@
 
 ## In progress
 
-- The exact accepted `1.7.4 (66)` stable APK is built, installed, and runtime-verified. Commit, tag `v1.7.4`, push, publish a non-prerelease GitHub Release, and verify the downloaded asset hash.
+- Replace the private AAPT2 APK-container workaround when an arm64-compatible AGP 9.3 AAPT2 is available.
 
 ## Next
 
-- [ ] Commit, tag `v1.7.4`, push, publish a non-prerelease GitHub Release, and verify the downloaded asset hash.
 - [ ] Replace the private AAPT2 APK-container workaround when an arm64-compatible AGP 9.3 AAPT2 is available.
 
 ## Completed
 
+- [x] Commit stable source, tag `v1.7.4`, push main/tag, publish a non-prerelease GitHub Release, and verify the downloaded 678,659-byte asset matches SHA-256 `e3ba4ba5d7241c29a04923592996a67e91b8f2d90a2c1688add0880034972102`.
 - [x] Receive explicit user acceptance for alternating About/module navigation, native settings layout/labels, and setting persistence.
 - [x] Build and install the exact `1.7.4 (66)` stable APK; verify release/lint, Dalvik/ABI checks, APK integrity/signature, four-stage SHA-256 equality, LSPosed state/scope/integrity, and two cold starts.
 - [x] Install the corrected uncommitted `preview.28` locally; verify source/private/staged/installed SHA-256 equality, LSPosed state/scope/integrity, complete first-start hooks, and two starts without Compose/FATAL errors.

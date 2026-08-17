@@ -7,13 +7,13 @@
 ## Repository
 
 - Branch: `main`
-- Latest released commit/tag: `5ac334b` / `v1.7.4-preview.27`
+- Stable release commit/tag: `23bbcbbe476cb2685d1f1d57121af480993ee049` / `v1.7.4`
 - Inspect `git status` before changes and preserve unrelated tracked or untracked files.
 - Module package: `com.lspilot.enhancer`
 - Host package: `me.yun.lspilot`
 - Android treats the module identity as a new package. GitHub pre-release `v1.7.4-preview.27` is published, installed, enabled, scoped, and hash-verified.
 - Installed `v1.7.4-preview.27` has the first host-native Miuix settings implementation; user testing found its hook targeted legacy `a2.f` instead of active Miuix `t1.J`, and its card was appended after the host bottom safe-area item.
-- The user accepted the `preview.28` navigation and settings behavior. The exact stable `1.7.4 (66)` APK is built, installed, and runtime-verified with SHA-256 `e3ba4ba5d7241c29a04923592996a67e91b8f2d90a2c1688add0880034972102`; it is not yet committed or published.
+- The user accepted the `preview.28` navigation and settings behavior. The exact stable `1.7.4 (66)` APK is built, installed, runtime-verified, and published at <https://github.com/ahe-meow/lspilot-enhancer-public/releases/tag/v1.7.4> with SHA-256 `e3ba4ba5d7241c29a04923592996a67e91b8f2d90a2c1688add0880034972102`.
 
 ## Active objective
 
@@ -71,7 +71,7 @@ The current update resolved provider `zj8`; the previous `d4eb3066...f5d56` host
 
 ## Next action
 
-Commit the verified stable source and evidence, tag `v1.7.4`, push, publish a non-prerelease GitHub Release, and verify the downloaded asset hash.
+Replace the private AAPT2 APK-container workaround when an arm64-compatible AGP 9.3 AAPT2 is available.
 
 ## Constraints
 
