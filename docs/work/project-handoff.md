@@ -7,12 +7,12 @@
 ## Repository
 
 - Branch: `main`
-- Release commit/tag: `4b0724e` / `v1.7.4-preview.25`
+- Release commit/tag: `2e44ff1` / `v1.7.4-preview.26`
 - Inspect `git status` before changes and preserve unrelated tracked or untracked files.
 - Module package: `com.lspilot.enhancer`
 - Host package: `me.yun.lspilot`
-- Android treats the module identity as a new package. GitHub pre-release `v1.7.4-preview.25` is published, installed, enabled, scoped, and hash-verified.
-- Current `v1.7.4-preview.26` candidate applies reasoning effort and 24-hour retention to every non-empty model name, and removes automatic retry/context writes. Installed `v1.7.4-preview.25` includes only the all-model reasoning change.
+- Android treats the module identity as a new package. GitHub pre-release `v1.7.4-preview.26` is published, installed, enabled, scoped, and hash-verified.
+- Current source and installed `v1.7.4-preview.26` apply reasoning effort and 24-hour retention to every non-empty model name, and remove automatic retry/context writes.
 
 ## Active objective
 
@@ -46,11 +46,11 @@ The current update resolved provider `zj8`; the previous `d4eb3066...f5d56` host
 - Removed compression-only production classes, tests, UI controls, settings, build task, dependency, and architecture document.
 - Removed compression coupling from request, chat, send, stream, and automatic retry paths.
 - Kept host chat UI unchanged and stopped writing retry status rows into chat history.
-- Updated the ABI resolver and descriptor cache for conservative unique candidate groups, current provider profiles, `uob`/`xa` stream carriers, and optional retry failure.
+- Reduced ABI resolution and descriptor caching to unique coherent request/SSE candidates; removed retry capability discovery.
 - Made unavailable-setting persistence host-local only; LSPosed remote preferences remain migration input and are not written.
 - Completed source/package migration to `com.lspilot.enhancer` and verified `1.7.4-preview.24`; exact artifact and check evidence is recorded in `docs/work/findings.md`.
-- Installed the exact APK through KernelSU RunCommandService; source, private stage, `/data/local/tmp`, installed `base.apk`, and release asset hashes match `51e0c3c...928aa`.
-- Verified LSPosed `enabled=1`, unblocked scope `me.yun.lspilot`, database integrity `ok`, then two cold starts ending in `cache_hit`, `provider=zj8`, `requestBody=true`, `sseUsage=true`, and retry/settings hooks installed.
+- Historical `preview.24` install: installed the exact APK through KernelSU RunCommandService; source, private stage, `/data/local/tmp`, installed `base.apk`, and release asset hashes matched `51e0c3c...928aa`.
+- Historical `preview.24` runtime: verified LSPosed `enabled=1`, unblocked scope `me.yun.lspilot`, database integrity `ok`, then two cold starts ending in `cache_hit`, `provider=zj8`, `requestBody=true`, `sseUsage=true`, and retry/settings hooks installed.
 - Rejected the direct AGP output because the arm64 AAPT2 override produced a 14-entry ZIP without manifest/resources.
 - Historical predecessor artifact: built and privately staged valid module APK `7bc3a22f6a43ef98cd843922c89a0b57ced474cc26583fdca0e4f2089d8c44e8` by replacing only `classes.dex` in a valid module container, then arm64 `zipalign` and `apksigner`.
 - Historical predecessor install evidence: installed only the module; source/stage/install hashes matched. LSPosed config integrity was `ok`, module state was enabled, and scope included `me.yun.lspilot`.
@@ -61,11 +61,13 @@ The current update resolved provider `zj8`; the previous `d4eb3066...f5d56` host
 - Invalidates stale descriptors before hook installation and runs structural `dalvik.system.DexFile` adaptation only for first start or changed host content.
 - Historical predecessor final artifact/runtime evidence: module APK `69c25122d70e97bb506712ea3b611a463eef43fdf4f16105f6d13eedeb5a53a6` was staged through `/data/data/com.termux/files/usr/tmp` and `/data/local/tmp`; all hashes matched. Final startup logged `Host ABI resolution reason=cache_hit`, `provider=zj8`, `requestBody=true`, and `sseUsage=true`.
 - Removed automatic retry manager/policy, retry/stop/session/stream/repository hooks, host StateFlow writes, repository message persistence, retry ABI discovery/cache fields, and retry-only tests.
-- Reduced descriptor caching to request/SSE ABI schema `7`; raw SSE content is not logged.
+- Published and installed `v1.7.4-preview.26`; source, GitHub download, Termux-private stage, `/data/local/tmp`, and installed `base.apk` match SHA-256 `7051672f6a2335927abf3cc5bb1e4af7ec70f897bec921a9e7553fb564397e73`.
+- Verified LSPosed `enabled=1`, `scope_request_blocked=0`, scope `me.yun.lspilot`, and database integrity `ok` without modifying LSPosed data.
+- Verified two cold starts: schema `7` rebuild then `cache_hit`, `provider=zj8`, request/SSE/settings hooks installed, version `1.7.4-preview.26 (63)`, and no automatic-retry hook log.
 
 ## Next action
 
-Publish/install a later preview if the automatic-retry removal and all-model 24-hour retention change should reach the device. Manual request/usage/settings acceptance remains user-driven.
+Manual request/usage/settings acceptance remains user-driven.
 
 ## Constraints
 

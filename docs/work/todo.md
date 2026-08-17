@@ -6,16 +6,17 @@
 
 ## In progress
 
-- `v1.7.4-preview.26` candidate is built and statically verified with automatic retry/context writes removed and all-model 24-hour retention enabled. It is not yet published or installed; `v1.7.4-preview.25` remains active on the device.
+- `v1.7.4-preview.26` is published, installed, enabled, scoped, hash-verified, and cold-start verified with automatic retry/context writes absent and all-model 24-hour retention enabled.
 
 ## Next
 
-- [ ] Publish and install a later preview if the automatic-retry removal and all-model 24-hour retention change should reach the device.
 - [ ] Complete remaining manual request/usage/settings acceptance separately.
 - [ ] Replace the private AAPT2 APK-container workaround when an arm64-compatible AGP 9.3 AAPT2 is available.
 
 ## Completed
 
+- [x] Publish and install `v1.7.4-preview.26`; verify SHA-256 across source, GitHub download, Termux-private stage, `/data/local/tmp`, and installed `base.apk`.
+- [x] Verify LSPosed state/scope/database integrity and two host cold starts: schema `7` rebuild followed by `cache_hit`, request/SSE/settings hooks installed, and no automatic-retry hook log.
 - [x] Remove automatic retry, host retry/session/stream/repository hooks, StateFlow message replacement, repository persistence, retry ABI discovery/cache fields, and retry-only tests.
 - [x] Remove the 24-hour retention model-family whitelist; retain blank-model protection and explicit GPT-5.6 breakpoint precedence, then pass Java and Dalvik policy checks.
 - [x] Clear all three pi-lens `unsafe-reflection` warnings with equivalent non-initializing `ClassLoader.loadClass` calls; pass LSP, Java compilation, and focused Dalvik checks.
