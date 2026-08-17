@@ -1,7 +1,7 @@
 # Current plan
 
 - Status: current
-- Updated: 2026-08-17
+- Updated: 2026-08-18
 - Purpose: define the ordered path from the current repository state to runtime acceptance.
 
 ## Current phase
@@ -11,6 +11,8 @@ Repository-side feature removal, package migration to `com.lspilot.enhancer`, co
 The verified APK is published as GitHub pre-release `v1.7.4-preview.27`, installed as `com.lspilot.enhancer`, enabled in LSPosed, and scoped to `me.yun.lspilot`. Source, GitHub download, Termux-private stage, `/data/local/tmp`, and installed `base.apk` all match SHA-256 `24702f702ee67c6b37a5305f7f5e983f4523f7d2da18c4475c82609b16d2dff1`.
 
 Two cold starts passed: the first rebuilt the ABI descriptor for module version code `64`; the second logged `cache_hit`, `provider=zj8`, `requestBody=true`, `sseUsage=true`, and `Native host settings page hooks installed with AutoAwesome icon`. Neither start logged automatic-retry hook installation or native-settings hook failure.
+
+The user accepted the `1.7.4-preview.28` navigation and settings behavior on 2026-08-18. The exact stable `1.7.4 (66)` APK is now built and installed with SHA-256 `e3ba4ba5d7241c29a04923592996a67e91b8f2d90a2c1688add0880034972102`; release/lint, diagnostics, APK integrity/signature, focused Dalvik checks, exact current-host ABI, four-stage install hashes, LSPosed state/scope/integrity, module-update rebuild, and subsequent `cache_hit` startup pass. It remains to commit, tag `v1.7.4`, push, publish a non-prerelease GitHub Release, and verify the downloaded asset hash.
 
 ## Execution order
 

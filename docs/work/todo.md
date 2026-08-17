@@ -1,20 +1,26 @@
 # Current todo
 
 - Status: current
-- Updated: 2026-08-17
+- Updated: 2026-08-18
 - Purpose: track the remaining work and acceptance evidence.
 
 ## In progress
 
-- Manually verify the installed `v1.7.4-preview.27` independent icon, native page navigation, switch/dropdown persistence, request mutation, and usage.
+- The exact accepted `1.7.4 (66)` stable APK is built, installed, and runtime-verified. Commit, tag `v1.7.4`, push, publish a non-prerelease GitHub Release, and verify the downloaded asset hash.
 
 ## Next
 
-- [ ] Complete the manual `preview.27` UI and live-request acceptance scenarios.
+- [ ] Commit, tag `v1.7.4`, push, publish a non-prerelease GitHub Release, and verify the downloaded asset hash.
 - [ ] Replace the private AAPT2 APK-container workaround when an arm64-compatible AGP 9.3 AAPT2 is available.
 
 ## Completed
 
+- [x] Receive explicit user acceptance for alternating About/module navigation, native settings layout/labels, and setting persistence.
+- [x] Build and install the exact `1.7.4 (66)` stable APK; verify release/lint, Dalvik/ABI checks, APK integrity/signature, four-stage SHA-256 equality, LSPosed state/scope/integrity, and two cold starts.
+- [x] Install the corrected uncommitted `preview.28` locally; verify source/private/staged/installed SHA-256 equality, LSPosed state/scope/integrity, complete first-start hooks, and two starts without Compose/FATAL errors.
+- [x] Reject the first local `preview.28` candidate after its bottom-Composable injection crashed Compose; replace it with LazyColumn item registration before the fourth host item and add a regression check.
+- [x] Match host entry layout by rendering before the bottom safe-area item with the host full-width modifier and 12dp card spacing; rename visible `Prompt Cache` summary to `缓存`.
+- [x] Build and statically verify the `preview.28` candidate: release/lint, LSP, pi-lens, APK/DEX, navigation, and exact current-host ABI checks pass.
 - [x] Publish and install `v1.7.4-preview.27`; verify five-stage SHA-256 equality, LSPosed state/scope/database integrity, module-update ABI rebuild, subsequent `cache_hit`, request/SSE hooks, and the AutoAwesome native-settings hook.
 - [x] Replace the module settings Overlay/Dialog with host-native Miuix navigation; separate the entry from `关于`, use `Rounded.AutoAwesome`, and add navigation-state regression coverage.
 - [x] Pass release/lint, LSP, pi-lens, DEX marker, APK integrity/signature, and `NativeSettingsNavigationCheck` verification for the `preview.27` candidate.

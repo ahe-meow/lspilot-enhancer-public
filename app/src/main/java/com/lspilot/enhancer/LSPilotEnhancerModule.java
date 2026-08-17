@@ -27,6 +27,7 @@ public final class LSPilotEnhancerModule extends XposedModule {
             "me.yun.lspilot.ui.MainActivity";
 
     private static final String CACHE_NAMESPACE = "lspilot:v3:";
+    private static final ThreadLocal<Boolean> NATIVE_ROUTE_REPLAYING = new ThreadLocal<>();
     private static final ThreadLocal<Boolean> NATIVE_TOP_BAR_REPLAYING = new ThreadLocal<>();
     private static volatile boolean reasoningDeltaNormalizedReported;
 
@@ -360,6 +361,35 @@ public final class LSPilotEnhancerModule extends XposedModule {
                     findArrowPreferenceClass(loader, dexPaths));
             HostNativeSettings.resolve(loader, arrowPreference);
 
+            final Method navigate = HostNativeSettings.navigateMethod();
+            hook(navigate).intercept(chain -> {
+                if (Boolean.TRUE.equals(NATIVE_ROUTE_REPLAYING.get())) {
+                    return chain.proceed();
+                }
+                Object originalRoute = chain.getArg(0);
+                Object replacementRoute = HostNativeSettings.rewriteNavigationRoute(originalRoute);
+                if (replacementRoute == originalRoute) return chain.proceed();
+                NATIVE_ROUTE_REPLAYING.set(Boolean.TRUE);
+                try {
+                    return navigate.invoke(chain.getThisObject(), replacementRoute);
+                } finally {
+                    NATIVE_ROUTE_REPLAYING.remove();
+                }
+            });
+
+            hook(HostNativeSettings.routeRendererMethod()).intercept(chain -> {
+                boolean moduleRoute = HostNativeSettings.isModuleRoute(chain.getArg(0));
+                HostNativeSettings.setModuleRouteVisible(moduleRoute);
+                if (!moduleRoute) return chain.proceed();
+                try {
+                    return HostNativeSettings.renderPage(chain.getArg(1));
+                } catch (Throwable error) {
+                    HostNativeSettings.setModuleRouteVisible(false);
+                    log(Log.ERROR, TAG, "Failed to render native module settings route", error);
+                    return chain.proceed();
+                }
+            });
+
             hook(HostNativeSettings.settingsPagerMethod()).intercept(chain -> {
                 if (!HostNativeSettings.isRenderingPage()) {
                     HostNativeSettings.captureSettings(
@@ -369,8 +399,20 @@ public final class LSPilotEnhancerModule extends XposedModule {
                 return chain.proceed();
             });
 
+            hook(HostNativeSettings.lazyItemMethod()).intercept(chain -> {
+                if (HostNativeSettings.shouldInsertBeforeHostItem()) {
+                    try {
+                        HostNativeSettings.addEntry(chain.getArg(0));
+                        HostNativeSettings.markHostEntryInserted();
+                    } catch (Throwable error) {
+                        log(Log.ERROR, TAG, "Failed to insert native settings entry", error);
+                    }
+                }
+                return chain.proceed();
+            });
+
             hook(HostNativeSettings.settingsListMethod()).intercept(chain -> {
-                if (HostNativeSettings.isRenderingPage()) {
+                if (HostNativeSettings.shouldRenderSettings()) {
                     try {
                         return HostNativeSettings.addSettings(chain.getArg(2));
                     } catch (Throwable error) {
@@ -378,22 +420,22 @@ public final class LSPilotEnhancerModule extends XposedModule {
                         return chain.proceed();
                     }
                 }
-                Object result = chain.proceed();
+                HostNativeSettings.beginHostList();
                 try {
-                    HostNativeSettings.addEntry(chain.getArg(2));
-                } catch (Throwable error) {
-                    log(Log.ERROR, TAG, "Failed to append native settings entry", error);
-                }
-                return result;
-            });
-
-            hook(HostNativeSettings.aboutScreenMethod()).intercept(chain -> {
-                if (!HostNativeSettings.shouldRenderPage()) return chain.proceed();
-                try {
-                    return HostNativeSettings.renderPage(chain.getArg(0));
-                } catch (Throwable error) {
-                    log(Log.ERROR, TAG, "Failed to open native module settings page", error);
-                    return chain.proceed();
+                    Object result = chain.proceed();
+                    if (!HostNativeSettings.hostEntryInserted()) {
+                        try {
+                            HostNativeSettings.addEntry(chain.getArg(2));
+                            HostNativeSettings.markHostEntryInserted();
+                            log(Log.WARN, TAG,
+                                    "Native settings entry used end-of-list compatibility fallback");
+                        } catch (Throwable error) {
+                            log(Log.ERROR, TAG, "Failed to append native settings entry", error);
+                        }
+                    }
+                    return result;
+                } finally {
+                    HostNativeSettings.endHostList();
                 }
             });
 

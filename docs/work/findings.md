@@ -1,7 +1,7 @@
 # Current findings
 
 - Status: current
-- Updated: 2026-08-17
+- Updated: 2026-08-18
 - Purpose: record current verified implementation and host compatibility facts.
 
 ## Source state
@@ -11,11 +11,16 @@
 - Context compression was explicitly removed from production source, chat UI, settings, tests, and active documentation.
 - Removed legacy preference keys and stored summary-record prefixes are cleaned from host-local module preferences during initialization; other settings are untouched.
 - Retained features are Prompt Cache policy, compatible retention, usage reporting, reasoning effort, diagnostics, and settings UI. Automatic retry and its host-context writes are removed from source and the installed artifact.
-- Current source and installed `v1.7.4-preview.27` apply the configured `reasoning_effort` and `prompt_cache_retention=24h` fallback to every non-empty model name. Blank models remain unchanged and GPT-5.6 explicit breakpoints take precedence.
-- Installed `v1.7.4-preview.27` adds a separate host-native Miuix settings card with `Rounded.AutoAwesome`, routes through the host settings navigation, and renders native switch/dropdown preferences.
+- Current source and installed `v1.7.4` apply the configured `reasoning_effort` and `prompt_cache_retention=24h` fallback to every non-empty model name. Blank models remain unchanged and GPT-5.6 explicit breakpoints take precedence.
+- The user accepted the locally installed `v1.7.4-preview.28` navigation and settings behavior on 2026-08-18. The exact stable `1.7.4 (66)` artifact is now built, installed, and runtime-verified pending publication.
 - DexKit runtime packaging was removed. Runtime discovery uses platform `dalvik.system.DexFile` to avoid colliding with the host's DexKit/JNI state.
 
-## Repository verification — 2026-08-17
+## Repository verification — 2026-08-18
+
+- Stable APK `app/build/outputs/apk/release/app-release.apk` is 678,659 bytes with SHA-256 `e3ba4ba5d7241c29a04923592996a67e91b8f2d90a2c1688add0880034972102`; badging reports package `com.lspilot.enhancer`, version code `66`, and version name `1.7.4`.
+- JDK 17 release assembly, lint, debug test compilation, `RequestAbiCheck`, `HostUpdateDetectionCheck`, `NativeSettingsNavigationCheck`, current-host `HostNativeSettingsAbiCheck`, APK ZIP/resources/Xposed entries, v2 signature, retained/forbidden DEX markers, LSP, pi-lens, and `git diff --check` pass.
+
+## Historical repository verification — 2026-08-17
 
 - Source/package migration to `com.lspilot.enhancer` is complete.
 - With JDK 17 and the documented arm64 AAPT2 flags, the `1.7.4-preview.26` release build, lint, and test compilation succeeded in 33s.
@@ -23,14 +28,22 @@
 - `aapt2 dump badging` reports package `com.lspilot.enhancer`, version code `63`, and version name `1.7.4-preview.26`; ZIP integrity, required Xposed entries, APK v2 signature, signer continuity, DEX markers, `git diff --check`, pi-lens, and LSP diagnostics passed.
 - `RequestAbiCheck`, `HostUpdateDetectionCheck`, `PromptCachePolicy`, and `ReasoningPolicy` passed on Dalvik; retry-only checks were removed with the feature.
 - Production and release DEX scans contain no automatic retry manager, retry/stop/session/stream/repository hooks, StateFlow message replacement, repository message persistence, or retry-specific ABI descriptor fields. The request ABI cache schema is `7`.
-- The `v1.7.4-preview.27` release build, lint, LSP, pi-lens, DEX marker, APK integrity/signature checks, `NativeSettingsNavigationCheck`, and an on-device current-host multi-DEX ABI resolution check passed. APK is 677,939 bytes with SHA-256 `24702f702ee67c6b37a5305f7f5e983f4523f7d2da18c4475c82609b16d2dff1`; badging reports version code `64`, version name `1.7.4-preview.27`.
+- The corrected `v1.7.4-preview.28` candidate release build, lint, LSP, pi-lens, DEX marker, APK integrity/signature checks, `NativeSettingsNavigationCheck`, dedicated-route state checks, and exact current-host multi-DEX `HostNativeSettingsAbiCheck` pass. APK is 678,687 bytes with SHA-256 `999d40e423cdbb5f1d0127fb27c8f7ba6f0211d70e8872717bfdcda87f381f44`; badging reports version code `65`, version name `1.7.4-preview.28`. It is locally installed but uncommitted and unpublished.
+- The first local `preview.28` candidate (`a6378fc3...ad4c`) was rejected after startup reproduced `Compose Runtime internal error: No nodes can be emitted before calling skipAndEndGroup`. Injecting nodes from the bottom-padding Composable was removed; the corrected build registers the module LazyColumn item before the host's fourth/final item.
 - The three pi-lens `unsafe-reflection` findings were removed by replacing equivalent `Class.forName(name, false, loader)` calls with `ClassLoader.loadClass(name)`. A final pi-lens session scan reports no issues; LSP reports no diagnostics for `HostAbi.java` and `DexAbiScanner.java`.
 - GitHub pre-release `v1.7.4-preview.27` is published at <https://github.com/ahe-meow/lspilot-enhancer-public/releases/tag/v1.7.4-preview.27>. The downloaded asset is 677,939 bytes and reproduces SHA-256 `24702f702ee67c6b37a5305f7f5e983f4523f7d2da18c4475c82609b16d2dff1`.
 
-## Device runtime verification — 2026-08-17
+## Device runtime verification — 2026-08-18
+
+- Local build output, Termux-private stage, `/data/local/tmp`, and installed `base.apk` match stable SHA-256 `e3ba4ba5d7241c29a04923592996a67e91b8f2d90a2c1688add0880034972102`; installed package reports `1.7.4 (66)`.
+- First stable cold start rebuilt the descriptor with `reason=module_update`; the second logged `cache_hit`, `provider=zj8`, `requestBody=true`, `sseUsage=true`, native settings hooks, and `LSPilotEnhancer loaded version=1.7.4 (66)`. Neither process log contains automatic-retry hooks, native-settings hook failure, FATAL, or Compose runtime errors.
+- The read-only LSPosed database copy reports integrity `ok`, module `enabled=1`, `scope_request_blocked=0`, and the sole scope `me.yun.lspilot` for user `0`; its APK path matches the installed stable package path.
+
+## Historical device runtime verification — 2026-08-17
 
 - KernelSU RunCommandService reported Android `uid=0(root)` with SELinux domain `u:r:ksu:s0`.
-- Source, GitHub download, Termux-private stage, `/data/local/tmp`, and installed `base.apk` all match SHA-256 `24702f702ee67c6b37a5305f7f5e983f4523f7d2da18c4475c82609b16d2dff1`; the installed package reports version code `64` and version name `1.7.4-preview.27`.
+- Local source APK, Termux-private stage, `/data/local/tmp`, and installed `base.apk` match SHA-256 `999d40e423cdbb5f1d0127fb27c8f7ba6f0211d70e8872717bfdcda87f381f44`; installed package reports version code `65` and version name `1.7.4-preview.28`.
+- LSPosed state remains `enabled=1`, `scope_request_blocked=0`, scope `me.yun.lspilot`, and database integrity `ok`. Both corrected-build starts logged `cache_hit`, `provider=zj8`, `requestBody=true`, `sseUsage=true`, native settings hooks, and version `preview.28 (65)`; no FATAL/Compose error or settings-hook failure occurred. The second start recorded successful `enabled` and `cache_key_enabled` toggle commits.
 - LSPosed automatically registered the new package at the installed APK path. State is `enabled=1`, `scope_request_blocked=0`, scope is exactly `me.yun.lspilot`, and `pragma integrity_check` returned `ok`.
 - The installed host remains SHA-256 `af2283a2978ea650986988ac3d9c01a39474cdd6410d30b842dd8f15e686149c`.
 - First cold start rebuilt the ABI descriptor with reason `module_update`; the second logged `cache_hit`, `provider=zj8`, `requestBody=true`, `sseUsage=true`, `Native host settings page hooks installed with AutoAwesome icon`, and `LSPilotEnhancer loaded version=1.7.4-preview.27 (64)`. Neither log contains automatic-retry hook installation or native-settings hook failure.
@@ -105,7 +118,12 @@
 - The historical predecessor repair was request-local and did not rewrite the host database. It is not included in `1.7.4-preview.24`.
 - Historical predecessor release artifact (2026-08-16): the installed release APK is `app/build/outputs/apk/release/app-release.apk`, size `697,819` bytes, SHA-256 `e25102ded11e50e20c0b26f59cd1ad9bf16ceee19cbd24af67eeb41e276c589a`; badging, ZIP integrity, APK signature, DEX-string, staging-hash, and installed-hash checks passed.
 
-## New-chat 30K context — 2026-08-16
+## Manual settings inspection — 2026-08-17
+
+- Before the dedicated-route fix, the user confirmed that both `关于` and `模型请求增强` opened the module settings surface; alternating the entries after back navigation reproduced the shared-destination bug.
+- Root cause of the failed `max` selection: the host `OverlayDropdownPreference` builds each option click with its second `Function1` parameter (method parameter 16), while the module had passed its persistence callback as parameter 15. The corrected candidate passes the callback as parameter 16, verifies both callback ABI slots, and shows the selected value in the row summary.
+- The module settings route now uses a dedicated host `eca$m` sentinel instance (`__lspilot_enhancer_settings__`) intercepted at `vub.k`; normal About (`eca$a`) and real LogViewer routes proceed untouched. The route identity and one-shot About-to-sentinel rewrite pass current-host Dalvik/ABI checks. The dedicated-route candidate starts cleanly with request/SSE/settings hooks installed and no FATAL or Compose error.
+- Current live values are: `enabled=true`, `reasoning_effort=xhigh`, `cache_key_enabled=true`, `retention_enabled=false`, `include_usage_enabled=false`, `debug_log_enabled=false`, and `verbose_debug_log_enabled=false`. Internal state is `hook_success_notice_v2=true` and `settings_host_migrated_v1=true`.
 
 - The newest database chat titled `新对话` contains only 4 rows (`ping`, `pong`, `你是什么模型？`, and the answer), totaling 132 content bytes. Therefore its roughly 30K provider input tokens are not 30K tokens of persisted chat history.
 - Host DEX inspection confirms `xj8.p` constructs `model`, `messages`, `stream`, `tools`, `tool_choice`, and `stream_options`; `xj8.o` prepends the host-provided system prompt as a `role=system` message and converts the current chat list into request messages.

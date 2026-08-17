@@ -77,6 +77,13 @@ am startservice --user 0 \
 - Do not add permanent project configuration solely to hide a host-specific tool mismatch.
 - Verify APK structure with `aapt2 dump badging`, ZIP inspection when relevant, and SHA-256.
 
+## Release Gate
+
+- Keep local installation and public release as separate phases.
+- Build and install the uncommitted candidate locally first, then ask the user to test the affected behavior.
+- Do not commit, tag, push, create a GitHub release, or upload an asset until the user explicitly reports that the installed candidate passed testing.
+- After explicit acceptance, the source commit and GitHub release may be performed together.
+
 ## Device Operations
 
 - Copy an APK from the PRoot build output to a unique Termux-private path under `/data/data/com.termux/files/usr/tmp/`, verify both hashes there, then stage it as `/data/local/tmp/<task>.apk` through the proven host-side root channel before `pm install -r`.

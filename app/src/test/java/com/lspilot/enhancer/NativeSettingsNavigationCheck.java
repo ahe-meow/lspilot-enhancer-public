@@ -4,20 +4,34 @@ public final class NativeSettingsNavigationCheck {
     private NativeSettingsNavigationCheck() {}
 
     public static void main(String[] args) {
-        assertTrue(!HostNativeSettings.pageRequestedForCheck(), "initial state must be idle");
+        HostNativeSettings.setModuleRouteVisible(false);
+        assertTrue(!HostNativeSettings.shouldRenderSettings(),
+                "host About must keep the host settings content");
 
-        HostNativeSettings.requestPageForCheck();
-        HostNativeSettings.markHostSettingsRenderedForCheck();
-        assertTrue(HostNativeSettings.pageRequestedForCheck(),
-                "main-page recomposition before navigation must not cancel the request");
+        HostNativeSettings.setModuleRouteVisible(true);
+        assertTrue(HostNativeSettings.shouldRenderSettings(),
+                "the dedicated module route must render module settings");
 
-        HostNativeSettings.markPageRenderedForCheck();
-        assertTrue(HostNativeSettings.pageRequestedForCheck(),
-                "the native module page must remain active while rendered");
+        HostNativeSettings.setModuleRouteVisible(false);
+        assertTrue(!HostNativeSettings.shouldRenderSettings(),
+                "returning from the module route must restore host content");
 
-        HostNativeSettings.markHostSettingsRenderedForCheck();
-        assertTrue(!HostNativeSettings.pageRequestedForCheck(),
-                "returning to host settings must restore the real About page");
+        HostNativeSettings.setModuleRouteVisible(true);
+        assertTrue(HostNativeSettings.shouldRenderSettings(),
+                "About then module must remain independently selectable");
+        HostNativeSettings.setModuleRouteVisible(false);
+
+        HostNativeSettings.beginHostList();
+        assertTrue(!HostNativeSettings.shouldInsertBeforeHostItem(), "item 1 must stay first");
+        assertTrue(!HostNativeSettings.shouldInsertBeforeHostItem(), "item 2 must stay second");
+        assertTrue(!HostNativeSettings.shouldInsertBeforeHostItem(), "item 3 must stay third");
+        assertTrue(HostNativeSettings.shouldInsertBeforeHostItem(),
+                "module entry must be inserted before the bottom-padding item");
+        HostNativeSettings.markHostEntryInserted();
+        assertTrue(HostNativeSettings.hostEntryInserted(), "entry insertion must be recorded");
+        assertTrue(!HostNativeSettings.shouldInsertBeforeHostItem(),
+                "module entry must not be inserted twice");
+        HostNativeSettings.endHostList();
 
         System.out.println("NativeSettingsNavigationCheck: PASS");
     }

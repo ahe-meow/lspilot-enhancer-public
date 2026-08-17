@@ -1,5 +1,6 @@
 package com.lspilot.enhancer;
 
+import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
@@ -14,13 +15,16 @@ import java.lang.reflect.Proxy;
 /** Bridges the module settings into the host's native Miuix Compose settings navigation. */
 final class HostNativeSettings {
     private static final String TITLE = "模型请求增强";
+    private static final String MODULE_ROUTE_SENTINEL = "__lspilot_enhancer_settings__";
     private static final String[] REASONING_LABELS = {
-            "low", "Medium", "high", "xhigh", "max", "ultra"
+            "low", "medium", "high", "xhigh", "max", "ultra"
     };
     private static final String[] REASONING_VALUES = {
             "low", "medium", "high", "xhigh", "max", "ultra"
     };
     private static final ThreadLocal<Boolean> RENDERING_PAGE = new ThreadLocal<>();
+    private static final ThreadLocal<Boolean> MODULE_NAVIGATION = new ThreadLocal<>();
+    private static final ThreadLocal<HostListState> HOST_LIST = new ThreadLocal<>();
     private static final Map<String, Object> STATES = new LinkedHashMap<>();
 
     private static ClassLoader loader;
@@ -30,14 +34,19 @@ final class HostNativeSettings {
     private static Class<?> function3Class;
     private static Object kotlinUnit;
     private static Object baseModifier;
+    private static Object cardModifier;
     private static Object roundedIcons;
     private static Object theme;
     private static int themeChanged;
 
     private static Method settingsPagerMethod;
     private static Method settingsListMethod;
-    private static Method aboutScreenMethod;
+    private static Method navigateMethod;
+    private static Method routeRendererMethod;
+    private static Method moduleRouteValueMethod;
     private static Method topAppBarMethod;
+    private static Constructor<?> moduleRouteConstructor;
+    private static Object aboutRoute;
     private static Method arrowPreferenceMethod;
     private static Method cardMethod;
     private static Method switchPreferenceMethod;
@@ -56,8 +65,7 @@ final class HostNativeSettings {
     private static volatile Object settingsState;
     private static volatile Object settingsActions;
     private static volatile float settingsPadding;
-    private static volatile boolean pageRequested;
-    private static volatile boolean pageRendered;
+    private static volatile boolean moduleRouteVisible;
 
     private HostNativeSettings() {}
 
@@ -83,8 +91,20 @@ final class HostNativeSettings {
         Class<?> composerClass = settingsPagerMethod.getParameterTypes()[3];
         settingsListMethod = findStatic(settingsClass, "n", 3,
                 types -> true);
-        aboutScreenMethod = findStatic(hostLoader.loadClass("a2"), "f", 2,
-                types -> types[0] == composerClass && types[1] == int.class);
+
+        Class<?> routeClass = hostLoader.loadClass("eca");
+        Class<?> aboutRouteClass = hostLoader.loadClass("eca$a");
+        Class<?> moduleRouteClass = hostLoader.loadClass("eca$m");
+        aboutRoute = singleton(aboutRouteClass, "INSTANCE");
+        moduleRouteConstructor = moduleRouteClass.getDeclaredConstructor(String.class);
+        moduleRouteConstructor.setAccessible(true);
+        moduleRouteValueMethod = accessible(moduleRouteClass.getDeclaredMethod("a"));
+        navigateMethod = findInstance(hostLoader.loadClass("f68"), "e", 1,
+                types -> types[0].isAssignableFrom(moduleRouteClass));
+        routeRendererMethod = findStatic(hostLoader.loadClass("vub"), "k", 3,
+                types -> types[0] == routeClass && types[1] == composerClass
+                        && types[2] == int.class);
+
         topAppBarMethod = findStatic(
                 hostLoader.loadClass(currentHost ? "epc" : "apc"), "B", 20,
                 types -> types[0] == String.class && types[16] == composerClass);
@@ -104,7 +124,7 @@ final class HostNativeSettings {
                 hostLoader.loadClass(currentHost ? "om8" : "mm8"), "i", 21,
                 types -> types[0] == List.class && types[1] == int.class
                         && types[2] == String.class && types[15] == function1Class
-                        && types[17] == composerClass);
+                        && types[16] == function1Class && types[17] == composerClass);
 
         Class<?> modifierClass = arrowPreference.getParameterTypes()[1];
         baseModifier = singleton(modifierClass, "a");
@@ -114,8 +134,12 @@ final class HostNativeSettings {
                 hostLoader.loadClass(currentHost ? "so8" : "qo8"), "q", 7,
                 types -> types[0].isAssignableFrom(baseModifier.getClass())
                         || types[0] == modifierClass);
-        modifierHeightMethod = findStatic(
-                hostLoader.loadClass(currentHost ? "q7b" : "m7b"), "i", 2,
+        Class<?> modifierLayoutClass =
+                hostLoader.loadClass(currentHost ? "q7b" : "m7b");
+        Method fillWidthMethod = findStatic(modifierLayoutClass, "h", 4,
+                types -> types[1] == float.class && types[2] == int.class);
+        cardModifier = invoke(fillWidthMethod, null, baseModifier, 0f, 1, null);
+        modifierHeightMethod = findStatic(modifierLayoutClass, "i", 2,
                 types -> types[1] == float.class);
         spacerMethod = findStatic(
                 hostLoader.loadClass(currentHost ? "dhb" : "zgb"), "a", 3,
@@ -154,34 +178,58 @@ final class HostNativeSettings {
         return settingsListMethod;
     }
 
-    static Method aboutScreenMethod() {
-        return aboutScreenMethod;
+    static Method lazyItemMethod() {
+        return lazyItemMethod;
+    }
+
+    static Method navigateMethod() {
+        return navigateMethod;
+    }
+
+    static Method routeRendererMethod() {
+        return routeRendererMethod;
     }
 
     static Method topAppBarMethod() {
         return topAppBarMethod;
     }
 
+    static Method dropdownPreferenceMethod() {
+        return dropdownPreferenceMethod;
+    }
+
     static boolean isRenderingPage() {
         return Boolean.TRUE.equals(RENDERING_PAGE.get());
     }
 
-    static void captureSettings(Object state, Object actions, float padding) throws Exception {
-        if (!isRenderingPage() && pageRendered) {
-            pageRequested = false;
-            pageRendered = false;
-        }
+    static void captureSettings(Object state, Object actions, float padding) {
         settingsState = state;
         settingsActions = actions;
         settingsPadding = padding;
     }
 
-    static boolean shouldRenderPage() {
-        return pageRequested && settingsState != null && settingsActions != null;
+    static Object rewriteNavigationRoute(Object route) throws Exception {
+        if (!Boolean.TRUE.equals(MODULE_NAVIGATION.get()) || route != aboutRoute) return route;
+        MODULE_NAVIGATION.remove();
+        return moduleRouteConstructor.newInstance(MODULE_ROUTE_SENTINEL);
+    }
+
+    static boolean isModuleRoute(Object route) throws Exception {
+        return route != null
+                && route.getClass() == moduleRouteConstructor.getDeclaringClass()
+                && MODULE_ROUTE_SENTINEL.equals(invoke(moduleRouteValueMethod, route));
+    }
+
+    static void setModuleRouteVisible(boolean visible) {
+        moduleRouteVisible = visible;
+    }
+
+    static boolean shouldRenderSettings() {
+        return moduleRouteVisible;
     }
 
     static Object renderPage(Object composer) throws Exception {
-        pageRendered = true;
+        if (settingsState == null || settingsActions == null) return null;
         syncStates();
         RENDERING_PAGE.set(Boolean.TRUE);
         try {
@@ -203,24 +251,43 @@ final class HostNativeSettings {
         return kotlinUnit;
     }
 
-    static void requestPageForCheck() {
-        pageRequested = true;
-        pageRendered = false;
+    static void beginModuleNavigationForCheck() {
+        MODULE_NAVIGATION.set(Boolean.TRUE);
     }
 
-    static void markPageRenderedForCheck() {
-        pageRendered = true;
+    static void endModuleNavigationForCheck() {
+        MODULE_NAVIGATION.remove();
     }
 
-    static void markHostSettingsRenderedForCheck() {
-        if (pageRendered) {
-            pageRequested = false;
-            pageRendered = false;
-        }
+    static Object aboutRouteForCheck() {
+        return aboutRoute;
     }
 
-    static boolean pageRequestedForCheck() {
-        return pageRequested;
+    static Object realLogRouteForCheck() throws Exception {
+        return moduleRouteConstructor.newInstance("me.yun.lspilot");
+    }
+
+    static void beginHostList() {
+        HOST_LIST.set(new HostListState());
+    }
+
+    static boolean shouldInsertBeforeHostItem() {
+        HostListState state = HOST_LIST.get();
+        return state != null && state.itemIndex++ == 3 && !state.entryInserted;
+    }
+
+    static void markHostEntryInserted() {
+        HostListState state = HOST_LIST.get();
+        if (state != null) state.entryInserted = true;
+    }
+
+    static boolean hostEntryInserted() {
+        HostListState state = HOST_LIST.get();
+        return state != null && state.entryInserted;
+    }
+
+    static void endHostList() {
+        HOST_LIST.remove();
     }
 
     private static void addItem(Object builder, ComposerContent content) throws Exception {
@@ -232,7 +299,7 @@ final class HostNativeSettings {
     }
 
     private static void renderCard(Object composer, boolean entry) throws Exception {
-        renderSpacing(composer);
+        if (entry) renderSpacing(composer);
         Object content = proxy(function3Class,
                 entry ? "LSPilotEnhancerEntryCard" : "LSPilotEnhancerSettingsCard",
                 args -> {
@@ -240,7 +307,7 @@ final class HostNativeSettings {
                     else renderSettings(args[1]);
                     return kotlinUnit;
                 });
-        invoke(cardMethod, null, baseModifier, 0f, null, null,
+        invoke(cardMethod, null, cardModifier, 0f, null, null,
                 content, composer, 0x6006, 0xe);
     }
 
@@ -259,7 +326,7 @@ final class HostNativeSettings {
             openPage();
             return kotlinUnit;
         });
-        renderArrow(composer, TITLE, "推理强度、Prompt Cache 与上下文策略", icon, click);
+        renderArrow(composer, TITLE, "推理强度、缓存与上下文策略", icon, click);
     }
 
     private static void renderSettings(Object composer) throws Exception {
@@ -308,7 +375,7 @@ final class HostNativeSettings {
         Object state = STATES.get(ModuleSettings.KEY_REASONING_EFFORT);
         int selected = ((Number) getState(state)).intValue();
         boolean available = ModuleSettings.isSettingAvailable(ModuleSettings.KEY_REASONING_EFFORT);
-        String summary = available ? "设置模型 reasoning_effort"
+        String summary = available ? "当前：" + REASONING_LABELS[selected] + "（reasoning_effort）"
                 : "设置模型 reasoning_effort\n已禁用："
                         + ModuleSettings.disabledReason(ModuleSettings.KEY_REASONING_EFFORT);
         Object changed = proxy(function1Class, "LSPilotEnhancerReasoning", args -> {
@@ -324,7 +391,7 @@ final class HostNativeSettings {
         invoke(dropdownPreferenceMethod, null,
                 Arrays.asList(REASONING_LABELS), selected, "模型推理强度",
                 null, null, summary, null, null, null, null, null, null,
-                false, false, false, changed, null,
+                false, false, false, null, changed,
                 composer, 0x30186, 0, 0xffd8);
     }
 
@@ -351,8 +418,12 @@ final class HostNativeSettings {
         if (actions == null) return;
         Method aboutActionMethod = accessible(actions.getClass().getDeclaredMethod("a"));
         Object aboutAction = invoke(aboutActionMethod, actions);
-        requestPageForCheck();
-        invoke(aboutAction.getClass().getMethod("invoke"), aboutAction);
+        MODULE_NAVIGATION.set(Boolean.TRUE);
+        try {
+            invoke(aboutAction.getClass().getMethod("invoke"), aboutAction);
+        } finally {
+            MODULE_NAVIGATION.remove();
+        }
     }
 
     private static void syncStates() throws Exception {
@@ -408,16 +479,26 @@ final class HostNativeSettings {
 
     private static Method findStatic(Class<?> type, String name, int parameterCount,
             TypePredicate predicate) throws NoSuchMethodException {
+        return findMethod(type, name, parameterCount, true, predicate);
+    }
+
+    private static Method findInstance(Class<?> type, String name, int parameterCount,
+            TypePredicate predicate) throws NoSuchMethodException {
+        return findMethod(type, name, parameterCount, false, predicate);
+    }
+
+    private static Method findMethod(Class<?> type, String name, int parameterCount,
+            boolean isStatic, TypePredicate predicate) throws NoSuchMethodException {
         for (Method method : type.getDeclaredMethods()) {
             if (method.getName().equals(name)
-                    && Modifier.isStatic(method.getModifiers())
+                    && Modifier.isStatic(method.getModifiers()) == isStatic
                     && method.getParameterTypes().length == parameterCount
                     && predicate.matches(method.getParameterTypes())) {
                 return accessible(method);
             }
         }
         throw new NoSuchMethodException(type.getName() + "#" + name
-                + " parameterCount=" + parameterCount);
+                + " parameterCount=" + parameterCount + " static=" + isStatic);
     }
 
     private static Method accessible(Method method) {
@@ -446,6 +527,11 @@ final class HostNativeSettings {
             }
             return null;
         });
+    }
+
+    private static final class HostListState {
+        int itemIndex;
+        boolean entryInserted;
     }
 
     private interface ComposerContent {

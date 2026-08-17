@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 1.7.4
+
+- Give module settings a dedicated host navigation route so alternating between `关于` and `模型请求增强` never reuses the previous destination.
+- Fix reasoning-effort selection persistence and show the selected value in the native dropdown summary.
+- Match the host settings card width, card spacing, and bottom safe-area placement; rename the visible `Prompt Cache` label to `缓存`.
+
 ## 1.7.4-preview.27
 
 - Replace the settings Overlay/Dialog with a separate host-native Miuix settings page reached through host navigation.

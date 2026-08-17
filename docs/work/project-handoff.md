@@ -1,7 +1,7 @@
 # Project handoff
 
 - Status: current
-- Updated: 2026-08-17
+- Updated: 2026-08-18
 - Purpose: let the next agent resume without reconstructing host identity or removed feature scope.
 
 ## Repository
@@ -12,7 +12,8 @@
 - Module package: `com.lspilot.enhancer`
 - Host package: `me.yun.lspilot`
 - Android treats the module identity as a new package. GitHub pre-release `v1.7.4-preview.27` is published, installed, enabled, scoped, and hash-verified.
-- Installed `v1.7.4-preview.27` has a separate host-native Miuix settings page, independent settings card, and `Rounded.AutoAwesome` icon.
+- Installed `v1.7.4-preview.27` has the first host-native Miuix settings implementation; user testing found its hook targeted legacy `a2.f` instead of active Miuix `t1.J`, and its card was appended after the host bottom safe-area item.
+- The user accepted the `preview.28` navigation and settings behavior. The exact stable `1.7.4 (66)` APK is built, installed, and runtime-verified with SHA-256 `e3ba4ba5d7241c29a04923592996a67e91b8f2d90a2c1688add0880034972102`; it is not yet committed or published.
 
 ## Active objective
 
@@ -64,11 +65,13 @@ The current update resolved provider `zj8`; the previous `d4eb3066...f5d56` host
 - Published and installed `v1.7.4-preview.27`; source, GitHub download, Termux-private stage, `/data/local/tmp`, and installed `base.apk` match SHA-256 `24702f702ee67c6b37a5305f7f5e983f4523f7d2da18c4475c82609b16d2dff1`.
 - Verified LSPosed `enabled=1`, `scope_request_blocked=0`, scope `me.yun.lspilot`, database integrity `ok`, module-update descriptor rebuild, subsequent `cache_hit`, request/SSE hooks, and AutoAwesome native-settings hooks.
 - Replaced the old settings Overlay/Dialog with host-native Miuix navigation; the module entry is independent from `关于`, uses `Rounded.AutoAwesome`, and settings state is backed by host Compose `MutableState` bridges.
-- `NativeSettingsNavigationCheck` passes; release/lint/LSP/pi-lens/APK checks and installed runtime startup checks pass for `preview.27`.
+- Corrected `preview.28` release/lint/LSP/pi-lens/APK checks, `NativeSettingsNavigationCheck`, dedicated-route state checks, and exact current-host multi-DEX `HostNativeSettingsAbiCheck` pass. Installed candidate SHA-256 is `999d40e423cdbb5f1d0127fb27c8f7ba6f0211d70e8872717bfdcda87f381f44` (678,687 bytes).
+- The module settings surface now uses a dedicated sentinel host route rather than reusing the host About route. Manual acceptance passed after alternating About and module entries in both orders following back navigation.
+- The rejected first local `preview.28` candidate injected nodes from the host bottom-padding Composable and crashed Compose. The installed correction performs LazyColumn item registration instead; two corrected start captures contain no FATAL/Compose error.
 
 ## Next action
 
-Manually verify icon separation, native page back navigation, switch/dropdown persistence, request mutation, and usage in the installed `preview.27`.
+Commit the verified stable source and evidence, tag `v1.7.4`, push, publish a non-prerelease GitHub Release, and verify the downloaded asset hash.
 
 ## Constraints
 
@@ -78,4 +81,5 @@ Manually verify icon separation, native page back navigation, switch/dropdown pe
 - Preserve unrelated dirty files.
 - Use JDK 17 and the Android build flags in `docs/project/constraints.md`.
 - Manual UI acceptance must remain user-driven.
+- Local install must precede user acceptance; user acceptance must precede commit, tag, push, or GitHub release. Commit and release may be performed together only after acceptance.
 - Keep the AAPT2 container workaround private; replace it when an arm64-compatible AGP 9.3 AAPT2 is available.
