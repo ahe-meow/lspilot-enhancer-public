@@ -6,13 +6,11 @@
 
 ## Current phase
 
-Repository-side feature removal, package migration to `com.lspilot.enhancer`, conservative request/SSE ABI discovery, and release verification are complete. Installed `1.7.4-preview.26` removes automatic retry and stores request/SSE-only descriptors with cache schema `7`. Current source adds a separate host-native Miuix settings page and `Rounded.AutoAwesome` entry.
+Repository-side feature removal, package migration to `com.lspilot.enhancer`, conservative request/SSE ABI discovery, and release verification are complete. Installed `1.7.4-preview.27` removes automatic retry, stores request/SSE-only descriptors with cache schema `7`, and adds a separate host-native Miuix settings page with a `Rounded.AutoAwesome` entry.
 
-The verified APK is published as GitHub pre-release `v1.7.4-preview.26`, installed as `com.lspilot.enhancer`, enabled in LSPosed, and scoped to `me.yun.lspilot`. Source, Termux-private stage, `/data/local/tmp`, installed `base.apk`, and re-downloaded release asset all match SHA-256 `7051672f6a2335927abf3cc5bb1e4af7ec70f897bec921a9e7553fb564397e73`.
+The verified APK is published as GitHub pre-release `v1.7.4-preview.27`, installed as `com.lspilot.enhancer`, enabled in LSPosed, and scoped to `me.yun.lspilot`. Source, GitHub download, Termux-private stage, `/data/local/tmp`, and installed `base.apk` all match SHA-256 `24702f702ee67c6b37a5305f7f5e983f4523f7d2da18c4475c82609b16d2dff1`.
 
-Two cold starts passed: the first rebuilt cache schema `7` with reason `cache_schema_changed`; the second logged `cache_hit`, `provider=zj8`, `requestBody=true`, `sseUsage=true`, and settings hooks. Neither start logged automatic-retry hook installation.
-
-The `1.7.4-preview.27` candidate contains the native settings-page change. It is statically verified but not published or installed; the installed device remains on `v1.7.4-preview.26` until explicit release/install approval.
+Two cold starts passed: the first rebuilt the ABI descriptor for module version code `64`; the second logged `cache_hit`, `provider=zj8`, `requestBody=true`, `sseUsage=true`, and `Native host settings page hooks installed with AutoAwesome icon`. Neither start logged automatic-retry hook installation or native-settings hook failure.
 
 ## Execution order
 

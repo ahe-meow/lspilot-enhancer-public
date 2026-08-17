@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 1.7.4-preview.27
+
 - Replace the settings Overlay/Dialog with a separate host-native Miuix settings page reached through host navigation.
 - Add the module entry as an independent settings card with the unused-in-settings `Rounded.AutoAwesome` icon, separate from the host `关于` row.
 

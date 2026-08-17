@@ -6,13 +6,13 @@
 
 ## Source state
 
-- Branch: `main`; latest released commit/tag: `07a57b0d95bfe3f061bdb5260b342aceb3422c91` / `v1.7.4-preview.26`; current candidate is `v1.7.4-preview.27`.
+- Branch: `main`; latest released commit/tag: `5ac334b5369c915daaa3a940b36b4c74b72a2834` / `v1.7.4-preview.27`.
 - Module identity uses `com.lspilot.enhancer`; the exact preview artifact is installed, enabled, and scoped to `me.yun.lspilot` in LSPosed.
 - Context compression was explicitly removed from production source, chat UI, settings, tests, and active documentation.
 - Removed legacy preference keys and stored summary-record prefixes are cleaned from host-local module preferences during initialization; other settings are untouched.
 - Retained features are Prompt Cache policy, compatible retention, usage reporting, reasoning effort, diagnostics, and settings UI. Automatic retry and its host-context writes are removed from source and the installed artifact.
-- Current source and installed `v1.7.4-preview.26` apply the configured `reasoning_effort` and `prompt_cache_retention=24h` fallback to every non-empty model name. Blank models remain unchanged and GPT-5.6 explicit breakpoints take precedence.
-- The current source adds a separate host-native Miuix settings card with `Rounded.AutoAwesome`, routes through the host settings navigation, and renders native switch/dropdown preferences. The installed `v1.7.4-preview.26` predates this UI change.
+- Current source and installed `v1.7.4-preview.27` apply the configured `reasoning_effort` and `prompt_cache_retention=24h` fallback to every non-empty model name. Blank models remain unchanged and GPT-5.6 explicit breakpoints take precedence.
+- Installed `v1.7.4-preview.27` adds a separate host-native Miuix settings card with `Rounded.AutoAwesome`, routes through the host settings navigation, and renders native switch/dropdown preferences.
 - DexKit runtime packaging was removed. Runtime discovery uses platform `dalvik.system.DexFile` to avoid colliding with the host's DexKit/JNI state.
 
 ## Repository verification — 2026-08-17
@@ -23,17 +23,17 @@
 - `aapt2 dump badging` reports package `com.lspilot.enhancer`, version code `63`, and version name `1.7.4-preview.26`; ZIP integrity, required Xposed entries, APK v2 signature, signer continuity, DEX markers, `git diff --check`, pi-lens, and LSP diagnostics passed.
 - `RequestAbiCheck`, `HostUpdateDetectionCheck`, `PromptCachePolicy`, and `ReasoningPolicy` passed on Dalvik; retry-only checks were removed with the feature.
 - Production and release DEX scans contain no automatic retry manager, retry/stop/session/stream/repository hooks, StateFlow message replacement, repository message persistence, or retry-specific ABI descriptor fields. The request ABI cache schema is `7`.
-- The `v1.7.4-preview.27` candidate release build, lint, LSP, pi-lens, DEX marker, APK integrity/signature checks, `NativeSettingsNavigationCheck`, and an on-device current-host multi-DEX ABI resolution check passed. Candidate APK is 677,939 bytes with SHA-256 `24702f702ee67c6b37a5305f7f5e983f4523f7d2da18c4475c82609b16d2dff1`; badging reports version code `64`, version name `1.7.4-preview.27`. It is not published or installed.
+- The `v1.7.4-preview.27` release build, lint, LSP, pi-lens, DEX marker, APK integrity/signature checks, `NativeSettingsNavigationCheck`, and an on-device current-host multi-DEX ABI resolution check passed. APK is 677,939 bytes with SHA-256 `24702f702ee67c6b37a5305f7f5e983f4523f7d2da18c4475c82609b16d2dff1`; badging reports version code `64`, version name `1.7.4-preview.27`.
 - The three pi-lens `unsafe-reflection` findings were removed by replacing equivalent `Class.forName(name, false, loader)` calls with `ClassLoader.loadClass(name)`. A final pi-lens session scan reports no issues; LSP reports no diagnostics for `HostAbi.java` and `DexAbiScanner.java`.
-- GitHub pre-release `v1.7.4-preview.26` is published at <https://github.com/ahe-meow/lspilot-enhancer-public/releases/tag/v1.7.4-preview.26>. The downloaded asset is 675,895 bytes and reproduces SHA-256 `7051672f6a2335927abf3cc5bb1e4af7ec70f897bec921a9e7553fb564397e73`.
+- GitHub pre-release `v1.7.4-preview.27` is published at <https://github.com/ahe-meow/lspilot-enhancer-public/releases/tag/v1.7.4-preview.27>. The downloaded asset is 677,939 bytes and reproduces SHA-256 `24702f702ee67c6b37a5305f7f5e983f4523f7d2da18c4475c82609b16d2dff1`.
 
 ## Device runtime verification — 2026-08-17
 
 - KernelSU RunCommandService reported Android `uid=0(root)` with SELinux domain `u:r:ksu:s0`.
-- Source, GitHub download, Termux-private stage, `/data/local/tmp`, and installed `base.apk` all match SHA-256 `7051672f6a2335927abf3cc5bb1e4af7ec70f897bec921a9e7553fb564397e73`; the installed package reports version code `63` and version name `1.7.4-preview.26`.
+- Source, GitHub download, Termux-private stage, `/data/local/tmp`, and installed `base.apk` all match SHA-256 `24702f702ee67c6b37a5305f7f5e983f4523f7d2da18c4475c82609b16d2dff1`; the installed package reports version code `64` and version name `1.7.4-preview.27`.
 - LSPosed automatically registered the new package at the installed APK path. State is `enabled=1`, `scope_request_blocked=0`, scope is exactly `me.yun.lspilot`, and `pragma integrity_check` returned `ok`.
 - The installed host remains SHA-256 `af2283a2978ea650986988ac3d9c01a39474cdd6410d30b842dd8f15e686149c`.
-- First cold start rebuilt the ABI cache with reason `cache_schema_changed`; the second logged `cache_hit`, `provider=zj8`, `requestBody=true`, `sseUsage=true`, settings hooks, and `LSPilotEnhancer loaded version=1.7.4-preview.26 (63)`. Neither log contains automatic-retry hook installation.
+- First cold start rebuilt the ABI descriptor with reason `module_update`; the second logged `cache_hit`, `provider=zj8`, `requestBody=true`, `sseUsage=true`, `Native host settings page hooks installed with AutoAwesome icon`, and `LSPilotEnhancer loaded version=1.7.4-preview.27 (64)`. Neither log contains automatic-retry hook installation or native-settings hook failure.
 - Manual request/usage/settings scenarios remain user-driven and are not claimed from startup logs. Automatic retry acceptance is no longer applicable to current source.
 
 ## Host context audit — 2026-08-17

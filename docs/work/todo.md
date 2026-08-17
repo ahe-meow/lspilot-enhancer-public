@@ -6,15 +6,16 @@
 
 ## In progress
 
-- `v1.7.4-preview.27` candidate is built and statically verified with a separate host-native Miuix settings page, independent card, and `Rounded.AutoAwesome` icon. It is not published or installed; device remains on `v1.7.4-preview.26`.
+- Manually verify the installed `v1.7.4-preview.27` independent icon, native page navigation, switch/dropdown persistence, request mutation, and usage.
 
 ## Next
 
-- [ ] Publish/install `v1.7.4-preview.27` after explicit approval, then manually verify the independent icon, native page navigation, settings persistence, request mutation, and usage.
+- [ ] Complete the manual `preview.27` UI and live-request acceptance scenarios.
 - [ ] Replace the private AAPT2 APK-container workaround when an arm64-compatible AGP 9.3 AAPT2 is available.
 
 ## Completed
 
+- [x] Publish and install `v1.7.4-preview.27`; verify five-stage SHA-256 equality, LSPosed state/scope/database integrity, module-update ABI rebuild, subsequent `cache_hit`, request/SSE hooks, and the AutoAwesome native-settings hook.
 - [x] Replace the module settings Overlay/Dialog with host-native Miuix navigation; separate the entry from `关于`, use `Rounded.AutoAwesome`, and add navigation-state regression coverage.
 - [x] Pass release/lint, LSP, pi-lens, DEX marker, APK integrity/signature, and `NativeSettingsNavigationCheck` verification for the `preview.27` candidate.
 - [x] Publish and install `v1.7.4-preview.26`; verify SHA-256 across source, GitHub download, Termux-private stage, `/data/local/tmp`, and installed `base.apk`.
