@@ -7,11 +7,11 @@
 ## Repository
 
 - Branch: `main`
-- Baseline HEAD: `4e7a212`
+- Release commit/tag target: `5b2e8b5` / `v1.7.4-preview.24`
 - Inspect `git status` before changes and preserve unrelated tracked or untracked files.
 - Module package: `com.lspilot.enhancer`
 - Host package: `me.yun.lspilot`
-- Android treats the module identity as a new package. The `1.7.4-preview.24` candidate is verified; publishing and device installation remain pending.
+- Android treats the module identity as a new package. GitHub pre-release `v1.7.4-preview.24` is published and hash-verified; device installation remains pending.
 
 ## Active objective
 
@@ -71,7 +71,7 @@ The current update resolved provider `zj8`; the previous `d4eb3066...f5d56` host
 
 ## Next action
 
-Publish `v1.7.4-preview.24` with the verified APK. Device installation, LSPosed enablement/re-scoping, and manual automatic-retry/stop acceptance remain pending.
+Install the published `com.lspilot.enhancer` APK, enable and re-scope it in LSPosed, then complete manual automatic-retry/stop acceptance.
 
 ## Constraints
 

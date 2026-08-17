@@ -19,7 +19,9 @@
 - With JDK 17 and the documented arm64 AAPT2 flags, the final `1.7.4-preview.24` release assembly, test compilation, and lint succeeded in 33s.
 - APK `app/build/outputs/apk/release/app-release.apk` is 697,879 bytes with SHA-256 `51e0c3c044ee1f79a4b93ac5e6c6767e2a22cb81c5dd96ac2a1086fd7f7928aa`.
 - `aapt2 dump badging` reports package `com.lspilot.enhancer`, version code `61`, and version name `1.7.4-preview.24`; ZIP integrity, APK v2 signature, required Xposed entries, retired-feature markers, and `git diff --check` passed.
-- `RequestGroupIsolationCheck`, `HostUpdateDetectionCheck`, `AutoRetryManagerCheck`, `PromptCachePolicy`, and `ReasoningPolicy` passed on Dalvik. Device installation and LSPosed activation remain pending.
+- `RequestGroupIsolationCheck`, `HostUpdateDetectionCheck`, `AutoRetryManagerCheck`, `PromptCachePolicy`, and `ReasoningPolicy` passed on Dalvik.
+- GitHub pre-release `v1.7.4-preview.24` is published at <https://github.com/ahe-meow/lspilot-enhancer-public/releases/tag/v1.7.4-preview.24>. Re-downloading `LSPilot-Enhancer-v1.7.4-preview.24.apk` reproduced SHA-256 `51e0c3c044ee1f79a4b93ac5e6c6767e2a22cb81c5dd96ac2a1086fd7f7928aa`.
+- Device installation and LSPosed activation remain pending.
 
 ## Git ownership recovery — 2026-08-17
 

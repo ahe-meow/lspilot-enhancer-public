@@ -6,17 +6,17 @@
 
 ## In progress
 
-- `1.7.4-preview.24` is built and verified. Publishing is pending; device runtime acceptance still requires installing, enabling, and scoping the new package.
+- `v1.7.4-preview.24` is published and hash-verified. Device runtime acceptance still requires installing, enabling, and scoping the new package.
 
 ## Next
 
 - [ ] Complete any remaining manual automatic-retry and stop-behavior acceptance separately.
 - [ ] Replace the private AAPT2 APK-container workaround when an arm64-compatible AGP 9.3 AAPT2 is available.
-- [ ] Publish `v1.7.4-preview.24` with the verified APK.
 - [ ] Install the new package `com.lspilot.enhancer`; after installation, enable it and re-scope it to `me.yun.lspilot` in LSPosed. The previous installed package must not be treated as changed in place.
 
 ## Completed
 
+- [x] Publish GitHub pre-release `v1.7.4-preview.24` and verify the downloaded APK matches SHA-256 `51e0c3c044ee1f79a4b93ac5e6c6767e2a22cb81c5dd96ac2a1086fd7f7928aa`.
 - [x] Stop the full-history context-compression implementation.
 - [x] Remove compression production classes, UI, settings, persistence, tests, build task, dependency, and active documentation.
 - [x] Adapt the retained request/SSE and retry groups with conservative unique DEX candidates and host-content-hash descriptor caching.

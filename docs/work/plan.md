@@ -8,7 +8,7 @@
 
 Repository-side feature removal, package migration to `com.lspilot.enhancer`, conservative ABI discovery, and release verification are complete. The `1.7.4-preview.24` candidate keeps request/SSE available when retry discovery fails, rejects ambiguous request candidates, and stores request-only descriptors with cache schema `6`.
 
-The candidate APK at `app/build/outputs/apk/release/app-release.apk` passed the focused Dalvik checks, release build, lint, badging, ZIP integrity, v2 signature, retired-feature marker scan, and `git diff --check`. Publishing and device runtime work remain pending; after publication, install the new package, enable it, and re-scope it to `me.yun.lspilot` in LSPosed.
+The verified APK is published as GitHub pre-release `v1.7.4-preview.24`; the downloaded asset hash matches the local artifact. Device runtime work remains pending: install the new package, enable it, and re-scope it to `me.yun.lspilot` in LSPosed.
 
 ## Execution order
 
