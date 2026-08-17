@@ -1,16 +1,11 @@
-package dev.operit.lspilot.enhancer;
+package com.lspilot.enhancer;
 
 import android.content.pm.ApplicationInfo;
 
-import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
-import org.json.JSONArray;
-import org.json.JSONObject;
-
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 
 /** Host ABI resolver for named debug builds and minified release builds. */
@@ -21,26 +16,24 @@ final class HostAbi {
     private static final String NAMED_REPOSITORY = "me.yun.lspilot.data.repository.AiChatRepository";
     private static final String NAMED_MESSAGE = "me.yun.lspilot.data.model.AiChatMessage";
 
-    // LSPilot 1.1.0(11) release APK: r8-map-id-2546d18ea02fa35bf26d0f869df16f1ff4c4106246dc837609bbbe09e1fa1588
-    private static final String MINIFIED_PROVIDER = "ts8";
-    private static final String MINIFIED_VIEW_MODEL = "cb";
-    private static final String MINIFIED_CONFIG = "jb";
-    private static final String MINIFIED_MESSAGE = "g8";
+    // Known minified profiles; the update path still runs structural DEX discovery first.
+    private static final String MINIFIED_PROVIDER = "vj8";
+    private static final String ALTERNATE_MINIFIED_PROVIDER = "xj8";
+    private static final String CURRENT_MINIFIED_PROVIDER = "zj8";
+    private static final String MINIFIED_VIEW_MODEL = "va";
+    private static final String MINIFIED_CONFIG = "cb";
+    private static final String MINIFIED_MESSAGE = "u7";
     private static final String MINIFIED_REPOSITORY = "me.yun.lspilot.data.repository.b";
-    private static final String LEGACY_STREAM_DONE = "nyb$b";
-    private static final String LEGACY_STREAM_ERROR = "nyb$c";
-    private static final String CURRENT_STREAM_DONE = "lwb$b";
-    private static final String CURRENT_STREAM_ERROR = "lwb$c";
-    private static final String HOST_INDEX = "_lspilot_host_index";
-    private static final String HOST_TOOL_CALLS = "_lspilot_tool_calls";
-    private static final String HOST_TOOL_CALL_ID = "_lspilot_tool_call_id";
+    private static final String LEGACY_STREAM_DONE = "lwb$b";
+    private static final String LEGACY_STREAM_ERROR = "lwb$c";
+    private static final String CURRENT_STREAM_DONE = "uob$b";
+    private static final String CURRENT_STREAM_ERROR = "uob$c";
 
     final Class<?> providerClass;
     final Class<?> configClass;
     final Class<?> viewModelClass;
     final Class<?> messageClass;
     final Class<?> repositoryClass;
-    final Class<?> aiChatRouteClass;
     final boolean minified;
     final Method buildRequestMethod;
     final Method scanSseDataMethod;
@@ -51,32 +44,24 @@ final class HostAbi {
     final Method stopGenerationMethod;
     final Method repositoryAddMessageMethod;
     final Accessors accessors;
-    final Constructor<?> messageConstructor;
     final Field viewModelStateField;
     final Method stateFlowValueMethod;
     final Method stateMessagesMethod;
-    final Method stateConfigMethod;
-    final Method stateSelectedModelMethod;
-    final Method stateLoadingMethod;
     final Method stateSessionMethod;
     final Method sessionIdMethod;
 
     HostAbi(Class<?> providerClass, Class<?> configClass, Class<?> viewModelClass,
-            Class<?> messageClass, Class<?> repositoryClass, Class<?> aiChatRouteClass,
-            boolean minified,
+            Class<?> messageClass, Class<?> repositoryClass, boolean minified,
             Method buildRequestMethod, Method scanSseDataMethod, Method streamMessagesMethod,
             Method loadSessionMethod, Method sendMessageMethod, Method retryResponseMethod,
-            Method stopGenerationMethod, Method repositoryAddMessageMethod,
-            Accessors accessors, Constructor<?> messageConstructor, Field viewModelStateField,
-            Method stateFlowValueMethod, Method stateMessagesMethod, Method stateConfigMethod,
-            Method stateSelectedModelMethod, Method stateLoadingMethod, Method stateSessionMethod,
-            Method sessionIdMethod) {
+            Method stopGenerationMethod, Method repositoryAddMessageMethod, Accessors accessors,
+            Field viewModelStateField, Method stateFlowValueMethod, Method stateMessagesMethod,
+            Method stateSessionMethod, Method sessionIdMethod) {
         this.providerClass = providerClass;
         this.configClass = configClass;
         this.viewModelClass = viewModelClass;
         this.messageClass = messageClass;
         this.repositoryClass = repositoryClass;
-        this.aiChatRouteClass = aiChatRouteClass;
         this.minified = minified;
         this.buildRequestMethod = buildRequestMethod;
         this.scanSseDataMethod = scanSseDataMethod;
@@ -87,13 +72,9 @@ final class HostAbi {
         this.stopGenerationMethod = stopGenerationMethod;
         this.repositoryAddMessageMethod = repositoryAddMessageMethod;
         this.accessors = accessors;
-        this.messageConstructor = messageConstructor;
         this.viewModelStateField = viewModelStateField;
         this.stateFlowValueMethod = stateFlowValueMethod;
         this.stateMessagesMethod = stateMessagesMethod;
-        this.stateConfigMethod = stateConfigMethod;
-        this.stateSelectedModelMethod = stateSelectedModelMethod;
-        this.stateLoadingMethod = stateLoadingMethod;
         this.stateSessionMethod = stateSessionMethod;
         this.sessionIdMethod = sessionIdMethod;
     }
@@ -112,6 +93,27 @@ final class HostAbi {
     }
 
     static HostAbi resolveFresh(ClassLoader loader, String[] dexPaths) throws Exception {
+        return resolveFresh(loader, dexPaths, false);
+    }
+
+    static HostAbi resolveFresh(ClassLoader loader, String[] dexPaths,
+            boolean preferDexScan) throws Exception {
+        Throwable dexScanError = null;
+        if (preferDexScan && dexPaths != null && dexPaths.length > 0) {
+            try {
+                HostAbi scanned = DexAbiScanner.resolve(loader, dexPaths);
+                DebugLogger.i("host update DEX self-adaptation resolved provider="
+                        + scanned.providerClass.getName());
+                return scanned;
+            } catch (DexAbiScanner.AmbiguousRequestException error) {
+                throw error;
+            } catch (Throwable error) {
+                dexScanError = error;
+                DebugLogger.w("host update DEX self-adaptation failed; trying known profiles: "
+                        + shortError(error));
+            }
+        }
+
         Throwable namedError;
         try {
             return resolveNamed(loader);
@@ -119,50 +121,51 @@ final class HostAbi {
             namedError = error;
         }
 
-        Throwable dexKitError = null;
-        Throwable dexScanError = null;
-        if (dexPaths != null && dexPaths.length > 0) {
-            try {
-                HostAbi scanned = DexKitAbiScanner.resolve(loader, dexPaths);
-                DebugLogger.w("named host ABI unavailable; using DexKit-assisted ABI: "
-                        + shortError(namedError));
-                return scanned;
-            } catch (Throwable error) {
-                dexKitError = error;
-                DebugLogger.w("DexKit-assisted ABI unavailable; trying legacy DEX scan: "
-                        + shortError(error));
-            }
-            try {
-                HostAbi scanned = DexAbiScanner.resolve(loader, dexPaths);
-                DebugLogger.w("DexKit-assisted ABI unavailable; using legacy DEX scan: "
-                        + shortError(dexKitError));
-                return scanned;
-            } catch (Throwable error) {
-                dexScanError = error;
-            }
-        }
-
         try {
             HostAbi minified = resolveMinified110(loader);
-            DebugLogger.w("dynamic host ABI unavailable; using known minified ABI: dexkit="
-                    + shortError(dexKitError) + " dex=" + shortError(dexScanError));
+            DebugLogger.w("named host ABI unavailable; using known minified ABI: "
+                    + shortError(namedError));
             return minified;
-        } catch (Throwable minifiedError) {
+        } catch (Throwable minifiedFirstError) {
+            if (dexScanError == null && dexPaths != null && dexPaths.length > 0) {
+                try {
+                    HostAbi scanned = DexAbiScanner.resolve(loader, dexPaths);
+                    DebugLogger.w("named/minified ABI unavailable; using structural DEX scan: "
+                            + shortError(minifiedFirstError));
+                    return scanned;
+                } catch (Throwable error) {
+                    dexScanError = error;
+                }
+            }
+
             NoSuchMethodException combined = new NoSuchMethodException(
                     "host ABI unavailable; named=" + shortError(namedError)
-                            + " dexkit=" + shortError(dexKitError)
-                            + " dex=" + shortError(dexScanError)
-                            + " minified=" + shortError(minifiedError));
-            combined.initCause(dexScanError != null ? dexScanError
-                    : (dexKitError != null ? dexKitError : minifiedError));
+                            + " minified=" + shortError(minifiedFirstError)
+                            + " dex=" + shortError(dexScanError));
+            combined.initCause(dexScanError != null ? dexScanError : minifiedFirstError);
             throw combined;
         }
+    }
+
+    boolean hasRequestAbi() {
+        return buildRequestMethod != null && scanSseDataMethod != null;
+    }
+
+    boolean hasRetryAbi() {
+        return streamMessagesMethod != null && loadSessionMethod != null
+                && sendMessageMethod != null && retryResponseMethod != null
+                && stopGenerationMethod != null && repositoryAddMessageMethod != null
+                && accessors != null && accessors.hasRetryAccessors()
+                && viewModelStateField != null && stateFlowValueMethod != null
+                && stateMessagesMethod != null && stateSessionMethod != null
+                && sessionIdMethod != null;
     }
 
     static Class<?> resolveViewModelClass(ClassLoader loader) throws ClassNotFoundException {
         Class<?> named = optionalClass(loader, NAMED_VIEW_MODEL);
         return named != null ? named : Class.forName(MINIFIED_VIEW_MODEL, false, loader);
     }
+
 
     static Method findLoadSessionMethod(Class<?> viewModelClass, Class<?> contextClass) throws Exception {
         Method named = optionalDeclaredMethod(viewModelClass, "loadSession",
@@ -219,123 +222,59 @@ final class HostAbi {
                 || method.getReturnType() != void.class
                 || method.getParameterTypes().length != 0
                 || Modifier.isStatic(method.getModifiers())) {
-            throw new NoSuchMethodException("DexKit " + role + " hint is incompatible with "
+            throw new NoSuchMethodException("structural " + role + " hint is incompatible with "
                     + owner.getName());
         }
         return accessible(method);
     }
 
     void validateAccessorBindings() throws Exception {
-        if (accessors == null || !accessors.hasCompressionAccessors()) {
-            throw new NoSuchMethodException("config/message accessors are incomplete");
-        }
-        Object config = newConfigProbe();
-        checkEquals("provider_probe", providerId(config), "providerId accessor");
-        checkEquals("model_probe", modelName(config), "modelName accessor");
-        checkEquals("key_probe", apiKey(config), "apiKey accessor");
-        checkEquals("https://probe.local/v1", fullApiUrl(config), "fullApiUrl accessor");
-        Object message = newStatusMessage("message_probe", "user", "content_probe", 1L);
-        checkEquals("message_probe", messageId(message), "message id accessor");
-        checkEquals("user", messageRole(message), "message role accessor");
-        checkEquals("content_probe", messageContent(message), "message content accessor");
+        if (accessors == null) return;
+        if (!accessors.hasRetryAccessors()) return;
+        validateStringAccessor(accessors.messageRole, "message role");
+        validateStringAccessor(accessors.messageContent, "message content");
+        validateStringAccessor(accessors.messageId, "message id");
     }
 
-    private Object newConfigProbe() throws Exception {
-        Constructor<?> constructor = configClass.getDeclaredConstructor(
-                String.class, String.class, String.class, String.class,
-                String.class, String.class, List.class);
-        constructor.setAccessible(true);
-        return constructor.newInstance("id_probe", "name_probe", "provider_probe", "key_probe",
-                "https://probe.local", "/v1", Collections.singletonList("model_probe"));
-    }
-
-    private static void checkEquals(String expected, String actual, String label) {
-        if (!expected.equals(actual)) {
-            throw new IllegalStateException(label + " returned " + actual);
+    private void validateStringAccessor(Method method, String label) throws NoSuchMethodException {
+        if (method == null || method.getDeclaringClass() != messageClass
+                || method.getReturnType() != String.class
+                || method.getParameterTypes().length != 0
+                || Modifier.isStatic(method.getModifiers())) {
+            throw new NoSuchMethodException(label + " accessor is incompatible");
         }
     }
 
     static final class Accessors {
-        final Method configProviderId;
-        final Method configModelName;
-        final Method configApiKey;
-        final Method configFullApiUrl;
         final Method messageRole;
         final Method messageContent;
         final Method messageId;
-        final Method messageToolCalls;
-        final Method messageToolCallId;
 
-        Accessors(Method configProviderId, Method configModelName, Method configApiKey,
-                Method configFullApiUrl, Method messageRole, Method messageContent,
-                Method messageId, Method messageToolCalls, Method messageToolCallId) {
-            this.configProviderId = configProviderId;
-            this.configModelName = configModelName;
-            this.configApiKey = configApiKey;
-            this.configFullApiUrl = configFullApiUrl;
+        Accessors(Method messageRole, Method messageContent, Method messageId) {
             this.messageRole = messageRole;
             this.messageContent = messageContent;
             this.messageId = messageId;
-            this.messageToolCalls = messageToolCalls;
-            this.messageToolCallId = messageToolCallId;
         }
 
-        boolean hasCompressionAccessors() {
-            return configModelName != null && configFullApiUrl != null
-                    && messageRole != null && messageContent != null;
+        boolean hasRetryAccessors() {
+            return messageRole != null && messageContent != null && messageId != null;
         }
     }
 
-    Object newStatusMessage(String id, String role, String content, long timestamp) throws Exception {
-        if (messageConstructor == null) throw new NoSuchMethodException("message constructor unavailable");
-        return messageConstructor.newInstance(
-                id, role, content, false, "", 0L, 0L, timestamp, 0,
-                Collections.emptyList(), 0, Collections.emptyList(),
-                Collections.emptyList(), "", Collections.singletonList("content"),
-                false, 0, 0, 0, 0, 0L, 0, 0, 0L, 0);
-    }
-
-    Object copyConfigWithSingleModel(Object config, String selectedModel) throws Exception {
-        if (config == null || selectedModel == null || selectedModel.trim().isEmpty()) return config;
-        Method copyDefault = findConfigCopyDefault(config.getClass());
-        return copyDefault.invoke(null, config, null, null, null, null, null,
-                null, Collections.singletonList(selectedModel), 0x3f, null);
-    }
-
-    String providerId(Object config) throws Exception {
-        return nonEmpty(invokeString(config, accessors.configProviderId), "providerId");
-    }
-
-    String modelName(Object config) throws Exception {
-        return nonEmpty(invokeString(config, accessors.configModelName), "modelName");
-    }
-
-    String apiKey(Object config) throws Exception {
-        return nonEmpty(invokeString(config, accessors.configApiKey), "apiKey");
-    }
-
-    String fullApiUrl(Object config) throws Exception {
-        return nonEmpty(invokeString(config, accessors.configFullApiUrl), "fullApiUrl");
-    }
-
-    String providerSignature(Object config) throws Exception {
-        return fullApiUrl(config) + "\n" + modelName(config);
-    }
-
-    boolean hasCompressionAccessors() {
-        return accessors != null && accessors.hasCompressionAccessors();
+    boolean hasRetryAccessors() {
+        return accessors != null && accessors.hasRetryAccessors();
     }
 
     String messageRole(Object message) {
-        return invokeStringOrNull(message, accessors.messageRole);
+        return accessors == null ? null : invokeStringOrNull(message, accessors.messageRole);
     }
 
     String messageContent(Object message) {
-        return invokeStringOrNull(message, accessors.messageContent);
+        return accessors == null ? null : invokeStringOrNull(message, accessors.messageContent);
     }
 
     String messageId(Object message) {
-        return invokeStringOrNull(message, accessors.messageId);
+        return accessors == null ? null : invokeStringOrNull(message, accessors.messageId);
     }
 
     Object copyMessageWithContent(Object message, String content) throws Exception {
@@ -353,7 +292,7 @@ final class HostAbi {
             args[field + 1] = primitiveDefault(types[field + 1]);
             mask |= 1 << field;
         }
-        // g8's third data field is content. Clear only that default-mask bit.
+        // u7's third data field is content. Clear only that default-mask bit.
         args[3] = content == null ? "" : content;
         mask &= ~(1 << 2);
         args[fieldCount + 1] = mask;
@@ -361,10 +300,6 @@ final class HostAbi {
         return copyDefault.invoke(null, args);
     }
 
-
-    private Object messageValue(Object message, Method method) {
-        return invokeNoArgOrNull(message, method);
-    }
 
     Object currentState(Object viewModel) throws Exception {
         if (!minified || viewModelStateField == null || stateFlowValueMethod == null) return null;
@@ -374,7 +309,8 @@ final class HostAbi {
 
     @SuppressWarnings("unchecked")
     List<?> stateMessages(Object state) throws Exception {
-        return state == null ? null : (List<?>) stateMessagesMethod.invoke(state);
+        return state == null || stateMessagesMethod == null
+                ? null : (List<?>) stateMessagesMethod.invoke(state);
     }
 
     boolean replaceStateMessages(Object viewModel, List<?> messages) throws Exception {
@@ -407,20 +343,6 @@ final class HostAbi {
         replaceMessages.invoke(repository, chatId, new ArrayList<>(messages));
     }
 
-    Object stateConfig(Object state) throws Exception {
-        return state == null ? null : stateConfigMethod.invoke(state);
-    }
-
-    String stateSelectedModel(Object state) throws Exception {
-        if (state == null) return null;
-        Object value = stateSelectedModelMethod.invoke(state);
-        return value == null ? null : String.valueOf(value);
-    }
-
-    boolean stateLoading(Object state) throws Exception {
-        return state != null && Boolean.TRUE.equals(stateLoadingMethod.invoke(state));
-    }
-
     String currentChatId(Object viewModel) {
         try {
             Object state = currentState(viewModel);
@@ -434,39 +356,6 @@ final class HostAbi {
         }
     }
 
-    JSONArray serializeMessages(List<?> messages) throws Exception {
-        JSONArray result = new JSONArray();
-        if (messages == null) return result;
-        for (int index = 0; index < messages.size(); index++) {
-            Object message = messages.get(index);
-            String role = messageRole(message);
-            String content = messageContent(message);
-            if (role == null || content == null) continue;
-            JSONObject serialized = new JSONObject().put("role", role).put("content", content)
-                    .put(HOST_INDEX, index);
-            Object toolCalls = messageValue(message, accessors.messageToolCalls);
-            Object toolCallId = messageValue(message, accessors.messageToolCallId);
-            if ("assistant".equals(role) && hasItems(toolCalls)) {
-                serialized.put(HOST_TOOL_CALLS, String.valueOf(toolCalls));
-            }
-            if (toolCallId != null && !String.valueOf(toolCallId).isEmpty()) {
-                serialized.put(HOST_TOOL_CALL_ID, String.valueOf(toolCallId));
-            }
-            result.put(serialized);
-        }
-        return result;
-    }
-
-    private static boolean hasItems(Object value) {
-        if (value instanceof List) return !((List<?>) value).isEmpty();
-        if (value instanceof JSONArray) return ((JSONArray) value).length() > 0;
-        if (value instanceof String) {
-            String text = ((String) value).trim();
-            return !text.isEmpty() && !"[]".equals(text) && !"null".equals(text);
-        }
-        return value != null && !JSONObject.NULL.equals(value);
-    }
-
     private static HostAbi resolveNamed(ClassLoader loader) throws Exception {
         Class<?> providerClass = Class.forName(NAMED_PROVIDER, false, loader);
         Class<?> configClass = Class.forName(NAMED_CONFIG, false, loader);
@@ -476,8 +365,7 @@ final class HostAbi {
         Method buildRequest = providerClass.getDeclaredMethod("buildOpenAiRequestBody",
                 configClass, List.class, String.class, boolean.class);
         requireReturnType(buildRequest, String.class);
-        Class<?> function1Class = Class.forName(
-                "kotlin.jvm.functions.Function1", false, loader);
+        Class<?> function1Class = Class.forName("kotlin.jvm.functions.Function1", false, loader);
         Method scanSseData = providerClass.getDeclaredMethod(
                 "scanSseData", String.class, function1Class);
         requireReturnType(scanSseData, boolean.class);
@@ -489,72 +377,122 @@ final class HostAbi {
         Method retryResponse = findRetryResponseMethod(viewModelClass);
         Method stopGeneration = findStopGenerationMethod(viewModelClass);
         Method addMessage = repositoryClass.getMethod("addMessage", String.class, messageClass);
-        Constructor<?> messageConstructor = findMessageConstructor(messageClass);
-        Class<?> aiChatRouteClass = optionalClass(loader,
-                "me.yun.lspilot.ui.navigation.Route$AiChat");
-        HostAbi abi = new HostAbi(providerClass, configClass, viewModelClass, messageClass, repositoryClass,
-                aiChatRouteClass, false, accessible(buildRequest), accessible(scanSseData),
+        HostAbi abi = new HostAbi(providerClass, configClass, viewModelClass, messageClass,
+                repositoryClass, false, accessible(buildRequest), accessible(scanSseData),
                 accessible(streamMessages), loadSession, sendMessage, retryResponse, stopGeneration,
-                accessible(addMessage), bindAccessors(configClass, messageClass, null),
-                messageConstructor, null, null, null, null, null, null, null, null);
+                accessible(addMessage), bindAccessors(messageClass, null),
+                null, null, null, null, null);
         abi.validateAccessorBindings();
         return abi;
     }
 
     private static HostAbi resolveMinified110(ClassLoader loader) throws Exception {
-        Class<?> providerClass = Class.forName(MINIFIED_PROVIDER, false, loader);
+        Throwable firstError;
+        try {
+            return resolveMinifiedProfile(loader, MINIFIED_PROVIDER);
+        } catch (Throwable error) {
+            firstError = error;
+        }
+        Throwable alternateError;
+        try {
+            return resolveMinifiedProfile(loader, ALTERNATE_MINIFIED_PROVIDER);
+        } catch (Throwable error) {
+            alternateError = error;
+        }
+        try {
+            return resolveMinifiedProfile(loader, CURRENT_MINIFIED_PROVIDER);
+        } catch (Throwable currentError) {
+            currentError.addSuppressed(firstError);
+            currentError.addSuppressed(alternateError);
+            if (currentError instanceof Exception) throw (Exception) currentError;
+            throw new Exception(currentError);
+        }
+    }
+
+    private static HostAbi resolveMinifiedProfile(ClassLoader loader, String providerName)
+        throws Exception {
+        Class<?> providerClass = Class.forName(providerName, false, loader);
         Class<?> configClass = Class.forName(MINIFIED_CONFIG, false, loader);
         Class<?> viewModelClass = Class.forName(MINIFIED_VIEW_MODEL, false, loader);
         Class<?> messageClass = Class.forName(MINIFIED_MESSAGE, false, loader);
         Class<?> repositoryClass = Class.forName(MINIFIED_REPOSITORY, false, loader);
-        Method buildRequest = providerClass.getDeclaredMethod("p",
-                configClass, List.class, String.class, boolean.class);
-        requireReturnType(buildRequest, String.class);
-        Class<?> function1Class = Class.forName(
-                "kotlin.jvm.functions.Function1", false, loader);
+        Class<?> function1Class = Class.forName("kotlin.jvm.functions.Function1", false, loader);
+        Class<?> contextClass = Class.forName("android.content.Context", false, loader);
+        Method buildRequest = providerClass.getDeclaredMethod(
+                "p", configClass, List.class, String.class, boolean.class);
         Method scanSseData = providerClass.getDeclaredMethod("t", String.class, function1Class);
-        requireReturnType(scanSseData, boolean.class);
-        Method streamMessages = findMethod(viewModelClass, void.class,
-                configClass, List.class, function1Class);
-        Method loadSession = findLoadSessionMethod(viewModelClass,
-                Class.forName("android.content.Context", false, loader));
-        Method sendMessage = findSendMessageMethod(viewModelClass);
-        Method retryResponse = findRetryResponseMethod(viewModelClass);
-        Method stopGeneration = findStopGenerationMethod(viewModelClass);
-        Method addMessage = repositoryClass.getMethod("c", String.class, messageClass);
-        Constructor<?> messageConstructor = findMessageConstructor(messageClass);
-        Class<?> stateClass = Class.forName("va", false, loader);
-        Field viewModelState = findStateField(viewModelClass, stateClass);
-        Method stateFlowValue = viewModelState.getType().getMethod("getValue");
-        Method stateMessages = stateClass.getMethod("d");
-        Method stateConfig = stateClass.getMethod("g");
-        Method stateSelectedModel = stateClass.getMethod("f");
-        Method stateLoading = stateClass.getMethod("i");
-        Method stateSession = stateClass.getMethod("h");
-        Class<?> sessionClass = Class.forName("ua", false, loader);
-        Method sessionId = sessionClass.getMethod("d");
-        Class<?> aiChatRouteClass = optionalClass(loader, "lka$b");
-        HostAbi abi = new HostAbi(providerClass, configClass, viewModelClass, messageClass, repositoryClass,
-                aiChatRouteClass, true, accessible(buildRequest), accessible(scanSseData),
-                accessible(streamMessages), loadSession, sendMessage, retryResponse, stopGeneration,
-                accessible(addMessage), bindAccessors(configClass, messageClass, null),
-                messageConstructor, accessible(viewModelState),
-                accessible(stateFlowValue), accessible(stateMessages), accessible(stateConfig),
-                accessible(stateSelectedModel), accessible(stateLoading), accessible(stateSession),
+        Method streamMessages = optionalDeclaredMethod(viewModelClass,
+                "w", configClass, List.class, function1Class);
+        Method loadSession = optionalDeclaredMethod(viewModelClass,
+                "F", String.class, String.class, contextClass);
+        Method sendMessage = optionalDeclaredMethod(viewModelClass, "P");
+        Method retryResponse = optionalDeclaredMethod(viewModelClass, "J");
+        Method stopGeneration = optionalDeclaredMethod(viewModelClass, "Q");
+        Method addMessage = optionalMethod(repositoryClass, "c", String.class, messageClass);
+        if (streamMessages != null && streamMessages.getReturnType() != void.class) streamMessages = null;
+        if (loadSession != null && loadSession.getReturnType() != void.class) loadSession = null;
+        if (sendMessage != null && sendMessage.getReturnType() != void.class) sendMessage = null;
+        if (retryResponse != null && retryResponse.getReturnType() != void.class) retryResponse = null;
+        if (stopGeneration != null && stopGeneration.getReturnType() != void.class) stopGeneration = null;
+        if (addMessage != null && addMessage.getReturnType() != void.class) addMessage = null;
+
+        Field viewModelState = null;
+        Method stateFlowValue = null;
+        Method stateMessages = null;
+        Method stateSession = null;
+        Method sessionId = null;
+        Class<?> stateClass = optionalClass(loader, "oa");
+        Class<?> sessionClass = optionalClass(loader, "na");
+        if (stateClass != null && sessionClass != null) {
+            try {
+                viewModelState = findStateField(viewModelClass, stateClass);
+                stateFlowValue = viewModelState.getType().getMethod("getValue");
+                stateMessages = optionalDeclaredMethod(stateClass, "e");
+                stateSession = optionalDeclaredMethod(stateClass, "j");
+                sessionId = optionalDeclaredMethod(sessionClass, "d");
+                if (stateMessages != null && !List.class.isAssignableFrom(stateMessages.getReturnType())) {
+                    stateMessages = null;
+                }
+                if (stateSession != null && stateSession.getReturnType() != sessionClass) {
+                    stateSession = null;
+                }
+                if (sessionId != null && sessionId.getReturnType() != String.class) sessionId = null;
+            } catch (Throwable ignored) {
+                viewModelState = null;
+                stateFlowValue = null;
+                stateMessages = null;
+                stateSession = null;
+                sessionId = null;
+            }
+        }
+        HostAbi abi = new HostAbi(providerClass, configClass, viewModelClass, messageClass,
+                repositoryClass, true, accessible(buildRequest), accessible(scanSseData),
+                accessible(streamMessages), accessible(loadSession), accessible(sendMessage),
+                accessible(retryResponse), accessible(stopGeneration), accessible(addMessage),
+                bindAccessors(messageClass, null), accessible(viewModelState),
+                accessible(stateFlowValue), accessible(stateMessages), accessible(stateSession),
                 accessible(sessionId));
         abi.validateAccessorBindings();
         return abi;
     }
 
+    static HostAbi minifiedRequestFromDex(Class<?> providerClass, Class<?> configClass,
+            Method buildRequestMethod, Method scanSseDataMethod) throws Exception {
+        requireReturnType(buildRequestMethod, String.class);
+        requireReturnType(scanSseDataMethod, boolean.class);
+        return new HostAbi(providerClass, configClass, null, null, null, true,
+                accessible(buildRequestMethod), accessible(scanSseDataMethod),
+                null, null, null, null, null, null, null,
+                null, null, null, null, null);
+    }
+
     static HostAbi minifiedFromDex(Class<?> providerClass, Class<?> configClass,
             Class<?> viewModelClass, Class<?> messageClass, Class<?> repositoryClass,
-            Class<?> aiChatRouteClass, Method buildRequestMethod, Method scanSseDataMethod,
-            Method streamMessagesMethod, Method sendMessageHint, Method retryResponseHint,
-            Method stopGenerationHint, Method repositoryAddMessageMethod,
-            DexAbiScanner.AccessorNames accessorNames, Class<?> stateClass,
-            Method stateMessagesMethod, Method stateConfigMethod, Method stateSelectedModelMethod,
-            Method stateLoadingMethod, Method stateSessionMethod, Method sessionIdMethod)
-            throws Exception {
+            Method buildRequestMethod, Method scanSseDataMethod, Method streamMessagesMethod,
+            Method sendMessageHint, Method retryResponseHint, Method stopGenerationHint,
+            Method repositoryAddMessageMethod, DexAbiScanner.AccessorNames accessorNames,
+            Class<?> stateClass, Method stateMessagesMethod, Method stateSessionMethod,
+            Method sessionIdMethod) throws Exception {
         requireReturnType(buildRequestMethod, String.class);
         requireReturnType(scanSseDataMethod, boolean.class);
         Method loadSession = findLoadSessionMethod(viewModelClass,
@@ -565,16 +503,14 @@ final class HostAbi {
         if (retryResponse == null) retryResponse = findRetryResponseMethod(viewModelClass);
         Method stopGeneration = requireNoArgVoidHint(viewModelClass, stopGenerationHint, "stopGeneration");
         if (stopGeneration == null) stopGeneration = findStopGenerationMethod(viewModelClass);
-        Constructor<?> messageConstructor = findMessageConstructor(messageClass);
         Field viewModelState = findStateField(viewModelClass, stateClass);
         Method stateFlowValue = viewModelState.getType().getMethod("getValue");
-        HostAbi abi = new HostAbi(providerClass, configClass, viewModelClass, messageClass, repositoryClass,
-                aiChatRouteClass, true, accessible(buildRequestMethod), accessible(scanSseDataMethod),
-                accessible(streamMessagesMethod), loadSession, sendMessage, retryResponse, stopGeneration,
-                accessible(repositoryAddMessageMethod), bindAccessors(configClass, messageClass, accessorNames),
-                messageConstructor, accessible(viewModelState),
-                accessible(stateFlowValue), accessible(stateMessagesMethod), accessible(stateConfigMethod),
-                accessible(stateSelectedModelMethod), accessible(stateLoadingMethod),
+        HostAbi abi = new HostAbi(providerClass, configClass, viewModelClass, messageClass,
+                repositoryClass, true, accessible(buildRequestMethod), accessible(scanSseDataMethod),
+                accessible(streamMessagesMethod), loadSession, sendMessage, retryResponse,
+                stopGeneration, accessible(repositoryAddMessageMethod),
+                bindAccessors(messageClass, accessorNames), accessible(viewModelState),
+                accessible(stateFlowValue), accessible(stateMessagesMethod),
                 accessible(stateSessionMethod), accessible(sessionIdMethod));
         abi.validateAccessorBindings();
         return abi;
@@ -596,8 +532,21 @@ final class HostAbi {
 
     private Object copyStateWithMessages(Object state, List<?> messages) throws Exception {
         Method copyDefault = findStateCopyDefault(state.getClass());
-        return copyDefault.invoke(null, state, null, messages, null, false,
-                null, null, null, null, 0xfd, null);
+        Class<?>[] types = copyDefault.getParameterTypes();
+        int fieldCount = types.length - 3;
+        Object[] args = new Object[types.length];
+        args[0] = state;
+        int mask = 0;
+        for (int field = 0; field < fieldCount; field++) {
+            args[field + 1] = primitiveDefault(types[field + 1]);
+            mask |= 1 << field;
+        }
+        // The host state contract places messages immediately after the session.
+        args[2] = messages;
+        mask &= ~(1 << 1);
+        args[fieldCount + 1] = mask;
+        args[fieldCount + 2] = null;
+        return copyDefault.invoke(null, args);
     }
 
     private Method findStateCopyDefault(Class<?> stateClass) throws NoSuchMethodException {
@@ -605,17 +554,11 @@ final class HostAbi {
             Class<?>[] types = method.getParameterTypes();
             if (!Modifier.isStatic(method.getModifiers())
                     || method.getReturnType() != stateClass
-                    || types.length != 11
+                    || types.length < 5
                     || types[0] != stateClass
                     || types[2] != List.class
-                    || types[3] != String.class
-                    || types[4] != boolean.class
-                    || types[5] != List.class
-                    || types[6] != configClass
-                    || types[7] != String.class
-                    || types[8] != String.class
-                    || types[9] != int.class
-                    || types[10] != Object.class) {
+                    || types[types.length - 2] != int.class
+                    || types[types.length - 1] != Object.class) {
                 continue;
             }
             return accessible(method);
@@ -623,6 +566,7 @@ final class HostAbi {
         throw new NoSuchMethodException("state copy$default-compatible method not found on "
                 + stateClass.getName());
     }
+
 
     private Method findStateFlowCompareAndSet(Class<?> implementationClass)
             throws NoSuchMethodException {
@@ -658,60 +602,33 @@ final class HostAbi {
     }
 
     private Method findRepositoryReplaceMessages() throws NoSuchMethodException {
-        for (String name : new String[]{"replaceMessages", "saveMessages", "p"}) {
-            Method method = optionalMethod(repositoryClass, name, String.class, List.class);
-            if (method != null && method.getReturnType() == void.class) {
-                return accessible(method);
+        List<Method> matches = new ArrayList<>();
+        for (Method method : repositoryClass.getDeclaredMethods()) {
+            Class<?>[] types = method.getParameterTypes();
+            if (!Modifier.isStatic(method.getModifiers())
+            && method.getReturnType() == void.class
+            && types.length == 2
+            && types[0] == String.class
+            && types[1] == List.class) {
+                matches.add(accessible(method));
             }
         }
-        throw new NoSuchMethodException("repository message replacement method unavailable on "
-                + repositoryClass.getName());
+        if (matches.size() != 1) {
+            throw new NoSuchMethodException("repository message replacement candidate count="
+            + matches.size() + " on " + repositoryClass.getName());
+        }
+        return matches.get(0);
     }
 
-    private static Accessors bindAccessors(Class<?> configClass, Class<?> messageClass,
+    private static Accessors bindAccessors(Class<?> messageClass,
             DexAbiScanner.AccessorNames names) throws NoSuchMethodException {
         return new Accessors(
-                requiredStringAccessor(configClass, hint(names, "configProviderId"),
-                        "getProviderId", "o"),
-                requiredStringAccessor(configClass, hint(names, "configModelName"),
-                        "getModelName", "k"),
-                requiredStringAccessor(configClass, hint(names, "configApiKey"),
-                        "getApiKey", "f"),
-                requiredStringAccessor(configClass, hint(names, "configFullApiUrl"),
-                        "getFullApiUrl", "i"),
-                requiredStringAccessor(messageClass, hint(names, "messageRole"),
-                        "getRole", "i"),
-                requiredStringAccessor(messageClass, hint(names, "messageContent"),
-                        "getContent", "c"),
-                requiredStringAccessor(messageClass, hint(names, "messageId"),
-                        "getId", "f"),
-                optionalAccessor(messageClass, List.class, hint(names, "messageToolCalls"),
-                        "getToolCalls", "p"),
-                optionalAccessor(messageClass, String.class, hint(names, "messageToolCallId"),
-                        "getToolCallId", "n"));
-    }
-
-    private static String hint(DexAbiScanner.AccessorNames names, String key) {
-        if (names == null) return null;
-        if ("configProviderId".equals(key)) return names.configProviderId;
-        if ("configModelName".equals(key)) return names.configModelName;
-        if ("configApiKey".equals(key)) return names.configApiKey;
-        if ("configFullApiUrl".equals(key)) return names.configFullApiUrl;
-        if ("messageRole".equals(key)) return names.messageRole;
-        if ("messageContent".equals(key)) return names.messageContent;
-        if ("messageId".equals(key)) return names.messageId;
-        if ("messageToolCalls".equals(key)) return names.messageToolCalls;
-        if ("messageToolCallId".equals(key)) return names.messageToolCallId;
-        return null;
-    }
-
-    private static Method requiredStringAccessor(Class<?> owner, String hint, String... fallbacks)
-            throws NoSuchMethodException {
-        Method method = optionalAccessor(owner, String.class, hint, fallbacks);
-        if (method == null) {
-            throw new NoSuchMethodException("String accessor unavailable on " + owner.getName());
-        }
-        return method;
+                optionalAccessor(messageClass, String.class,
+                        names == null ? null : names.messageRole, "getRole", "i"),
+                optionalAccessor(messageClass, String.class,
+                        names == null ? null : names.messageContent, "getContent", "c"),
+                optionalAccessor(messageClass, String.class,
+                        names == null ? null : names.messageId, "getId", "f"));
     }
 
     private static Method optionalAccessor(Class<?> owner, Class<?> returnType, String hint,
@@ -730,32 +647,6 @@ final class HostAbi {
         Method method = optionalNoArg(owner, name);
         if (method == null || Modifier.isStatic(method.getModifiers())) return null;
         return returnType.isAssignableFrom(method.getReturnType()) ? accessible(method) : null;
-    }
-
-    private static Method findConfigCopyDefault(Class<?> configClass) throws Exception {
-        Method named = optionalDeclaredMethod(configClass, "copy$default", configClass,
-                String.class, String.class, String.class, String.class, String.class,
-                String.class, List.class, int.class, Object.class);
-        if (named != null) return accessible(named);
-        for (Method method : configClass.getDeclaredMethods()) {
-            Class<?>[] types = method.getParameterTypes();
-            if (Modifier.isStatic(method.getModifiers())
-                    && method.getReturnType() == configClass
-                    && types.length == 10
-                    && types[0] == configClass
-                    && types[1] == String.class
-                    && types[2] == String.class
-                    && types[3] == String.class
-                    && types[4] == String.class
-                    && types[5] == String.class
-                    && types[6] == String.class
-                    && types[7] == List.class
-                    && types[8] == int.class) {
-                return accessible(method);
-            }
-        }
-        throw new NoSuchMethodException("copy$default-compatible method not found on "
-                + configClass.getName());
     }
 
     private Method findMessageCopyDefault(Class<?> messageClass) throws NoSuchMethodException {
@@ -785,19 +676,6 @@ final class HostAbi {
         if (type == byte.class) return (byte) 0;
         if (type == short.class) return (short) 0;
         return 0;
-    }
-
-    private static Constructor<?> findMessageConstructor(Class<?> messageClass) throws Exception {
-        Class<?>[] types = {
-                String.class, String.class, String.class, boolean.class, String.class,
-                long.class, long.class, long.class, int.class, List.class, int.class,
-                List.class, List.class, String.class, List.class, boolean.class,
-                int.class, int.class, int.class, int.class, long.class, int.class,
-                int.class, long.class, int.class
-        };
-        Constructor<?> constructor = messageClass.getDeclaredConstructor(types);
-        constructor.setAccessible(true);
-        return constructor;
     }
 
     private static void requireReturnType(Method method, Class<?> returnType)
@@ -927,7 +805,7 @@ final class HostAbi {
         check(abi.retryResponseMethod != null, "retry response method missing");
         check(abi.stopGenerationMethod != null, "stop generation method missing");
         check(abi.repositoryAddMessageMethod != null, "repository add-message method missing");
-        check(abi.hasCompressionAccessors(), "compression accessors missing");
+        check(abi.hasRetryAccessors(), "retry message accessors missing");
         abi.validateAccessorBindings();
     }
 
@@ -966,8 +844,8 @@ final class HostAbi {
             for (Object part : (Iterable<?>) parts) {
                 if (part == null) continue;
                 String name = part.getClass().getName();
-                if (!"cb$b".equals(name) && !name.endsWith("$Text")
-                        && !name.endsWith(".Text")) continue;
+                if (!"cb$b".equals(name) && !"xa$b".equals(name)
+                        && !name.endsWith("$Text") && !name.endsWith(".Text")) continue;
                 Object value = readFirst(part, "getText", "text", "c");
                 if (value instanceof CharSequence) text.append(value);
             }
@@ -993,7 +871,8 @@ final class HostAbi {
         for (Object part : (Iterable<?>) parts) {
             if (part == null) continue;
             String name = part.getClass().getName();
-            if ("cb$c".equals(name) || name.toLowerCase(java.util.Locale.ROOT).contains("tool")) {
+            if ("cb$c".equals(name) || "xa$c".equals(name)
+                    || name.toLowerCase(java.util.Locale.ROOT).contains("tool")) {
                 return true;
             }
         }

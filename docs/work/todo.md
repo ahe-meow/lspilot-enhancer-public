@@ -1,34 +1,37 @@
-# Current Todo
+# Current todo
 
 - Status: current
-- Updated: 2026-08-13
-- Purpose: track only concrete actions and their evidence requirements for the active goal.
+- Updated: 2026-08-17
+- Purpose: track the remaining work and acceptance evidence.
 
-## Completed
+## In progress
 
-- [x] Implement the model summary protocol, compression state machine, persistence, request coordinator, request reconstruction, UI projection, and legacy-path guards.
-- [x] Move the internal provider stream off the Android main thread.
-- [x] Arm the 60-second summary timeout before provider stream invocation.
-- [x] Pass the focused DEX assertion check and release/lint gate for the local fix.
-- [x] Force-rebuild `app/build/outputs/apk/release/app-release.apk` with SHA-256 `561f3b536821a5f7fa5246ce11ef3e6f4db5d998e1c25377b0f2fed68d8e6eb4`.
-- [x] Copy the exact APK to a Termux-visible no-space path.
-- [x] Stage and install it through KernelSU `RunCommandService`.
-- [x] Match built, staged, and installed APK SHA-256 values.
-- [x] Force-stop and restart `me.yun.lspilot`.
-- [x] Capture current LSPosed/module logs proving the module and compression hooks loaded.
-- [x] Reproduce the infinite `SUMMARIZING` state and capture the misclassified internal request in current LSPosed logs.
-- [x] Accept provider-added system messages when identifying the active internal summary request.
-- [x] Make current-task timeouts leave `SUMMARIZING` even after request-building side effects.
-- [x] Add focused assertions for internal request identity and timeout exit behavior.
-- [x] Build, install, hash-match, and load APK SHA-256 `4d34fe83e541a0fcfa631f4f4b19b28beb7dec26c245a988097f5d95e5bde037`.
-- [x] Recognize the current host `lwb` chunk/done/error stream events and extract only text parts from nested chunks.
-- [x] Pass the focused DEX check, device-side assertions, release build, and lint for the current-host stream event fix.
-- [x] Build, install, hash-match, and load APK SHA-256 `460947023ad0afcdcd642049122393de63f2e4cd74b0ee5d199d82244b1cb107`.
-- [x] Create `docs/work/handoff.md` and point `AGENTS.md` at it for the next agent.
+- `1.7.4-preview.24` is built and verified. Publishing is pending; device runtime acceptance still requires installing, enabling, and scoping the new package.
 
 ## Next
 
-- [ ] Have the user enter the affected chat and rerun manual compression while current logs are collected.
-- [ ] Confirm the flow reaches success or a clear failure/cancel state and never displays summary Markdown as chat content.
-- [ ] After success, confirm a later provider request uses reduced effective context.
-- [ ] Update `goal.md`, `plan.md`, `todo.md`, `findings.md`, and `handoff.md` with final evidence.
+- [ ] Complete any remaining manual automatic-retry and stop-behavior acceptance separately.
+- [ ] Replace the private AAPT2 APK-container workaround when an arm64-compatible AGP 9.3 AAPT2 is available.
+- [ ] Publish `v1.7.4-preview.24` with the verified APK.
+- [ ] Install the new package `com.lspilot.enhancer`; after installation, enable it and re-scope it to `me.yun.lspilot` in LSPosed. The previous installed package must not be treated as changed in place.
+
+## Completed
+
+- [x] Stop the full-history context-compression implementation.
+- [x] Remove compression production classes, UI, settings, persistence, tests, build task, dependency, and active documentation.
+- [x] Adapt the retained request/SSE and retry groups with conservative unique DEX candidates and host-content-hash descriptor caching.
+- [x] Support verified minified provider profiles `vj8` (staged host `b6ea30f6...debe`) and `xj8` (installed host `d4eb3066...f5d56`).
+- [x] Prevent startup writes to LSPosed's read-only remote preferences; unavailable-setting persistence now waits for host-local preferences.
+- [x] Complete source/package migration to `com.lspilot.enhancer` and verify the `1.7.4-preview.24` candidate; exact artifact evidence is recorded in `docs/work/findings.md`.
+- [x] Detect and reject the incomplete AGP/AAPT2 APK output instead of deploying it.
+- [x] Build a private valid module APK by replacing only `classes.dex` in the prior valid module container, then zipaligning and signing it.
+- [x] Verify private module APK `7bc3a22f...c44e8` with `aapt2 dump badging`, ZIP integrity, and APK v2/v3 signature checks.
+- Historical device-install and LSPosed entries below refer to the predecessor artifact; they do not verify installation, enablement, or re-scoping of `com.lspilot.enhancer`.
+- [x] Install only the module package active at that time; source, private stage, `/data/local/tmp` stage, and installed `base.apk` all matched SHA-256 `7bc3a22f6a43ef98cd843922c89a0b57ced474cc26583fdca0e4f2089d8c44e8`.
+- [x] Verify LSPosed module scope enabled for `me.yun.lspilot`, config integrity `ok`, and runtime startup hooks: `provider=xj8`, `requestBody=true`, `sseUsage=true`, stream/retry, cache, SSE, load-session, and auto-retry hooks installed.
+- [x] Verify the prior ABI failure is gone and no `Unavailable setting persistence failed` log appeared after the fixed module restart.
+- [x] Confirm `新对话` succeeds on `https://pasw.shop/v1/chat/completions`; its approximately 30K input is host system prompt/tool definitions, not persisted history.
+- [x] Detect host APK content changes on every module startup without trusting version metadata; invalidate stale descriptors and prefer structural DEX self-adaptation on changes.
+- [x] Adapt the updated host (`af2283a2978ea650986988ac3d9c01a39474cdd6410d30b842dd8f15e686149c`) to provider `zj8`; verify cache/SSE/retry hooks after restart.
+- [x] Build and verify the migrated release artifact at `app/build/outputs/apk/release/app-release.apk`; device installation of `com.lspilot.enhancer` remains pending.
+- [x] Pass `RequestGroupIsolationCheck`, `HostUpdateDetectionCheck`, `AutoRetryManagerCheck`, prompt-cache/reasoning checks, release assembly, lint, APK integrity/signature/DEX-marker checks, and `git diff --check` for `1.7.4-preview.24`.

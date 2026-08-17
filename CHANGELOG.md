@@ -1,149 +1,81 @@
 # Changelog
 
-## 1.7.4-preview.23
-- Match prepared compression snapshots against the host's OpenAI request encoding so automatic compression is applied instead of rejected on tool-call messages.
-- Reuse request-encoded retained messages when merging compressed history, preserving valid `tool_calls` and `tool_call_id` fields.
-- Refresh compression UI locally without reloading the host chat session, keeping the compression button and pending user message visible.
-- Resolve the verified minified `AiChat` route class (`ela$b`) instead of the unrelated `lka$b` serializer class.
+## Unreleased
 
-## 1.7.4-preview.22
-- Keep the minified chat UI message list untouched during manual compression; compression now applies only to the outgoing request JSON.
-- Continue stripping enhancer status messages from minified provider requests without replacing the ViewModel stream message list.
+## 1.7.4-preview.24
+
+- Rename the module package to `com.lspilot.enhancer`; LSPosed must enable and scope it as a new module package.
+- Remove the context-compression implementation, chat entry, settings, stored baselines, tests, documentation, and request-time legacy repair.
+- Stop writing retry progress rows into host chat history; retain redacted retry diagnostics without logging raw SSE content.
+- Remove the unused packaged/compile-time DexKit fallback and use platform `DexFile` discovery.
+- Detect startup host content changes independently of unchanged version metadata, invalidate stale ABI descriptors, and run structural DEX self-adaptation before cache hooks.
+- Resolve request/SSE independently from retry endpoints so an incomplete or ambiguous retry graph does not disable request caching.
+- Cache request-only descriptors with schema 6 and reject ambiguous request/SSE candidates.
+- Refresh retained endpoint evidence for host APK SHA-256 `af2283a2978ea650986988ac3d9c01a39474cdd6410d30b842dd8f15e686149c`.
 
 ## 1.7.4-preview.21
-- Bind config and message accessors from DexKit field-reader metadata instead of relying on current host obfuscation names.
-- Validate bound accessors with probe config/message instances before caching the ABI descriptor.
-- Bump the ABI cache schema so older name-only descriptors are rebuilt automatically.
+
+- Bind host config and message accessors from structural evidence instead of relying only on obfuscation names.
+- Validate bound accessors before caching the ABI descriptor.
+- Bump the ABI cache schema when descriptor semantics change.
 
 ## 1.7.4-preview.20
-- Fix DexKit ABI adaptation after the host update changed provider and ViewModel obfuscation names.
-- Ignore static Kotlin wrapper methods during legacy DEX ABI matching and discover send, retry, and stop methods from stable host message-role strings.
-- Persist the resolved ViewModel lifecycle methods in the ABI descriptor cache and invalidate older cache schemas.
+
+- Adapt request and retry hooks after host provider and ViewModel obfuscation changes.
+- Ignore static Kotlin wrapper methods during DEX ABI matching.
+- Persist validated ViewModel lifecycle methods in the ABI descriptor cache.
 
 ## 1.7.4-preview.19
-- Harden host ABI adaptation for future minified updates by broadening DEX class candidates, accepting private singleton fields, and validating message copy content fields.
-- Fingerprint host APK and split contents in the ABI cache so host updates reliably trigger DexKit/DEX re-resolution instead of reusing stale descriptors.
-- Fix startup diagnostics to report the actual module version and guard request policy normalization against missing model names.
-- Make compression completion and Android runtime self-checks more defensive and explicit.
+
+- Fingerprint host APK and split contents so host updates invalidate stale descriptors.
+- Broaden DEX class candidates and accept private singleton fields.
+- Report the actual module version and guard request-policy normalization when the model is missing.
 
 ## 1.7.4-preview.18
 
-- Change automatic retry to regenerate from the failed assistant message position instead of the host's most recent user-message regeneration anchor.
-- Send only the history before the failed assistant to the provider, replace that assistant in place with the streamed response, and retain every following message.
-- Keep the complete preserved message list visible and persistent throughout retry stream updates, with a timeout fallback for hosts that never start streaming.
-- Add regression coverage for failed-assistant request boundaries and message-ID-preserving content replacement.
+- Regenerate failed assistant responses from their original position.
+- Preserve the following conversation tail and replace the failed assistant in place.
+- Keep the complete host message list visible and persistent during retry.
 
 ## 1.7.4-preview.17
 
-- Preserve the complete current host message list before automatic retry instead of accepting the native regeneration truncation at the most recent user message.
-- Restore the immutable host chat state with a message-only copy after native retry starts, retaining loading, provider, model, draft, attachment, and session fields.
-- Replace the repository message snapshot before retry so the truncated native state cannot overwrite the conversation tail in persistent storage.
-- Add an Android-runtime regression check against LSPilot 1.1.0's real `cb`/`va`/`Lut7` ABI.
+- Preserve host chat state before native retry truncation.
+- Restore message state and repository persistence after native retry starts.
+- Add host-state restoration regression coverage.
 
 ## 1.7.4-preview.16
 
-- Preserve the first-attempt message list when the host regeneration path supplies an empty or replaced history during automatic retry.
-- Detect Throwable and additional host failure event shapes, extract nested failure details, and include the concrete reason in retry status messages.
-- Observe stream failure events before dispatching to the host callback so callback exceptions cannot hide retry scheduling.
-- Keep retry status updates on the local chat UI and prevent them from reloading a possibly empty host session over the active conversation.
-
-## 1.7.4-preview.15
-
-- Ignore host-list bookkeeping indexes when matching prepared compression snapshots, so enhancer status messages cannot invalidate an otherwise unchanged compression baseline.
-- Bound deterministic local summary blocks and reject any compacted request that is not strictly smaller in characters and UTF-8 bytes.
-- Add a large-conversation regression check for compression expansion.
+- Preserve the first-attempt message list when host regeneration supplies an empty or replaced history.
+- Detect additional host error-event shapes and nested failure details.
+- Observe stream failures before dispatching to the host callback.
 
 ## 1.7.4-preview.13
 
-- Stabilize GPT-5.6 explicit prompt-cache breakpoints around completed assistant prefixes instead of moving them across the changing user/tool suffix.
-- Derive cache identity from the actual system/developer prompt and rotate the cache namespace after the breakpoint policy change.
-- Prevent automatic pre-send compression status refreshes from opening the manual compression overlay.
-- Improve automatic compression threshold estimation with serialized message/tool-call JSON and pending input text, and adapt the retained tail when a large context has few messages.
-- Exclude both compression and retry status messages from context-length measurement and provider requests.
+- Stabilize GPT-5.6 explicit prompt-cache breakpoints around completed assistant prefixes.
+- Derive cache identity from the actual system/developer prompt and rotate the namespace after policy changes.
 
 ## 1.7.4-preview.12
 
-- Add chat-scoped automatic response retries after provider or stream failures, with fixed delays of 5 seconds, 10 seconds, 30 seconds, 2 minutes, and 5 minutes.
-- Reuse the host's native response-regeneration path so retries do not duplicate the user's message.
-- Insert retry scheduling, progress, success, cancellation, and exhaustion notices into the conversation while filtering them from provider requests.
-- Bind pending retries to the active ViewModel and chat, and cancel them through the host's native stop action, session changes, or a new user send.
+- Add chat-scoped automatic response retries with delays of 5 seconds, 10 seconds, 30 seconds, 2 minutes, and 5 minutes.
+- Reuse the host's native response-regeneration path and bind retries to the active ViewModel/chat.
+- Cancel retries through native stop, session changes, or a new user send.
 
 ## 1.7.4-preview.11
 
-- Add user-selectable GPT-5.6 sol reasoning effort levels: `low`, `medium`, `high`, `xhigh`, `max`, and `ultra`.
-- Inject the selected `reasoning_effort` into GPT-5.6 sol requests and normalize `delta.reasoning` SSE payloads for the host's native reasoning UI.
-- Extend static and DEX-scanned host ABI resolution to include the raw SSE parser endpoint.
+- Add GPT-5.6 sol reasoning effort levels: `low`, `medium`, `high`, `xhigh`, `max`, and `ultra`.
+- Inject `reasoning_effort` and normalize compatible `delta.reasoning` SSE payloads.
+- Extend host ABI resolution with the raw SSE parser endpoint.
 
 ## 1.7.4-preview.10
-- Restore request-body, stream-compression, raw SSE usage, chat-state, and repository hooks for LSPilot 1.1.0's updated minified ABI.
-- Add startup endpoint probes that disable unsupported settings when a host update breaks a required hook.
-- Add GPT-5.6 explicit prompt-cache breakpoints for the stable system anchor and recent user/tool messages.
-- Add a runtime `DexFile` fallback that rediscovers obfuscated provider, config, ViewModel, state, session, message, repository, chat-route, and ArrowPreference endpoints after host updates.
-- Restore the injected settings entry and minified AiChat route detection for the host's new obfuscation layout.
-## 1.7.4-preview.9
 
-- Add a versioned host ABI resolver for named and minified LSPilot builds, including request, chat-state, session reload, and repository bridges.
-- Keep configuration exclusively in the injected LSPilot settings dialog and persist it directly in the host process; remove the standalone settings app and cross-process synchronization.
-- Trigger automatic compression by estimated context tokens only, and make manual/automatic startup atomic to prevent overlapping tasks.
-- Move diagnostic file writes to a daemon queue, throttle duplicate status updates, and cache hot-path reflection lookups.
-- Remove the unused model-summary HTTP path; compression now uses deterministic local windows and bounded excerpts without an extra provider request.
-- Preserve valid tool-call sequences, ignore empty tool-call metadata, and omit duplicate assistant `toolCallResults` from compression input.
-- Reload the active chat after terminal compression statuses so completion, failure, and timeout notices become visible immediately.
-- Cancel a pending send when automatic compression fails or times out instead of silently replaying the full uncompressed history.
-- Keep prepared summaries as persistent per-chat baselines and support incremental compression of newly appended history.
-- Disable unsupported module hot reload until static executors and host references have an explicit lifecycle cleanup protocol.
-- Allow release builds to retain the host-compatible target SDK without failing Google Play's app-distribution lint check.
-- Add an Android-runtime tool-sequence regression check, an API 102 integration audit, and public design-reference attribution.
+- Restore request-body and raw SSE usage hooks for a changed minified host ABI.
+- Add startup probes that disable unsupported settings after host updates.
+- Add explicit prompt-cache breakpoints and a platform `DexFile` fallback.
+- Restore the injected settings entry after host obfuscation changes.
 
-## 1.7.4-preview.8
+## Earlier work
 
-- Replace model-backed manual summarization with deterministic local window compression, eliminating the extra compression model request and its token cost.
-- Keep manual compression as a persistent chat baseline and support incremental updates from the existing compacted baseline plus newly added tail messages.
-- Cap oversized message/tool-call excerpts in compression blocks with head/tail retention and SHA-256 anchors to reduce prompt bloat while preserving traceability.
-- Stop reopening the compression panel after completion on every later request; show the compression-baseline notice once per prepared baseline.
-
-## 1.7.4
-
-- Add project settings for automatic context compression thresholds: trigger by conversation turns or estimated context tokens.
-- Preserve `assistant.tool_calls` / `tool` message adjacency when choosing compression boundaries, and reject compacted requests with invalid tool-message ordering before sending.
-- Retain automatic prepared summaries as a rolling baseline after each response, so subsequent sends only retrigger compression after newly added turns or estimated tokens exceed the configured thresholds.
-- Apply the configured thresholds before replaying `sendMessage()`, while still requiring enough messages to keep the recent-message tail intact.
-- Show editable numeric settings in the injected settings dialog with clamped valid ranges and default reset behavior.
-
-## 1.7.3
-
-- Keep a prepared compression result active for every provider request in the same model response, instead of consuming it on the first request only.
-- Clear the active prepared context only after the host chat leaves loading state, and log the apply count for verification.
-- Reset prepared-context bookkeeping consistently when switching chats, changing providers, rejecting a prepared context, or manually clearing the summary.
-
-## 1.7.2
-
-- Add a pre-send hook on `AiChatViewModel.sendMessage()` that pauses the first send, compresses while the chat is still idle, then replays the same send after compression finishes.
-- Keep provider request building free of live compression; it only applies a prepared summary or sends the sanitized original messages.
-- Discard only in-flight compression when the chat becomes loading, while preserving already prepared summaries for the send path.
-
-## 1.7.1
-
-- Stop running automatic context compression inside the provider request-building hook; requests now only consume summaries that were already prepared while the chat was idle.
-- Keep enhancer status-message filtering and manual prepared-context application in the send path.
-
-## 1.7.0
-
-- Add persisted system status messages for compression start, snapshot length, per-chunk progress, completion/failure, next-request usage, and provider usage confirmation.
-- Record message count, JSON character count, UTF-8 bytes, estimated tokens, compression ratio, duration, request mode, and provider usage totals without logging message bodies or credentials.
-- Refresh the current chat through the host `AiChatViewModel.loadSession` after status insertion; filter enhancer status messages out of provider requests and compression matching.
-- Add an `AiChatRepository.addMessage` bridge using the host `AiChatMessage` format.
-
-## 1.6.0
-
-- Scope the compression entry to the APK-confirmed `Route.AiChat` branch in `SubScreenActivity.onCreate$lambda$0$1`; remove it immediately for every non-chat route.
-- Replace the text button with a native icon button using a density-correct compression glyph, circular ripple, and dark/light colors.
-- Add touch, click, panel, route-visible, and overlay-removal logs for end-to-end LSPosed verification.
-- Stop attaching the entry merely because any `SubScreenActivity` was created.
-
-## Earlier Work
-
-- Added LSPosed request hooks for OpenAI-compatible request body enhancement.
-- Added raw SSE usage observation for provider usage metrics.
+- Added LSPosed request hooks for OpenAI-compatible request enhancement.
+- Added stable Prompt Cache keys, compatible retention, and streaming usage reporting.
 - Added native settings entry rendering through host UI components.
-- Iterated Activity and route hooks based on reverse-engineered host method signatures.
+- Added host-hash ABI descriptor caching and bounded automatic retries.

@@ -1,43 +1,31 @@
 # LSPilot Enhancer
 
-An LSPosed module for `me.yun.lspilot` that adds request-level enhancements and chat context-compression controls without modifying or repackaging the target app.
+An LSPosed module for `me.yun.lspilot` that adds request-level caching, usage reporting, reasoning controls, and bounded automatic retries without modifying or repackaging the host app.
 
 > This repository contains source code only. It intentionally excludes local SDKs, build outputs, APKs, logs, device-specific files, signing material, and user credentials.
 
 ## Features
 
-- Adds OpenAI-compatible request enhancements such as prompt cache key generation, optional usage reporting, extended retention, and selectable GPT-5.6 sol reasoning effort.
-- Automatically retries failed response retrieval up to five times at bounded intervals, with in-chat status notices and native stop-button cancellation.
-- Adds a route-scoped native compression icon that appears only on the AI chat screen.
-- Supports manual and pre-send chat context compression using the selected provider configuration at runtime.
-- Inserts local system status messages for compression progress and metrics, while filtering those status messages out of provider requests.
-- Tracks compression application and provider usage without logging message bodies, API keys, or raw request payloads.
-- Resolves minified host ABI members with DexKit after host/module updates, then reuses a version-fingerprinted descriptor cache on normal starts.
+- Generates stable, non-plaintext `prompt_cache_key` values from the model and system/developer prompt.
+- Adds explicit prompt-cache breakpoints where supported, with a compatible 24-hour retention fallback.
+- Requests streaming usage data and records redacted cache-token metrics.
+- Adds selectable GPT-5.6 sol reasoning effort and normalizes compatible reasoning SSE fields.
+- Retries failed responses up to five times with bounded delays and native stop-button cancellation.
+- Resolves minified host endpoints with conservative `DexFile` structural discovery and rejects ambiguous candidates.
+- Detects host APK content changes at startup, invalidates stale ABI mappings, and re-adapts before installing cache hooks.
+- Caches validated ABI descriptors by host APK and split-APK content hashes.
 
-## Current Behavior
+## Compatibility
 
-Context compression is designed to avoid mutating an active model response:
+The host APK is read-only compatibility evidence. Known descriptors are validated before use; unknown or changed hosts are scanned at startup. A feature stays disabled when its endpoint graph is missing or ambiguous instead of installing a speculative hook.
 
-- If the user sends a message and compression is needed, the module holds the provider request while leaving the user message visible in host history.
-- An internal model request produces a validated Markdown summary without inserting that response into host chat.
-- Later provider requests use the persisted summary baseline plus post-boundary messages while the visible conversation remains unchanged.
-- History, provider, model, or relevant configuration changes invalidate an incompatible baseline.
-
-## Design Reference
-
-The context-compression workflow was informed by mature Android AI-agent patterns around configurable compression prompts, context budgeting, recent-tail retention, and tool-transaction boundaries:
-
-- [AAAelina/rikkahub-agent](https://github.com/AAAelina/rikkahub-agent), an extended fork of [ExTV/rikkahub-agent](https://github.com/ExTV/rikkahub-agent).
-
-This is an architectural and behavioral reference, not copied source. The current implementation uses its own request-layer state machine, summary protocol, persistence, and host ABI integration.
-
-The maintained architecture and current execution state are indexed in [docs/README.md](docs/README.md).
+The maintained project state is indexed in [docs/README.md](docs/README.md).
 
 ## Build
 
 Requirements:
 
-- JDK 17 for Gradle/Android Gradle Plugin
+- JDK 17
 - Android SDK Platform 29+
 - Android Build Tools compatible with the project configuration
 
@@ -47,33 +35,33 @@ Build a release APK:
 bash ./gradlew :app:assembleRelease --no-daemon --console=plain -x lintVitalRelease
 ```
 
-The module uses `lib/libxposed-api-102.0.0.aar` as a `compileOnly` dependency and `org.luckypray:dexkit:2.2.0` for update-triggered runtime ABI discovery. DexKit is distributed under Apache-2.0 with its native Core under LGPL-3.0; upstream source and license texts are available at [LuckyPray/DexKit](https://github.com/LuckyPray/DexKit).
+The module uses `lib/libxposed-api-102.0.0.aar` as a `compileOnly` dependency. Runtime discovery uses Android's platform `dalvik.system.DexFile`; the module does not package a second DexKit runtime into the host process.
 
 ## Installation
 
 1. Build or install the module APK.
 2. Enable it in an LSPosed environment that supports libxposed API 102.
 3. Scope it to `me.yun.lspilot`.
-4. Fully restart the target app process.
-5. Check LSPosed logs for `LSPilotEnhancer loaded` and hook installation messages.
+4. Fully restart the host process.
+5. Check LSPosed logs for the resolved ABI groups and installed hooks.
 
-## Safety Notes
+## Safety
 
-- No API keys, tokens, credentials, logs, APK outputs, or local SDK files are intended to be committed.
-- Runtime provider keys are read from the target app's existing provider configuration and are not stored in this repository.
-- Diagnostic logs are designed to avoid message bodies, request bodies, and credentials.
+- Do not commit API keys, tokens, credentials, logs, APK outputs, local SDK files, or signing material.
+- Runtime provider credentials remain owned by the host and are never persisted by this module.
+- Diagnostics avoid message bodies, request bodies, and credentials.
+- The module never edits the host APK or manipulates its database directly; retry persistence uses the host repository API.
 
-## Project Layout
+## Project layout
 
 ```text
-app/src/main/java/                             Module source
-app/src/main/resources/META-INF/xposed/         LSPosed metadata
-docs/                                           Project documentation and current work state
-docs/README.md                                  Documentation map and conventions
-lib/                                            Public compile-only dependency
-gradle/                                         Gradle wrapper
+app/src/main/java/                      Module source
+app/src/main/resources/META-INF/xposed/ LSPosed metadata
+docs/                                   Project documentation and current work state
+lib/                                    Public compile-only API dependency
+gradle/                                 Gradle wrapper
 ```
 
 ## Disclaimer
 
-This is an independent compatibility module for personal research and interoperability work. Use it only where you are authorized to run LSPosed modules and inspect/modify runtime behavior.
+This is an independent compatibility module for personal research and interoperability work. Use it only where you are authorized to run LSPosed modules and inspect runtime behavior.

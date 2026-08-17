@@ -1,4 +1,4 @@
-package dev.operit.lspilot.enhancer;
+package com.lspilot.enhancer;
 
 import android.content.Context;
 import android.content.SharedPreferences;
@@ -18,20 +18,12 @@ final class ModuleSettings {
     static final String KEY_CACHE_KEY = "cache_key_enabled";
     static final String KEY_RETENTION = "retention_enabled";
     static final String KEY_INCLUDE_USAGE = "include_usage_enabled";
-    static final String KEY_CONTEXT_COMPRESSION = "context_compression_enabled";
     static final String KEY_REASONING_EFFORT = "reasoning_effort";
     static final String KEY_DEBUG_LOG = "debug_log_enabled";
     static final String KEY_VERBOSE_DEBUG_LOG = "verbose_debug_log_enabled";
     static final String KEY_SUCCESS_NOTICE = "hook_success_notice_v2";
-    static final String KEY_MANUAL_KEEP_RECENT = "manual_keep_recent";
-    static final String KEY_AUTO_CONTEXT_TOKENS = "auto_context_tokens";
 
     private static final String KEY_HOST_MIGRATED = "settings_host_migrated_v1";
-
-    static final int DEFAULT_AUTO_CONTEXT_TOKENS = 16_000;
-    static final int DEFAULT_SUMMARY_KEEP_RECENT = 3;
-    static final int MIN_AUTO_CONTEXT_TOKENS = 1_000;
-    static final int MAX_AUTO_CONTEXT_TOKENS = 512_000;
 
     private static volatile Context applicationContext;
     private static volatile SharedPreferences legacyRemotePreferences;
@@ -48,6 +40,7 @@ final class ModuleSettings {
             }
         }
         migrateLegacyRemoteSettings();
+        purgeRemovedCompressionSettings();
         persistUnavailableSettings();
     }
 
@@ -78,11 +71,6 @@ final class ModuleSettings {
 
     static boolean isIncludeUsageEnabled() {
         return isSettingAvailable(KEY_INCLUDE_USAGE) && getBoolean(KEY_INCLUDE_USAGE, true);
-    }
-
-    static boolean isContextCompressionEnabled() {
-        return isSettingAvailable(KEY_CONTEXT_COMPRESSION)
-                && getBoolean(KEY_CONTEXT_COMPRESSION, false);
     }
 
     static String getReasoningEffort() {
@@ -144,40 +132,8 @@ final class ModuleSettings {
         appendUnavailable(result, "缓存路由键", KEY_CACHE_KEY);
         appendUnavailable(result, "缓存保留", KEY_RETENTION);
         appendUnavailable(result, "用量统计", KEY_INCLUDE_USAGE);
-        appendUnavailable(result, "上下文压缩", KEY_CONTEXT_COMPRESSION);
         appendUnavailable(result, "推理强度", KEY_REASONING_EFFORT);
         return result.toString();
-    }
-
-    static int getManualKeepRecent() {
-        SharedPreferences preferences = preferences();
-        int value = preferences == null ? ContextCompression.KEEP_RECENT_MESSAGES
-                : preferences.getInt(KEY_MANUAL_KEEP_RECENT,
-                ContextCompression.KEEP_RECENT_MESSAGES);
-        return value == 16 || value == 32 || value == 64
-                ? value : ContextCompression.KEEP_RECENT_MESSAGES;
-    }
-
-    static int getSummaryKeepRecent() {
-        return DEFAULT_SUMMARY_KEEP_RECENT;
-    }
-
-    static void setManualKeepRecent(int value) {
-        if (value == 16 || value == 32 || value == 64) {
-            putInt(KEY_MANUAL_KEEP_RECENT, value);
-        }
-    }
-
-    static int getAutoContextTokens() {
-        SharedPreferences preferences = preferences();
-        int value = preferences == null ? DEFAULT_AUTO_CONTEXT_TOKENS
-                : preferences.getInt(KEY_AUTO_CONTEXT_TOKENS, DEFAULT_AUTO_CONTEXT_TOKENS);
-        return clamp(value, MIN_AUTO_CONTEXT_TOKENS, MAX_AUTO_CONTEXT_TOKENS);
-    }
-
-    static void setAutoContextTokens(int value) {
-        putInt(KEY_AUTO_CONTEXT_TOKENS,
-                clamp(value, MIN_AUTO_CONTEXT_TOKENS, MAX_AUTO_CONTEXT_TOKENS));
     }
 
     static synchronized void putBoolean(String key, boolean value) {
@@ -236,7 +192,6 @@ final class ModuleSettings {
                 || KEY_CACHE_KEY.equals(key)
                 || KEY_RETENTION.equals(key)
                 || KEY_INCLUDE_USAGE.equals(key)
-                || KEY_CONTEXT_COMPRESSION.equals(key)
                 || KEY_REASONING_EFFORT.equals(key);
     }
 
@@ -251,9 +206,28 @@ final class ModuleSettings {
         result.append(label).append("：").append(disabledReason(key));
     }
 
+    private static void purgeRemovedCompressionSettings() {
+        SharedPreferences preferences = preferences();
+        if (preferences == null) return;
+        SharedPreferences.Editor editor = null;
+        for (String key : preferences.getAll().keySet()) {
+            if ("context_compression_enabled".equals(key)
+                    || "manual_keep_recent".equals(key)
+                    || "auto_context_tokens".equals(key)
+                    || key.startsWith("lspilot.summary.record.v1.")
+                    || key.startsWith("lspilot.summary.record.v2.")) {
+                if (editor == null) editor = preferences.edit();
+                editor.remove(key);
+            }
+        }
+        if (editor != null && !editor.commit()) {
+            Log.e(TAG, "Removed-feature preference cleanup failed");
+        }
+    }
+
     private static void persistUnavailableSettings() {
         if (UNAVAILABLE_SETTINGS.isEmpty()) return;
-        SharedPreferences preferences = writablePreferences();
+        SharedPreferences preferences = preferences();
         if (preferences == null) return;
         try {
             SharedPreferences.Editor editor = preferences.edit();
@@ -265,19 +239,6 @@ final class ModuleSettings {
             }
         } catch (Throwable error) {
             Log.e(TAG, "Unavailable setting persistence failed", error);
-        }
-    }
-
-    private static synchronized void putInt(String key, int value) {
-        SharedPreferences preferences = preferences();
-        if (preferences == null) {
-            Log.e(TAG, "Host setting write skipped without host context key=" + key);
-            return;
-        }
-        if (!preferences.edit().putInt(key, value).commit()) {
-            Log.e(TAG, "Host setting commit failed key=" + key);
-        } else {
-            Log.i(TAG, "Host setting committed key=" + key + " value=" + value);
         }
     }
 
@@ -311,11 +272,8 @@ final class ModuleSettings {
             copyBoolean(remote, editor, KEY_CACHE_KEY);
             copyBoolean(remote, editor, KEY_RETENTION);
             copyBoolean(remote, editor, KEY_INCLUDE_USAGE);
-            copyBoolean(remote, editor, KEY_CONTEXT_COMPRESSION);
             copyBoolean(remote, editor, KEY_DEBUG_LOG);
             copyBoolean(remote, editor, KEY_VERBOSE_DEBUG_LOG);
-            copyInt(remote, editor, KEY_MANUAL_KEEP_RECENT);
-            copyInt(remote, editor, KEY_AUTO_CONTEXT_TOKENS);
             copyString(remote, editor, KEY_REASONING_EFFORT);
             editor.putBoolean(KEY_HOST_MIGRATED, true);
             if (noticeShown) {
@@ -336,11 +294,8 @@ final class ModuleSettings {
                 || preferences.contains(KEY_CACHE_KEY)
                 || preferences.contains(KEY_RETENTION)
                 || preferences.contains(KEY_INCLUDE_USAGE)
-                || preferences.contains(KEY_CONTEXT_COMPRESSION)
                 || preferences.contains(KEY_DEBUG_LOG)
                 || preferences.contains(KEY_VERBOSE_DEBUG_LOG)
-                || preferences.contains(KEY_MANUAL_KEEP_RECENT)
-                || preferences.contains(KEY_AUTO_CONTEXT_TOKENS)
                 || preferences.contains(KEY_REASONING_EFFORT);
     }
 
@@ -351,13 +306,6 @@ final class ModuleSettings {
         }
     }
 
-    private static void copyInt(
-            SharedPreferences source, SharedPreferences.Editor target, String key) {
-        if (source.contains(key)) {
-            target.putInt(key, source.getInt(key, 0));
-        }
-    }
-
     private static void copyString(
             SharedPreferences source, SharedPreferences.Editor target, String key) {
         if (source.contains(key)) {
@@ -365,7 +313,4 @@ final class ModuleSettings {
         }
     }
 
-    private static int clamp(int value, int minValue, int maxValue) {
-        return Math.max(minValue, Math.min(value, maxValue));
-    }
 }

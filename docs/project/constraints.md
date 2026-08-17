@@ -1,7 +1,7 @@
 # Project Constraints
 
 - Status: current
-- Updated: 2026-08-13
+- Updated: 2026-08-17
 - Purpose: preserve the long-term environment, safety, build, and verification rules for this Android module.
 
 ## Artifact Boundary
@@ -18,6 +18,31 @@
 - Quote complete paths at every shell boundary because workspace paths contain spaces.
 - Stage Android command inputs under a no-space host path such as `/data/local/tmp/`.
 - PRoot filesystem visibility and a reported Linux `uid=0` do not prove Android root.
+- Do not treat this as a normal physical-machine Ubuntu: no `sudo`/systemd assumptions, no direct private-app or LSPosed reads from PRoot, and no implicit Android root from `/root`.
+- For host DB, LSPosed config, and global log capture, run a Termux-side root script via `RunCommandService`, copy complete DB sidecars when WAL is active, and analyze the copied files from Ubuntu only after capture.
+
+## Execution Routing
+
+Pi runs in Ubuntu PRoot inside Termux on Android arm64. Choose the execution layer before running a command:
+
+| Operation | Execution layer |
+| --- | --- |
+| Repository inspection, source edits, JDK, Gradle, and Pi | Ubuntu PRoot |
+| Non-privileged Android reads | An available Termux bridge command on Ubuntu's `PATH` |
+| Privileged Android package, process, and global log operations | Termux RunCommandService with KernelSU |
+| Files passed to Android shell commands | A quoted shared-storage source, then `/data/local/tmp/` when needed |
+
+- Run the first command in the selected layer. Switch layers only when its error demonstrates a layer or permission mismatch.
+- Ubuntu `uid=0` is PRoot-local. `/proc/self/status` exposes the real Android app UID and is more informative than `id` for the host boundary.
+- Termux binaries visible on Ubuntu's `PATH` are bridge commands, not proof that the process is an Android shell or has Android root.
+
+## Exploration Budget
+
+- Read this baseline before probing the environment. Probe only a capability required by the current task.
+- Check command availability once with `command -v`, then cache the result for the task. At the 2026-08-13 baseline, `am`, `pm`, `cmd`, and `logcat` are available Termux bridge commands; `gh`, `adb`, and `dumpsys` are absent from Ubuntu's `PATH`.
+- Verify an uncertain capability with one minimal, non-destructive command and a timeout. Use the error to select one documented alternate; do not repeat equivalent probes through path aliases or nested shells.
+- Do not install tools merely to continue discovery. Install only when the requested work requires the tool and no existing route covers it.
+- Record changed durable facts here so later agents reuse evidence instead of rediscovering it.
 
 ## Android Root
 
@@ -54,20 +79,23 @@ am startservice --user 0 \
 
 ## Device Operations
 
-- Copy an APK to a quoted Termux-visible source, then stage it as `/data/local/tmp/<task>.apk` through the proven host-side channel before `pm install -r`.
-- Verify that built, staged, and installed APK hashes match. `Success` from `pm install` is insufficient evidence.
+- Copy an APK from the PRoot build output to a unique Termux-private path under `/data/data/com.termux/files/usr/tmp/`, verify both hashes there, then stage it as `/data/local/tmp/<task>.apk` through the proven host-side root channel before `pm install -r`.
+- Do not let a root install script read the shared-storage build path directly. On this device, the Android shell observed stale bytes at `/sdcard/...` after PRoot produced a newer APK at the corresponding `/mnt/sdcard/...` path.
+- Make install scripts fail closed on an expected SHA-256 before and after every boundary. Verify that PRoot build, Termux-private copy, `/data/local/tmp` stage, and installed `base.apk` hashes match; `Success` from `pm install` is insufficient evidence.
 - Use `adb` only when `adb devices -l` shows an authorized transport.
 - Run permission-sensitive `pm`, `cmd`, `am`, `dumpsys`, and global `logcat` operations through the proven host-side root channel.
 - Recheck KernelSU, Zygisk, LSPosed, scope, daemon, and package state after reboot or user action.
 
 ## Git and Workspace Safety
 
-- For this worktree, prefer per-command trust:
+- For repositories on shared storage, use the exact repository path printed by Git's `dubious ownership` error. PRoot may expose the checkout as `/storage/emulated/0/...` while Git identifies it as `/mnt/sdcard/...`; `pwd` and `readlink` do not reliably choose the value Git accepts.
+- Retry the failed Git command once with per-command trust. For the current main checkout:
 
 ```text
-git -c safe.directory='/mnt/sdcard/AI Workplace/lspilot-enhancer-public-ghsync/.worktrees/model-context-compression' <command>
+git -c safe.directory='/mnt/sdcard/AI Workplace/lspilot-enhancer-public-ghsync' <command>
 ```
 
+- This is a personal repository even though it lives under Android shared storage. Per-repository ownership/permission repair via `chown` or `chmod` is allowed only with explicit user authorization, only for the exact repository path, and, when actual Android ownership must change, through the appropriate host-side privileged route. Inspect owner and mode before and after; if `/storage/emulated/0` presents a FUSE-mapped owner that still differs from the repaired backing path, use an Ubuntu-native local checkout instead of claiming the PRoot review path is fixed. Never alter parent/shared-storage ownership, global `safe.directory`, or unrelated files.
 - Preserve unrelated dirty and untracked files.
 - Diagnose Git object and ref health read-only before repair.
 - Require explicit user authorization before reset, checkout, ref repair, worktree deletion, or overwriting user files.

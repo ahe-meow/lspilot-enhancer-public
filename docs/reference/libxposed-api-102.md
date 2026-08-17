@@ -1,6 +1,6 @@
 # libxposed API 102 Reference
 
-- Status: reference; revalidate when the libxposed version or module lifecycle changes
+- Status: reference
 - Updated: 2026-08-12
 - Purpose: record verified API 102 integration facts and remaining compatibility risks without stale implementation claims.
 

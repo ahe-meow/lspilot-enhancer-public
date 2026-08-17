@@ -1,4 +1,4 @@
-package dev.operit.lspilot.enhancer;
+package com.lspilot.enhancer;
 
 final class AutoRetryPolicy {
     private static final long[] DELAYS_MS = {

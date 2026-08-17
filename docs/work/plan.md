@@ -1,38 +1,44 @@
-# Current Plan
+# Current plan
 
 - Status: current
-- Updated: 2026-08-13
-- Purpose: define the ordered path from the present branch state to runtime acceptance.
+- Updated: 2026-08-17
+- Purpose: define the ordered path from the current repository state to runtime acceptance.
 
-## Current Phase
+## Current phase
 
-Waiting for a fresh manual compression run against the installed current-host stream event fix.
+Repository-side feature removal, package migration to `com.lspilot.enhancer`, conservative ABI discovery, and release verification are complete. The `1.7.4-preview.24` candidate keeps request/SSE available when retry discovery fails, rejects ambiguous request candidates, and stores request-only descriptors with cache schema `6`.
 
-## Milestones
+The candidate APK at `app/build/outputs/apk/release/app-release.apk` passed the focused Dalvik checks, release build, lint, badging, ZIP integrity, v2 signature, retired-feature marker scan, and `git diff --check`. Publishing and device runtime work remain pending; after publication, install the new package, enable it, and re-scope it to `me.yun.lspilot` in LSPosed.
 
-1. **Implementation complete:** protocol, state, persistence, coordinator, request reconstruction, UI projection, and integration guards are present in branch history.
-2. **ANR remediation implemented:** the provider stream runs on a dedicated executor and its timeout is armed before invocation.
-3. **Stuck-state remediation implemented:** provider-added system messages no longer hide internal summary requests, and a current task timeout cannot be invalidated by request-building side effects.
-4. **Artifact identity complete:** release APK SHA-256 `460947023ad0afcdcd642049122393de63f2e4cd74b0ee5d199d82244b1cb107` was staged and installed; built, staged, and installed hashes match.
-5. **Module load complete:** LSPilot PID 31402 was restarted and current LSPosed logs prove the module and compression hooks loaded.
-6. **Manual acceptance pending:** the installed fix has not yet seen a new compression attempt; the first post-install log window only showed `chat route visible=false`.
-7. **Closeout pending:** diagnose any remaining runtime failure or record acceptance and commit the final source/docs together.
+## Execution order
 
-## Execution Order
+1. Remove all context-compression classes, hooks, UI, settings, tests, and current documentation.
+2. Split retained ABI discovery into independently validated request/SSE, retry, and settings groups.
+3. Resolve candidates structurally, require a unique coherent winner, and cache validated descriptors by APK content hash and scanner schema.
+4. Add focused request-policy, scanner ambiguity, and cache invalidation checks.
+5. Run release verification, build the migrated package, and verify APK package metadata and integrity.
+6. Install the new package, re-enable it, re-scope it to `me.yun.lspilot` in LSPosed, and manually verify cache request mutation, usage reporting, settings, and retry behavior.
 
-1. Have the user enter the affected chat and rerun manual compression with the latest installed APK while collecting current logs.
-2. If the scenario fails, collect current ANR/logcat/module evidence and trace the terminal summary callback and record commit path.
-3. If it passes, confirm the next provider request uses reduced effective context, rerun the release gate against the accepted source, and update the current work documents.
+## Current host evidence
 
-## Current Evidence Pointers
+The installed host is version `1.1.0 (11)`, SHA-256 `af2283a2978ea650986988ac3d9c01a39474cdd6410d30b842dd8f15e686149c`, size `16,700,026` bytes, at staged MT2 workspace `rvlxvm8q`.
 
-- Install output: `/data/data/com.termux/files/usr/tmp/lspilot-stream-events-install-20260813.out`
-- Log capture script: `/data/data/com.termux/files/usr/tmp/lspilot-stream-events-capture-20260813.sh`
-- First post-install capture: `/data/data/com.termux/files/usr/tmp/lspilot-stream-events-capture-20260813.out`
+- Current request provider: `zj8`
+- Config: `cb`
+- Request builder: `zj8.p(cb, List, String, boolean): String`
+- SSE parser: `zj8.t(String, Function1): boolean`
+- Retry ViewModel: `va`
+- Stream bridge: `va.w(cb, List, Function1): void`
+- Load/send/retry/stop: `va.F(String, String, Context)`, `va.P()`, `va.J()`, `va.Q()`
+- State/session: `va.b:sk7 -> oa`, `oa.j() -> na`, `na.d() -> String`
+- Message: `u7`, with ID `f()`, role `i()`, content `c()`
+- Repository: `me.yun.lspilot.data.repository.b`, add `c(String,u7)`, replace `r(String,List)`
 
-## Decision Points
+The earlier staged host SHA-256 `b6ea30f6...debe` uses the same `va/cb/u7` groups with provider `vj8`; `HostAbi` now tries both verified provider profiles.
 
-- A hash mismatch returns the plan to artifact staging; do not test an unidentified install.
-- A host freeze returns the plan to thread/stream diagnosis.
-- A non-freezing failure returns the plan to callback, validation, or persistence diagnosis.
-- A successful summary without reduced later context returns the plan to effective request reconstruction diagnosis.
+## Decision points
+
+- A scan with multiple plausible candidates disables that feature group; it does not pick the first match.
+- A retry ABI failure must not disable request caching when the request/SSE ABI is valid.
+- A changed host content fingerprint invalidates cached descriptors before hooks are installed and enables structural `DexFile` discovery; unchanged startup reuses only the validated descriptor.
+- Runtime acceptance remains pending until `com.lspilot.enhancer` is installed, enabled, and scoped to `me.yun.lspilot`; use the exact installed module hash and current host hash for that verification.

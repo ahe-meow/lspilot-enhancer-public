@@ -1,30 +1,31 @@
-# Current Goal
+# Current goal
 
 - Status: current
-- Updated: 2026-08-13
+- Updated: 2026-08-17
 - Purpose: define the single active outcome and its acceptance boundary.
 
 ## Outcome
 
-Deliver model-driven context compression for LSPilot that reduces provider context without changing visible host chat history, blocking the Android main thread, exposing internal summary content, or sending unsafe fallback requests.
+Ship a cache-focused LSPilot LSPosed module that adapts conservatively to the current host and future obfuscation changes without retaining any context-compression business logic, UI entry, or setting.
 
-## In Scope
+## In scope
 
-- Manual and automatic compression through one request-layer state machine.
-- Internal summary requests using the active provider configuration.
-- Validated, session-persisted summary baselines for later requests.
-- Safe handling of pending user messages and tool-call boundaries.
-- Device installation and manual runtime acceptance of the current-host stream event fix.
+- Prompt cache keys, explicit cache breakpoints, compatible retention, usage reporting, and reasoning effort.
+- Bounded automatic response retries and native stop cancellation.
+- Structural `DexFile` endpoint discovery with ambiguity rejection.
+- ABI descriptor caching by host APK and split-APK content hashes; changed content invalidates the cache before hooks and triggers structural DEX self-adaptation.
+- Read-only reverse engineering of host APKs and runtime evidence.
 
-## Done When
+## Out of scope
 
-- The exact built module APK is installed and its built, staged, and installed SHA-256 values match.
-- `me.yun.lspilot` loads the module and required hooks without disabling compression.
-- Manual compression no longer freezes or ANRs the host.
-- Compression reaches a visible success or actionable failure/cancel state.
-- Summary content stays out of host chat history, visible history remains unchanged, and a successful later provider request uses reduced effective context.
-- Focused checks, release build, lint, and device-side assertions pass for the accepted source.
+- Context compression, summaries, compacted baselines, compression status rows, chat overlays, or compression settings.
+- Patching, rebuilding, signing, or installing the host APK.
+- Guessing hook endpoints from strings alone.
 
-## Current Boundary
+## Done when
 
-The latest APK is already installed and loaded. Completion now depends on a fresh manual compression attempt from the affected chat proving that the installed fix leaves `SUMMARIZING` and either succeeds or reaches an actionable failure state.
+- Production source, UI, settings, tests, and current documentation contain no active context-compression feature.
+- The updated installed host APK SHA-256 `af2283a2978ea650986988ac3d9c01a39474cdd6410d30b842dd8f15e686149c` (still version `1.1.0 (11)`) resolves provider `zj8` with the retained request/SSE and retry endpoint groups; the staged `b6ea30f6...debe` and prior `d4eb3066...f5d56` profiles remain compatibility evidence.
+- Ambiguous or incomplete scans disable only the affected feature group.
+- Focused checks, release build, lint, and `git diff --check` pass.
+- The exact module APK is hash-verified, installed, loaded by LSPosed, and startup-verified against the updated host: `provider=zj8`, `requestBody=true`, `sseUsage=true`, and `Host ABI resolution reason=cache_hit` on the subsequent startup.

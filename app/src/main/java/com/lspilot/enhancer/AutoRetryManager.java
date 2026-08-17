@@ -1,4 +1,4 @@
-package dev.operit.lspilot.enhancer;
+package com.lspilot.enhancer;
 
 import android.os.Handler;
 import android.os.Looper;
@@ -423,8 +423,6 @@ private static int findTargetIndex(HostAbi abi, List<?> messages, String targetI
             cancelLocked(state);
             state.active = false;
         }
-        ManualCompressionManager.postChatStatus(state.chatId,
-                "已按宿主停止操作取消自动重试。");
         DebugLogger.i("auto retry cancelled by host stop chat=" + DebugLogger.id(state.chatId));
     }
 
@@ -533,10 +531,6 @@ private static int findTargetIndex(HostAbi abi, List<?> messages, String targetI
             cancelLocked(state);
             state.active = false;
         }
-        if (state.retryNumber > 0) {
-            ManualCompressionManager.postChatStatus(state.chatId,
-                    "自动重试成功（第 " + state.retryNumber + "/" + MAX_RETRIES + " 次）。");
-        }
         DebugLogger.i("auto retry request completed chat=" + DebugLogger.id(state.chatId)
                 + " retries=" + state.retryNumber);
     }
@@ -565,8 +559,6 @@ private static int findTargetIndex(HostAbi abi, List<?> messages, String targetI
                 STATES.remove(state.viewModel.get());
                 state.active = false;
                 cancelLocked(state);
-                ManualCompressionManager.postChatStatus(state.chatId,
-                        "自动重试已耗尽（" + MAX_RETRIES + "/" + MAX_RETRIES + "），请手动重试。");
                 DebugLogger.w("auto retry exhausted chat=" + DebugLogger.id(state.chatId));
                 return;
             }
@@ -581,9 +573,6 @@ private static int findTargetIndex(HostAbi abi, List<?> messages, String targetI
             };
             mainHandler().postDelayed(state.pending, delay);
         }
-        ManualCompressionManager.postChatStatus(state.chatId,
-                "对话出错：" + safeReason(reason) + "；" + AutoRetryPolicy.formatDelay(delay)
-                        + "后自动重试（第 " + retryNumber + "/" + MAX_RETRIES + " 次）。");
         DebugLogger.w("auto retry scheduled chat=" + DebugLogger.id(state.chatId)
                 + " retry=" + retryNumber + "/" + MAX_RETRIES
                 + " delayMs=" + delay + " reason=" + DebugLogger.redact(reason));
@@ -607,8 +596,6 @@ private static int findTargetIndex(HostAbi abi, List<?> messages, String targetI
         }
         Object viewModel = state.viewModel.get();
         if (viewModel == null) return;
-        ManualCompressionManager.postChatStatus(state.chatId,
-                "正在自动重试（第 " + retryNumber + "/" + MAX_RETRIES + " 次）。");
         Method retryMethod = state.retryMethod;
         invokeRetry(retryMethod, viewModel, state);
     }
@@ -751,7 +738,9 @@ private static int findTargetIndex(HostAbi abi, List<?> messages, String targetI
                 delegateError = error.getTargetException();
             }
             mergeRetryState(abi, viewModel, chatId, errorEvent || doneEvent);
-            if (doneEvent) onStreamEvent(abi, viewModel, chatId, event);
+            if (doneEvent) {
+                onStreamEvent(abi, viewModel, chatId, event);
+            }
             if (delegateError != null) throw delegateError;
             return result;
         }

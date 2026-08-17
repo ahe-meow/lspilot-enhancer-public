@@ -1,4 +1,4 @@
-package dev.operit.lspilot.enhancer;
+package com.lspilot.enhancer;
 
 import dalvik.system.DexFile;
 
@@ -7,6 +7,8 @@ import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
+import java.lang.reflect.ParameterizedType;
+import java.lang.reflect.Type;
 import java.util.ArrayList;
 import java.util.Enumeration;
 import java.util.LinkedHashSet;
@@ -48,50 +50,65 @@ final class DexAbiScanner {
         List<Class<?>> classes = loadCandidateClasses(loader, classNames, filterNames);
         List<BuildRequestCandidate> buildRequests = findBuildRequests(classes);
         Class<?> function1Class = Class.forName("kotlin.jvm.functions.Function1", false, loader);
-        Class<?> messageClass = findMessageClass(classes);
-        RepoCandidate repository = findRepositoryAdd(classes, messageClass);
-        Throwable lastError = null;
-
+        List<RequestCandidate> requestMatches = new ArrayList<>();
+        Throwable lastRequestError = null;
         for (BuildRequestCandidate request : buildRequests) {
             try {
-                Method scanSseData = findSseData(request.owner, function1Class);
-                StreamCandidate stream = findStreamMessages(classes, request.configClass, function1Class);
-                StateCandidate state = findState(classes, stream.owner, request.configClass);
-                ViewModelMethodNames names = methodNames == null
-                        ? null : methodNames.get(stream.owner.getName());
-                Method sendMessage = findHintedNoArgVoid(stream.owner,
-                        names == null ? null : names.sendMessage);
-                Method retryResponse = findHintedNoArgVoid(stream.owner,
-                        names == null ? null : names.retryResponse);
-                Method stopGeneration = findHintedNoArgVoid(stream.owner,
-                        names == null ? null : names.stopGeneration);
-                Class<?> aiChatRouteClass = findAiChatRouteClass(loader, classNames);
-                DebugLogger.w("DEX ABI scan matched provider=" + request.owner.getName()
-                        + " config=" + request.configClass.getName()
-                        + " viewModel=" + stream.owner.getName()
-                        + " state=" + state.stateClass.getName()
-                        + " message=" + messageClass.getName()
-                        + " repository=" + repository.owner.getName()
-                        + " send=" + methodName(sendMessage)
-                        + " retry=" + methodName(retryResponse)
-                        + " stop=" + methodName(stopGeneration));
-                return HostAbi.minifiedFromDex(
-                        request.owner, request.configClass, stream.owner, messageClass,
-                        repository.owner, aiChatRouteClass, request.method, scanSseData,
-                        stream.method, sendMessage, retryResponse, stopGeneration, repository.method,
-                        accessorNames, state.stateClass, state.messagesMethod, state.configMethod,
-                        state.selectedModelMethod, state.loadingMethod,
-                        state.sessionMethod, state.sessionIdMethod);
+                requestMatches.add(new RequestCandidate(request,
+                        findSseData(request.owner, function1Class)));
             } catch (Throwable error) {
-                lastError = error;
+                lastRequestError = error;
             }
         }
+        if (requestMatches.size() != 1) {
+            NoSuchMethodException error = requestMatches.isEmpty()
+                    ? new NoSuchMethodException(
+                            "No coherent request/SSE ABI candidate found; buildRequestCandidates="
+                                    + buildRequests.size() + " loadedClasses=" + classes.size())
+                    : new AmbiguousRequestException(
+                            "Ambiguous request/SSE ABI candidates=" + requestMatches.size());
+            if (lastRequestError != null) error.initCause(lastRequestError);
+            throw error;
+        }
 
-        NoSuchMethodException error = new NoSuchMethodException(
-                "No coherent DEX ABI candidate found; buildRequestCandidates="
-                        + buildRequests.size() + " loadedClasses=" + classes.size());
-        if (lastError != null) error.initCause(lastError);
-        throw error;
+        RequestCandidate request = requestMatches.get(0);
+        try {
+            Class<?> messageClass = findMessageClass(classes);
+            RepoCandidate repository = findRepositoryAdd(classes, messageClass);
+            StreamCandidate stream = findStreamMessages(
+                    classes, request.request.configClass, function1Class);
+            StateCandidate state = findState(
+                    classes, stream.owner, request.request.configClass, messageClass);
+            ViewModelMethodNames names = methodNames == null
+                    ? null : methodNames.get(stream.owner.getName());
+            Method sendMessage = findHintedNoArgVoid(stream.owner,
+                    names == null ? null : names.sendMessage);
+            Method retryResponse = findHintedNoArgVoid(stream.owner,
+                    names == null ? null : names.retryResponse);
+            Method stopGeneration = findHintedNoArgVoid(stream.owner,
+                    names == null ? null : names.stopGeneration);
+            HostAbi match = HostAbi.minifiedFromDex(
+                    request.request.owner, request.request.configClass, stream.owner, messageClass,
+                    repository.owner, request.request.method, request.scanSseData, stream.method,
+                    sendMessage, retryResponse, stopGeneration, repository.method,
+                    accessorNames, state.stateClass, state.messagesMethod,
+                    state.sessionMethod, state.sessionIdMethod);
+            DebugLogger.w("DEX ABI scan matched provider=" + match.providerClass.getName()
+                    + " config=" + match.configClass.getName()
+                    + " viewModel=" + match.viewModelClass.getName()
+                    + " message=" + match.messageClass.getName()
+                    + " repository=" + match.repositoryClass.getName()
+                    + " send=" + methodName(match.sendMessageMethod)
+                    + " retry=" + methodName(match.retryResponseMethod)
+                    + " stop=" + methodName(match.stopGenerationMethod));
+            return match;
+        } catch (Throwable retryError) {
+            DebugLogger.w("DEX retry ABI unavailable; request/SSE retained: "
+                    + shortError(retryError));
+            return HostAbi.minifiedRequestFromDex(
+                    request.request.owner, request.request.configClass,
+                    request.request.method, request.scanSseData);
+        }
     }
 
     private static Method findHintedNoArgVoid(Class<?> owner, String name) {
@@ -109,6 +126,12 @@ final class DexAbiScanner {
 
     private static String methodName(Method method) {
         return method == null ? "fallback" : method.getName();
+    }
+
+    private static String shortError(Throwable error) {
+        String message = error == null ? null : error.getMessage();
+        return error == null ? "unknown" : error.getClass().getSimpleName()
+                + (message == null || message.isEmpty() ? "" : ": " + message);
     }
 
     static Class<?> findArrowPreferenceClass(ClassLoader loader, String[] dexPaths) throws Exception {
@@ -194,6 +217,7 @@ final class DexAbiScanner {
 
     private static Method findSseData(Class<?> owner, Class<?> function1Class)
             throws NoSuchMethodException {
+        List<Method> matches = new ArrayList<>();
         for (Method method : declaredMethods(owner)) {
             Class<?>[] types = method.getParameterTypes();
             if (!Modifier.isStatic(method.getModifiers())
@@ -201,16 +225,20 @@ final class DexAbiScanner {
                     && types.length == 2
                     && types[0] == String.class
                     && types[1] == function1Class) {
-                method.setAccessible(true);
-                return method;
+                matches.add(accessible(method));
             }
         }
-        throw new NoSuchMethodException("SSE parser method not found on " + owner.getName());
+        if (matches.size() != 1) {
+            throw new NoSuchMethodException("SSE parser candidate count=" + matches.size()
+                    + " on " + owner.getName());
+        }
+        return matches.get(0);
     }
 
     private static StreamCandidate findStreamMessages(
             List<Class<?>> classes, Class<?> configClass, Class<?> function1Class)
             throws NoSuchMethodException {
+        List<StreamCandidate> matches = new ArrayList<>();
         for (Class<?> owner : classes) {
             for (Method method : declaredMethods(owner)) {
                 try {
@@ -221,26 +249,34 @@ final class DexAbiScanner {
                             && types[0] == configClass
                             && types[1] == List.class
                             && types[2] == function1Class) {
-                        method.setAccessible(true);
-                        return new StreamCandidate(owner, method);
+                        matches.add(new StreamCandidate(owner, accessible(method)));
                     }
                 } catch (Throwable ignored) {
                 }
             }
         }
-        throw new NoSuchMethodException("stream message method not found for " + configClass.getName());
+        if (matches.size() != 1) {
+            throw new NoSuchMethodException("stream candidate count=" + matches.size()
+                    + " for " + configClass.getName());
+        }
+        return matches.get(0);
     }
 
     private static Class<?> findMessageClass(List<Class<?>> classes) throws NoSuchMethodException {
+        List<Class<?>> matches = new ArrayList<>();
         for (Class<?> type : classes) {
-            if (messageConstructor(type) != null) return type;
+            if (messageConstructor(type) != null) matches.add(type);
         }
-        throw new NoSuchMethodException("message constructor not found by DEX scan");
+        if (matches.size() != 1) {
+            throw new NoSuchMethodException("message class candidate count=" + matches.size());
+        }
+        return matches.get(0);
     }
 
     private static RepoCandidate findRepositoryAdd(List<Class<?>> classes, Class<?> messageClass)
             throws NoSuchMethodException {
-        RepoCandidate fallback = null;
+        List<RepoCandidate> preferred = new ArrayList<>();
+        List<RepoCandidate> fallback = new ArrayList<>();
         for (Class<?> owner : classes) {
             for (Method method : declaredMethods(owner)) {
                 try {
@@ -250,52 +286,42 @@ final class DexAbiScanner {
                             && types.length == 2
                             && types[0] == String.class
                             && types[1] == messageClass) {
-                        method.setAccessible(true);
-                        RepoCandidate candidate = new RepoCandidate(owner, method);
-                        if (hasSingletonField(owner)) return candidate;
-                        if (fallback == null) fallback = candidate;
+                        RepoCandidate candidate = new RepoCandidate(owner, accessible(method));
+                        (hasSingletonField(owner) ? preferred : fallback).add(candidate);
                     }
                 } catch (Throwable ignored) {
                 }
             }
         }
-        if (fallback != null) return fallback;
-        throw new NoSuchMethodException("repository add-message method not found by DEX scan");
+        List<RepoCandidate> matches = preferred.isEmpty() ? fallback : preferred;
+        if (matches.size() != 1) {
+            throw new NoSuchMethodException("repository candidate count=" + matches.size());
+        }
+        return matches.get(0);
     }
 
     private static StateCandidate findState(
-            List<Class<?>> classes, Class<?> viewModelClass, Class<?> configClass)
+            List<Class<?>> classes, Class<?> viewModelClass, Class<?> configClass,
+            Class<?> messageClass)
             throws NoSuchMethodException {
+        List<StateCandidate> matches = new ArrayList<>();
         for (Class<?> stateClass : classes) {
             try {
                 if (!hasStateFlowField(viewModelClass, stateClass)) continue;
-                Method messages = findFirstNoArgReturnAssignable(stateClass, List.class);
-                Method config = findFirstNoArgReturnExact(stateClass, configClass);
-                Method loading = findFirstNoArgBoolean(stateClass);
-                Method selectedModel = findSelectedModelMethod(stateClass);
+                Method messages = findUniqueMessageListMethod(stateClass, messageClass);
                 Method session = findSessionMethod(stateClass, configClass);
                 Method sessionId = session == null ? null
-                        : findFirstNoArgReturnExact(session.getReturnType(), String.class);
-                if (messages != null && config != null && loading != null
-                        && selectedModel != null && session != null && sessionId != null) {
-                    return new StateCandidate(stateClass, messages, config, selectedModel,
-                            loading, session, sessionId);
+                        : findSessionIdMethod(session.getReturnType());
+                if (messages != null && session != null && sessionId != null) {
+                    matches.add(new StateCandidate(stateClass, messages, session, sessionId));
                 }
             } catch (Throwable ignored) {
             }
         }
-        throw new NoSuchMethodException("chat UI state class not found by DEX scan");
-    }
-
-    private static Class<?> findAiChatRouteClass(ClassLoader loader, List<String> classNames) {
-        Class<?> known = loadClass(loader, "ela$b");
-        if (known != null && looksLikeAiChatRoute(known)) return known;
-        for (String className : classNames) {
-            if (!isRouteCandidateName(className)) continue;
-            Class<?> type = loadClass(loader, className);
-            if (type != null && looksLikeAiChatRoute(type)) return type;
+        if (matches.size() != 1) {
+            throw new NoSuchMethodException("state candidate count=" + matches.size());
         }
-        return null;
+        return matches.get(0);
     }
 
     private static Method findArrowPreferenceMethod(Class<?> owner) {
@@ -329,66 +355,58 @@ final class DexAbiScanner {
         }
     }
 
-    private static Method findSelectedModelMethod(Class<?> stateClass) {
-        Method preferred = findNamedNoArgReturnExact(stateClass, String.class,
-                "getSelectedModel", "f");
-        if (preferred != null) return preferred;
-        Method fallback = null;
-        for (Method method : declaredMethods(stateClass)) {
-            if (isNoArgReturn(method, String.class)) fallback = method;
-        }
-        return accessible(fallback);
-    }
-
     private static Method findSessionMethod(Class<?> stateClass, Class<?> configClass) {
+        List<Method> matches = new ArrayList<>();
         for (Method method : declaredMethods(stateClass)) {
             if (!isNoArg(method)) continue;
             Class<?> type = method.getReturnType();
-            if (type == void.class || type.isPrimitive() || type == String.class || type == List.class
-                    || type == configClass || type.getName().startsWith("java.")) {
+            if (type == void.class || type.isPrimitive() || type == String.class
+                    || type == List.class || type == configClass
+                    || type.getName().startsWith("java.")) {
                 continue;
             }
-            if (findFirstNoArgReturnExact(type, String.class) != null) return accessible(method);
-        }
-        return null;
-    }
-
-    private static Method findFirstNoArgReturnAssignable(Class<?> owner, Class<?> returnType) {
-        for (Method method : declaredMethods(owner)) {
-            if (isNoArg(method) && returnType.isAssignableFrom(method.getReturnType())) {
-                return accessible(method);
+            if (findUniqueNoArgReturnExact(type, String.class) != null) {
+                matches.add(accessible(method));
             }
         }
-        return null;
+        return matches.size() == 1 ? matches.get(0) : null;
     }
 
-    private static Method findFirstNoArgReturnExact(Class<?> owner, Class<?> returnType) {
+    private static Method findUniqueMessageListMethod(Class<?> owner, Class<?> messageClass) {
+        List<Method> matches = new ArrayList<>();
         for (Method method : declaredMethods(owner)) {
-            if (isNoArgReturn(method, returnType)) return accessible(method);
-        }
-        return null;
-    }
-
-    private static Method findNamedNoArgReturnExact(
-            Class<?> owner, Class<?> returnType, String... names) {
-        for (String name : names) {
-            try {
-                Method method = owner.getDeclaredMethod(name);
-                if (method.getReturnType() == returnType) return accessible(method);
-            } catch (Throwable ignored) {
+            if (!isNoArg(method) || !List.class.isAssignableFrom(method.getReturnType())) continue;
+            Type generic = method.getGenericReturnType();
+            if (!(generic instanceof ParameterizedType)) continue;
+            Type[] arguments = ((ParameterizedType) generic).getActualTypeArguments();
+            if (arguments.length == 1 && arguments[0] == messageClass) {
+                matches.add(accessible(method));
             }
         }
-        return null;
+        return matches.size() == 1 ? matches.get(0) : null;
     }
 
-    private static Method findFirstNoArgBoolean(Class<?> owner) {
-        for (Method method : declaredMethods(owner)) {
-            if (isNoArg(method)
-                    && (method.getReturnType() == boolean.class || method.getReturnType() == Boolean.class)) {
-                return accessible(method);
+        private static Method findSessionIdMethod(Class<?> sessionClass) {
+            Method exact = findUniqueNoArgReturnExact(sessionClass, String.class);
+            if (exact != null) return exact;
+            // Kotlin data classes keep the first string getter as the session id. Prefer the
+            // verified current-host getter name, but remain fail-closed for other layouts.
+            Method preferred = null;
+            for (Method method : declaredMethods(sessionClass)) {
+                if (isNoArgReturn(method, String.class) && "d".equals(method.getName())) {
+                    if (preferred != null) return null;
+                    preferred = accessible(method);
+                }
             }
+            return preferred;
         }
-        return null;
+
+        private static Method findUniqueNoArgReturnExact(Class<?> owner, Class<?> returnType) {
+        List<Method> matches = new ArrayList<>();
+        for (Method method : declaredMethods(owner)) {
+            if (isNoArgReturn(method, returnType)) matches.add(accessible(method));
+        }
+        return matches.size() == 1 ? matches.get(0) : null;
     }
 
     private static boolean hasStateFlowField(Class<?> viewModelClass, Class<?> stateClass) {
@@ -433,19 +451,6 @@ final class DexAbiScanner {
         }
     }
 
-    private static boolean looksLikeAiChatRoute(Class<?> type) {
-        try {
-            Constructor<?> constructor = type.getDeclaredConstructor(String.class, String.class);
-            constructor.setAccessible(true);
-            Object route = constructor.newInstance("pkg_probe", "chat_probe");
-            String value = String.valueOf(route);
-            return value.contains("AiChat(packageName=pkg_probe")
-                    && value.contains("chatId=chat_probe");
-        } catch (Throwable ignored) {
-            return false;
-        }
-    }
-
     private static boolean hasSingletonField(Class<?> type) {
         for (String name : new String[]{"INSTANCE", "a"}) {
             if (singletonField(type, name) != null) return true;
@@ -475,11 +480,6 @@ final class DexAbiScanner {
         }
         if (name.indexOf('.') >= 0 || name.indexOf('$') >= 0) return false;
         return name.length() <= 8 && isLowerMinifiedName(name);
-    }
-
-    private static boolean isRouteCandidateName(String name) {
-        if (name == null || name.indexOf('.') >= 0 || name.indexOf('$') < 0) return false;
-        return name.length() <= 8 && isLowerMinifiedName(name.replace("$", ""));
     }
 
     private static boolean isArrowPreferenceCandidateName(String name) {
@@ -540,23 +540,20 @@ final class DexAbiScanner {
     }
 
     public static void main(String[] args) throws Exception {
-        check(isAbiCandidateName("ts8"), "short minified ABI class should be accepted");
+        check(isAbiCandidateName("vj8"), "short minified ABI class should be accepted");
         check(isAbiCandidateName("abcdefgh"), "longer minified ABI class should be accepted");
         check(!isAbiCandidateName("android.app.Activity"), "framework class should be rejected");
-        check(isRouteCandidateName("ela$b"), "minified route class should be accepted");
-        check(!isRouteCandidateName("lka"), "route class without nested marker should be rejected");
-        check(isArrowPreferenceCandidateName("fx"), "minified ArrowPreference class should be accepted");
+        check(isArrowPreferenceCandidateName("fx"),
+                "minified ArrowPreference class should be accepted");
         if (args != null && args.length > 0) {
             HostAbi abi = resolve(DexAbiScanner.class.getClassLoader(), args);
-            check(abi.buildRequestMethod != null, "legacy build request method missing");
-            check(abi.sendMessageMethod != null, "legacy send message method missing");
-            check(abi.retryResponseMethod != null, "legacy retry response method missing");
-            check(abi.stopGenerationMethod != null, "legacy stop generation method missing");
-            check(abi.hasCompressionAccessors(), "legacy compression accessors missing");
-            check(abi.aiChatRouteClass != null && looksLikeAiChatRoute(abi.aiChatRouteClass),
-                    "legacy AiChat route class is invalid");
+            check(abi.buildRequestMethod != null, "build request method missing");
+            check(abi.sendMessageMethod != null, "send message method missing");
+            check(abi.retryResponseMethod != null, "retry response method missing");
+            check(abi.stopGenerationMethod != null, "stop generation method missing");
+            check(abi.hasRetryAccessors(), "retry message accessors missing");
             abi.validateAccessorBindings();
-            System.out.println("Legacy DEX ABI resolved provider=" + abi.providerClass.getName()
+            System.out.println("DEX ABI resolved provider=" + abi.providerClass.getName()
                     + " viewModel=" + abi.viewModelClass.getName()
                     + " send=" + abi.sendMessageMethod.getName()
                     + " retry=" + abi.retryResponseMethod.getName()
@@ -566,11 +563,7 @@ final class DexAbiScanner {
     }
 
     private static String accessorNames(HostAbi abi) {
-        return "providerId=" + methodName(abi.accessors.configProviderId)
-                + ",model=" + methodName(abi.accessors.configModelName)
-                + ",apiKey=" + methodName(abi.accessors.configApiKey)
-                + ",url=" + methodName(abi.accessors.configFullApiUrl)
-                + ",messageId=" + methodName(abi.accessors.messageId)
+        return "messageId=" + methodName(abi.accessors.messageId)
                 + ",role=" + methodName(abi.accessors.messageRole)
                 + ",content=" + methodName(abi.accessors.messageContent);
     }
@@ -579,29 +572,21 @@ final class DexAbiScanner {
         if (!condition) throw new AssertionError(message);
     }
 
+    static final class AmbiguousRequestException extends NoSuchMethodException {
+        AmbiguousRequestException(String message) {
+            super(message);
+        }
+    }
+
     static final class AccessorNames {
-        final String configProviderId;
-        final String configModelName;
-        final String configApiKey;
-        final String configFullApiUrl;
         final String messageId;
         final String messageRole;
         final String messageContent;
-        final String messageToolCalls;
-        final String messageToolCallId;
 
-        AccessorNames(String configProviderId, String configModelName, String configApiKey,
-                String configFullApiUrl, String messageId, String messageRole, String messageContent,
-                String messageToolCalls, String messageToolCallId) {
-            this.configProviderId = emptyToNull(configProviderId);
-            this.configModelName = emptyToNull(configModelName);
-            this.configApiKey = emptyToNull(configApiKey);
-            this.configFullApiUrl = emptyToNull(configFullApiUrl);
+        AccessorNames(String messageId, String messageRole, String messageContent) {
             this.messageId = emptyToNull(messageId);
             this.messageRole = emptyToNull(messageRole);
             this.messageContent = emptyToNull(messageContent);
-            this.messageToolCalls = emptyToNull(messageToolCalls);
-            this.messageToolCallId = emptyToNull(messageToolCallId);
         }
 
         private static String emptyToNull(String value) {
@@ -633,6 +618,16 @@ final class DexAbiScanner {
         }
     }
 
+    private static final class RequestCandidate {
+        final BuildRequestCandidate request;
+        final Method scanSseData;
+
+        RequestCandidate(BuildRequestCandidate request, Method scanSseData) {
+            this.request = request;
+            this.scanSseData = scanSseData;
+        }
+    }
+
     private static final class StreamCandidate {
         final Class<?> owner;
         final Method method;
@@ -656,22 +651,16 @@ final class DexAbiScanner {
     private static final class StateCandidate {
         final Class<?> stateClass;
         final Method messagesMethod;
-        final Method configMethod;
-        final Method selectedModelMethod;
-        final Method loadingMethod;
         final Method sessionMethod;
         final Method sessionIdMethod;
 
-        StateCandidate(Class<?> stateClass, Method messagesMethod, Method configMethod,
-                Method selectedModelMethod, Method loadingMethod, Method sessionMethod,
-                Method sessionIdMethod) {
+        StateCandidate(Class<?> stateClass, Method messagesMethod,
+                Method sessionMethod, Method sessionIdMethod) {
             this.stateClass = stateClass;
             this.messagesMethod = messagesMethod;
-            this.configMethod = configMethod;
-            this.selectedModelMethod = selectedModelMethod;
-            this.loadingMethod = loadingMethod;
             this.sessionMethod = sessionMethod;
             this.sessionIdMethod = sessionIdMethod;
         }
     }
+
 }

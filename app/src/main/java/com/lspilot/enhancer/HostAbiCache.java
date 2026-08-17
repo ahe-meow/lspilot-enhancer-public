@@ -1,4 +1,4 @@
-package dev.operit.lspilot.enhancer;
+package com.lspilot.enhancer;
 
 import android.content.pm.ApplicationInfo;
 import android.util.Log;
@@ -18,10 +18,12 @@ import java.util.List;
 /** Version-fingerprinted persistent cache for resolved host reflection descriptors. */
 final class HostAbiCache {
     private static final String TAG = "LSPilotEnhancer";
-    private static final int CACHE_SCHEMA = 3;
+    private static final int CACHE_SCHEMA = 6;
     private static final int MAX_CACHE_BYTES = 1024 * 1024;
     private static final String CACHE_DIRECTORY = "lspilot-enhancer";
     private static final String CACHE_FILE = "host-abi-v1.json";
+
+    private static volatile String lastResolutionReason = "unknown";
 
     private HostAbiCache() {}
 
@@ -37,6 +39,7 @@ final class HostAbiCache {
             String hostDataDir, int hostTargetSdk) throws Exception {
         File cacheFile = cacheFile(hostDataDir);
         if (cacheFile == null) {
+            lastResolutionReason = "cache_unavailable";
             log("ABI descriptor cache unavailable; host dataDir is missing");
             return HostAbi.resolveFresh(loader, dexPaths);
         }
@@ -49,21 +52,34 @@ final class HostAbiCache {
         try {
             cached = readJson(cacheFile);
             rebuildReason = rebuildReason(cached, hostFingerprint, fingerprint);
+            lastResolutionReason = rebuildReason == null ? "cache_hit" : rebuildReason;
             if (rebuildReason == null) {
                 HostAbi abi = HostAbiDescriptor.decode(loader, cached.getJSONObject("abi"));
                 log("ABI descriptor cache hit fingerprint=" + shortFingerprint(fingerprint));
                 return abi;
             }
         } catch (Throwable error) {
+            lastResolutionReason = "invalid_cache";
             rebuildReason = cached == null ? "invalid_cache" : "cached_descriptor_invalid";
             log("ABI descriptor cache rejected: " + shortError(error));
         }
 
+        lastResolutionReason = rebuildReason;
         log("ABI descriptor cache rebuild reason=" + rebuildReason
                 + " hostFingerprint=" + shortFingerprint(hostFingerprint)
                 + " moduleVersionCode=" + BuildConfig.VERSION_CODE
                 + " fingerprint=" + shortFingerprint(fingerprint));
-        HostAbi abi = HostAbi.resolveFresh(loader, dexPaths);
+        boolean hostUpdated = isHostUpdateReason(rebuildReason);
+        boolean dexSelfAdapt = hostUpdated || "first_start".equals(rebuildReason);
+        if (hostUpdated) {
+            log("HOST_UPDATE_DETECTED contentFingerprint="
+                    + shortFingerprint(hostFingerprint)
+                    + "; starting DEX self-adaptation");
+        }
+        if (dexSelfAdapt) {
+            log("DEX_SELF_ADAPTATION starting reason=" + rebuildReason);
+        }
+        HostAbi abi = HostAbi.resolveFresh(loader, dexPaths, dexSelfAdapt);
         try {
             JSONObject root = new JSONObject();
             root.put("schema", CACHE_SCHEMA);
@@ -81,16 +97,16 @@ final class HostAbiCache {
         return abi;
     }
 
-    private static String rebuildReason(JSONObject cached, String hostFingerprint,
+    static String rebuildReason(JSONObject cached, String hostFingerprint,
             String fingerprint) {
         if (cached == null) return "first_start";
-        if (cached.optInt("schema", -1) != CACHE_SCHEMA) return "cache_schema_changed";
         String cachedHost = cached.optString("hostFingerprint", "");
-        int cachedModule = cached.optInt("moduleVersionCode", Integer.MIN_VALUE);
         boolean hostChanged = !hostFingerprint.equals(cachedHost);
+        int cachedModule = cached.optInt("moduleVersionCode", Integer.MIN_VALUE);
         boolean moduleChanged = cachedModule != BuildConfig.VERSION_CODE;
         if (hostChanged && moduleChanged) return "host_and_module_update";
         if (hostChanged) return "host_update";
+        if (cached.optInt("schema", -1) != CACHE_SCHEMA) return "cache_schema_changed";
         if (moduleChanged) return "module_update";
         if (!fingerprint.equals(cached.optString("fingerprint", ""))) {
             return "composite_fingerprint_changed";
@@ -99,31 +115,36 @@ final class HostAbiCache {
         return null;
     }
 
-    private static String hostFingerprint(String hostPackage, int hostTargetSdk,
+    static String lastResolutionReason() {
+        return lastResolutionReason;
+    }
+
+    private static boolean isHostUpdateReason(String reason) {
+        return "host_update".equals(reason) || "host_and_module_update".equals(reason);
+    }
+
+    static String hostFingerprint(String hostPackage, int hostTargetSdk,
             String[] dexPaths) throws Exception {
-        StringBuilder source = new StringBuilder();
-        source.append("hostPackage=").append(hostPackage)
-                .append("\nhostTargetSdk=").append(hostTargetSdk);
-        List<String> paths = new ArrayList<>();
+        List<String> hashes = new ArrayList<>();
         if (dexPaths != null) {
             for (String path : dexPaths) {
-                if (path != null && !path.trim().isEmpty()) paths.add(path);
-            }
-        }
-        Collections.sort(paths);
-        for (String path : paths) {
-            File file = new File(path);
-            source.append("\napk=").append(path)
-                    .append('|').append(file.isFile() ? file.length() : -1L)
-                    .append('|').append(file.isFile() ? file.lastModified() : -1L);
-            if (file.isFile()) {
+                if (path == null || path.trim().isEmpty()) continue;
+                File file = new File(path);
+                if (!file.isFile()) {
+                    hashes.add("missing");
+                    continue;
+                }
                 try {
-                    source.append("|sha256=").append(fileSha256(file));
+                    // Only APK/split content identifies the host; ignore metadata, path, size, and mtime.
+                    hashes.add(fileSha256(file));
                 } catch (Throwable error) {
-                    source.append("|sha256Error=").append(shortError(error));
+                    hashes.add("sha256Error:" + shortError(error));
                 }
             }
         }
+        Collections.sort(hashes);
+        StringBuilder source = new StringBuilder();
+        for (String hash : hashes) source.append("apkSha256=").append(hash).append('\n');
         return sha256(source.toString());
     }
 

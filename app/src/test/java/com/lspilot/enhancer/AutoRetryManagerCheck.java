@@ -1,4 +1,4 @@
-package dev.operit.lspilot.enhancer;
+package com.lspilot.enhancer;
 
 import java.lang.reflect.Method;
 import java.util.Arrays;
@@ -9,20 +9,18 @@ public final class AutoRetryManagerCheck {
     }
 
     public static void main(String[] args) throws Exception {
-        assertTrue(invokeBoolean("isErrorEvent", new Class<?>[]{Object.class, String.class},
+        assertTrue(HostAbi.isStreamErrorEvent(
                 new IllegalStateException("socket closed"), IllegalStateException.class.getName()),
                 "Throwable must be treated as an error event");
 
         Failure failure = new Failure(new IllegalStateException("upstream rejected request"));
-        assertTrue(invokeBoolean("isErrorEvent", new Class<?>[]{Object.class, String.class},
-                failure, failure.getClass().getName()),
+        assertTrue(HostAbi.isStreamErrorEvent(failure, failure.getClass().getName()),
                 "$Failure carrier must be treated as an error event");
         assertEquals("upstream rejected request", invokeString("eventMessage",
                 new Class<?>[]{Object.class}, failure));
 
         Failed failed = new Failed("HTTP 502: context window exceeded");
-        assertTrue(invokeBoolean("isErrorEvent", new Class<?>[]{Object.class, String.class},
-                failed, failed.getClass().getName()),
+        assertTrue(HostAbi.isStreamErrorEvent(failed, failed.getClass().getName()),
                 "$Failed carrier must be treated as an error event");
         assertEquals("HTTP 502: context window exceeded", invokeString("eventMessage",
                 new Class<?>[]{Object.class}, failed));

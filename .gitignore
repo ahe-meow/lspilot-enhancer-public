@@ -38,3 +38,7 @@ reverse/latest-host/
 
 # Logs
 *.log
+# Local AI agent runtime and nested workspaces
+.atl/
+.pi/
+pi-mobile/

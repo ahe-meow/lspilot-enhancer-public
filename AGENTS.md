@@ -8,7 +8,7 @@ Before changing this repository, read:
 2. `docs/work/plan.md`
 3. `docs/work/todo.md`
 4. `docs/work/findings.md`
-5. `docs/work/handoff.md`
+5. `docs/work/project-handoff.md`
 6. `docs/project/constraints.md`
 
 For documentation changes, also read `docs/README.md`. For implementation work, read the relevant file under `docs/architecture/`, `docs/design/`, or `docs/reference/`.

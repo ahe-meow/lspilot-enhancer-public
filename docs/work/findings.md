@@ -1,69 +1,93 @@
-# Current Findings
+# Current findings
 
 - Status: current
-- Updated: 2026-08-13
-- Purpose: preserve verified facts, unresolved runtime evidence, and implications for the next action.
+- Updated: 2026-08-17
+- Purpose: record current verified implementation and host compatibility facts.
 
-## Branch State
+## Source state
 
-- Worktree: `.worktrees/model-context-compression`
-- Branch: `feat/model-context-compression`
-- Current branch history implements the planned protocol, state, persistence, coordinator, request integration, UI projection, and static guards.
-- Current local source changes cover `ManualCompressionManager.java`, `LSPilotEnhancerModule.java`, `HostAbi.java`, `AutoRetryManager.java`, and `ModelContextCompressionCheck.java`.
-- Documentation has been reorganized into `docs/{architecture,design,project,reference,work}`; legacy dated planning docs and old top-level docs are deleted in this worktree.
+- Branch: `main`; HEAD before this work: `4e7a212`.
+- Module identity now uses `com.lspilot.enhancer`. Android treats it as a new package, so LSPosed must re-enable the module and re-scope it to `me.yun.lspilot` after installation.
+- Context compression was explicitly removed from production source, chat UI, settings, tests, and active documentation.
+- Removed legacy preference keys and stored summary-record prefixes are cleaned from host-local module preferences during initialization; other settings are untouched.
+- Retained features are Prompt Cache policy, compatible retention, usage reporting, reasoning effort, diagnostics, and bounded automatic retries.
+- DexKit runtime packaging was removed. Runtime discovery uses platform `dalvik.system.DexFile` to avoid colliding with the host's DexKit/JNI state.
 
-## Runtime Blocker
+## Repository verification — 2026-08-17
 
-- Manual compression previously froze LSPilot, followed by ANR/exit.
-- ANR evidence placed the host main thread inside `requestInternalSummary(...)` while synchronously invoking the host provider stream.
-- The timeout was registered only after that invocation returned, so a blocking stream prevented timeout registration.
-- After the ANR fix, a 2026-08-13 manual attempt kept the host responsive but remained in `SUMMARIZING` indefinitely.
-- Current LSPosed logs showed the internal request had two serialized messages and entered the ordinary request hook, which applied normal context reconstruction and `reasoning=xhigh`.
-- The active task identity check required exactly one message. A provider-added system message therefore hid the exact internal summary prompt.
-- Ordinary request reconstruction then replaced `latestHostMessages`; the timeout reused response-boundary validation and silently rejected its own current task.
+- Source/package migration to `com.lspilot.enhancer` is complete.
+- With JDK 17 and the documented arm64 AAPT2 flags, the final `1.7.4-preview.24` release assembly, test compilation, and lint succeeded in 33s.
+- APK `app/build/outputs/apk/release/app-release.apk` is 697,879 bytes with SHA-256 `51e0c3c044ee1f79a4b93ac5e6c6767e2a22cb81c5dd96ac2a1086fd7f7928aa`.
+- `aapt2 dump badging` reports package `com.lspilot.enhancer`, version code `61`, and version name `1.7.4-preview.24`; ZIP integrity, APK v2 signature, required Xposed entries, retired-feature markers, and `git diff --check` passed.
+- `RequestGroupIsolationCheck`, `HostUpdateDetectionCheck`, `AutoRetryManagerCheck`, `PromptCachePolicy`, and `ReasoningPolicy` passed on Dalvik. Device installation and LSPosed activation remain pending.
 
-## Local Fix
+## Git ownership recovery — 2026-08-17
 
-- A daemon single-thread executor named `lspilot-summary-request` now invokes the internal provider stream.
-- The main-thread handler registers `ManualCompressionManager.onSummaryTimeout(...)` before dispatching the stream work.
-- The internal-build guard still surrounds provider stream invocation.
-- Internal summary identity now accepts provider-added system messages only when the sole non-system message is the exact active summary prompt.
-- Timeout ownership now depends only on `SUMMARIZING` state plus task ID and chat ID; request reconstruction cannot invalidate the timeout.
-- The shared failure path normalizes a timed-out `SUMMARIZING` task through `VALIDATING`, allowing one automatic retry and then an actionable failure state.
-- Stream event recognition now supports both legacy `nyb` events and the current host `lwb` chunk/done/error events.
-- Current nested chunks are read through their part list, and only text parts contribute to the internal summary; reasoning and tool parts stay internal.
-- Auto retry uses the same shared event classification, and non-JSON SSE diagnostics no longer attach throwable text that can contain summary content.
+- The user authorized per-repository ownership repair for this personal checkout. The native Gentle AI check failed because the `/storage/emulated/0` view of `.git` was owned by Android UID `10320` while PRoot reported euid `0`. Host-side `chown 0:0` changed the exact `/data/media/0/.../.git` backing directory to `0:0` with mode `2770`, but the FUSE path still presents `10320:1023`; the PRoot-native review check remains blocked, so the safe fallback is an Ubuntu-native local checkout, not a global trust bypass.
 
-## Verification Evidence
+## Current host identity
 
-- `:app:buildModelCompressionCheckDex` passed after the fix.
-- Android `dalvikvm -ea` execution of `ModelContextCompressionCheck` exited 0 with empty stdout.
-- `:app:assembleRelease :app:lintRelease -x lintVitalRelease` passed with the required host build flags.
-- A forced release rebuild on 2026-08-13 passed and produced SHA-256 `561f3b536821a5f7fa5246ce11ef3e6f4db5d998e1c25377b0f2fed68d8e6eb4`.
-- `aapt2 dump badging` confirmed package `dev.operit.lspilot.cache`, version code 60, version `1.7.4-preview.23`, minimum SDK 26, and target SDK 29.
-- Focused assertions reproduce the provider-added-system-message identity failure and a timeout after `latestHostMessages` changes; both pass after the fix.
-- The release/lint gate passed after the stuck-state fix and produced SHA-256 `4d34fe83e541a0fcfa631f4f4b19b28beb7dec26c245a988097f5d95e5bde037`.
-- Focused assertions now cover the current host `lwb` event structure and prove that its Done event terminates the internal summary flow.
-- The focused DEX check, Android `dalvikvm -ea` assertions, release build, and lint passed for APK SHA-256 `460947023ad0afcdcd642049122393de63f2e4cd74b0ee5d199d82244b1cb107`.
+- Installed package: `me.yun.lspilot`
+- Version: `1.1.0 (11)`
+- Installed host content SHA-256: `af2283a2978ea650986988ac3d9c01a39474cdd6410d30b842dd8f15e686149c` (version metadata remains `1.1.0 (11)` despite the content update).
+- Size: `16,700,026` bytes
+- Runtime staging path: `/storage/emulated/0/MT2Explorer/mcp/lspilot_installed_20260816_1958/base.apk`
+- MT2 workspace: `rvlxvm8q`
+- The earlier installed host SHA-256 `d4eb3066c82a791f6d11bbe8a4c6a9f0d2990c8282f91a815d14d7bfc05f5d56` and staged SHA-256 `b6ea30f6...debe` remain separate compatibility evidence.
+- The prior `8541...` APK and workspace `tpmuti9o` are historical evidence only.
 
-## Installation Evidence
+## Verified retained ABI
 
-- A fresh KernelSU probe on 2026-08-13 reported Android `uid=0(root)` and SELinux domain `u:r:ksu:s0`.
-- The previously installed module hash was `7353e6d093e7fa7854d79eadaeb7b345237becf3c5660dc00522360146a64dc2`.
-- `pm install -r` replaced it successfully. The built APK, `/data/local/tmp` staged APK, and installed `base.apk` all have SHA-256 `561f3b536821a5f7fa5246ce11ef3e6f4db5d998e1c25377b0f2fed68d8e6eb4`.
-- LSPosed database state shows `dev.operit.lspilot.cache` enabled for user 0 and scoped to `me.yun.lspilot`.
-- After force-stop and restart, current LSPosed logs for host PID 27868 reported the resolved minified ABI, `requestBody=true compression=true sseUsage=true`, installed compression/send hooks, and `LSPilotEnhancer loaded version=1.7.4-preview.23 (60)`.
-- Manual compression behavior remains unresolved; install and load evidence must not be presented as scenario acceptance.
-- The latest built, staged, and installed APKs all match SHA-256 `4d34fe83e541a0fcfa631f4f4b19b28beb7dec26c245a988097f5d95e5bde037`.
-- After restart, host PID 31682 loaded the module and all compression hooks without a module startup error.
-- The latest lifecycle fix still requires a fresh manual compression scenario; the previous stuck attempt ran the superseded APK.
-- On 2026-08-13, KernelSU installation ran as Android `uid=0(root)` in `u:r:ksu:s0`; built, staged, and installed APKs all matched SHA-256 `460947023ad0afcdcd642049122393de63f2e4cd74b0ee5d199d82244b1cb107`.
-- Restarted host PID 31402 resolved the current minified ABI (`provider=yr8`, `viewModel=ab`), installed request, compression, SSE, retry, and send hooks, and loaded module version `1.7.4-preview.23 (60)`.
-- The first post-install log window contained no new compression attempt and reported `chat route visible=false`; runtime acceptance still needs a fresh attempt from the affected chat.
-- The handoff source of truth is `docs/work/handoff.md`; do not infer acceptance from old attempts that ran hashes `561f3b...` or `4d34fe...`.
+- Current request/SSE: `zj8.p(cb,List,String,boolean):String` and `zj8.t(String,Function1):boolean`
+- Compatibility request/SSE profiles: `xj8` for `d4eb3066...f5d56` and `vj8` for `b6ea30f6...debe`, with the same method shapes.
+- ViewModel/retry: `va.w(cb,List,Function1):void`, `va.F`, `va.P`, `va.J`, `va.Q`
+- State/session: `va.b:sk7 -> oa`, `oa.e():List`, `oa.j():na`, `na.d():String`
+- Message: `u7`; ID `f()`, role `i()`, content `c()`
+- Repository singleton: `me.yun.lspilot.data.repository.b`; add/replace `c(String,u7)` / `r(String,List)`
 
-## Diagnostic Branches
+- The current stream event family is `uob`: chunk `uob$a`, done `uob$b`, error `uob$c`. Chunk parts use `xa$b` for text and `xa$c` for tool calls; the module now recognizes these classes while retaining historical `lwb`/`cb` compatibility.
+- `va` state `oa` has two List properties; the known binding uses `oa.e()` for messages and `oa.j()` for session. State copy reconstruction now discovers the Kotlin `copy$default` shape generically and replaces only the messages field.
+- Repository `b.c(String,u7)` adds a message and `b.r(String,List)` replaces messages; replacement discovery now rejects zero or multiple structural candidates.
 
-- If the host still freezes, capture a new ANR and verify which thread owns the provider stream.
-- If it stays responsive but compression fails, verify terminal assistant Markdown reaches `ManualCompressionManager.onSummaryResponse(...)`.
-- If validation succeeds without reduced context, verify the summary record commits and later requests call effective message reconstruction.
+- Candidate resolution enumerates coherent combinations and rejects zero or ambiguous winners.
+- Known minified profiles are attempted conservatively (`vj8`, then `xj8`) before structural DEX fallback.
+- Descriptor caching is schema `6`, hashes every base/split APK, and records `host_update` / `host_and_module_update` before DEX self-adaptation.
+- Structural discovery resolves request/SSE first. Missing or ambiguous retry candidates produce a cacheable request-only descriptor instead of disabling request caching; request/SSE ambiguity still rejects the request group.
+- Cached evidence does not yet include per-group candidate scores or a durable ambiguity result.
+
+- Historical predecessor-package runtime evidence (2026-08-17): host update adaptation passed Java 17 compilation, D8, Dalvik (`HostUpdateDetectionCheck: PASS`, `LegacyContextRepairCheck` exit 0), release assembly, `git diff --check`, APK ZIP/signature/DEX-marker checks, and private hash-verified install. The recorded module hash and subsequent startup logs are historical and do not establish installation of `com.lspilot.enhancer`.
+- 2026-08-16: With the documented AArch64 override `-Pandroid.aapt2FromMavenOverride=/usr/lib/android-sdk/build-tools/debian/aapt2 -Pandroid.enableResourceOptimizations=false`, `:app:assembleRelease` and `:app:lintRelease -x lintVitalRelease` pass. No source or lint errors were reported.
+- The release classes.dex contains no active deleted-feature classes, compression UI/resource labels, or compression-related manifest entries. It intentionally retains only the old preference/record identifiers `context_compression_enabled`, `lspilot.summary.record.v1./v2.`, and `purgeRemovedCompressionSettings` for narrow one-time cleanup; these are not exposed settings or active compression behavior.
+- Historical predecessor artifact (2026-08-16): the valid private module APK is `/storage/emulated/0/MT2Explorer/mcp/lspilot-cache-adaptive-20260816-fixed.apk`, size `702,264` bytes, SHA-256 `7bc3a22f6a43ef98cd843922c89a0b57ced474cc26583fdca0e4f2089d8c44e8`. `aapt2 dump badging`, `unzip -t`, and APK v2/v3 signature verification passed. It contains `AndroidManifest.xml`, `resources.arsc`, and the new `classes.dex`.
+- Historical predecessor build-tool evidence (2026-08-16): the direct AGP output after the AArch64 AAPT2 override was rejected: it repeatedly produced a 14-entry ZIP without `AndroidManifest.xml` or `resources.arsc`, despite `BUILD SUCCESSFUL`. The private workaround reused only the previously valid module container's manifest/resources, replaced `classes.dex`, then ran arm64 `zipalign` and `apksigner`; no APK or signing material was committed.
+- Historical predecessor install evidence (2026-08-16): the fixed module was installed through KernelSU RunCommandService. Source, shared staging, `/data/local/tmp`, and installed `base.apk` all matched `7bc3a22f6a43ef98cd843922c89a0b57ced474cc26583fdca0e4f2089d8c44e8`. LSPosed DB integrity was `ok`, module state was enabled, and scope included `me.yun.lspilot`.
+- Historical predecessor runtime startup evidence (2026-08-16): startup on installed host `d4eb3066...f5d56` succeeded: `Resolved LSPilot host ABI minified=true provider=xj8 config=cb viewModel=va`; stream/retry, cache request (`xj8#p`), raw SSE (`xj8#t`), load-session, and auto-retry hooks all installed; `Startup hook probe: minified=true requestBody=true sseUsage=true`. The previous `state candidate count=0` and `Unavailable setting persistence failed` errors did not recur.
+- 2026-08-16: Manual request/usage/reasoning/retry acceptance remains user-driven and is not claimed from startup logs alone.
+- Module builds and repository work run in Ubuntu PRoot with JDK 17.
+- Privileged package, LSPosed, and global log operations use Termux RunCommandService with KernelSU and hash-verified private staging.
+- Engram remained unavailable at `http://127.0.0.1:7437`; the user's Simplified Chinese preference could not be persisted there, but is active for this session.
+
+## Endpoint error diagnosis — 2026-08-16
+
+- Latest module log capture: `/data/data/com.termux/files/usr/tmp/lspilot-endpoint-narrow-root.out`; host debug capture: `/data/data/com.termux/files/usr/tmp/lspilot-debuglog-current-root.out`.
+- The module hook is not failing locally. At 20:49–20:55 it enhanced repeated requests with `model=gpt-5.6-sol`, `reasoning=xhigh`, `explicitBreakpoints=4`, `retention=false`, and `usage=true`; there was no request-enhancement exception.
+- No subsequent raw SSE usage/completion event or module-side HTTP error body was recorded after those requests. The failure therefore occurs upstream or in the host's endpoint response handling; the current logs do not expose the provider's response JSON.
+- Current host-local module preferences contain `reasoning_effort=xhigh`; other policy booleans are absent and therefore default enabled.
+- The request policy currently applies Chat Completions fields to every endpoint: `reasoning_effort` and `stream_options.include_usage`. Responses requests require endpoint-specific reasoning/usage handling. The Completions path also receives GPT-5.6 explicit cache markers, which a non-OpenAI gateway may reject or translate into `502`.
+- Ranked next probe: temporarily use reasoning effort `high`; retry both endpoints. If both still fail, disable cache-key/prompt-cache mutation and retry. This separates the reasoning field from cache-field compatibility without modifying the host APK or database.
+
+## Legacy conversation repair — 2026-08-16
+
+- Live host database integrity remains `ok`; the host database was not modified.
+- The affected legacy chat is titled `0813` (`d81826d8-9a3c-4220-a5b4-f46164446c19`). Failed compression left 11 `[系统提示 · 上下文压缩]` rows and a truncated request-history boundary that began with orphan `tool` messages.
+- Removing only the 11 compression-status rows still returned HTTP 403. Removing those rows plus two orphan `tool` messages also still returned HTTP 403.
+- The successful control additionally removed the damaged historical `assistant.tool_calls` / `tool` blocks while preserving plain assistant text and all user messages. The real request logged `removed messages=24 compression=11 orphanTools=2 toolBlocks=11`, then returned `pong` from `https://pasw.shop/v1/chat/completions`.
+- Provider usage confirmed success: `input_tokens=39856`, `output_tokens=34`, `total_tokens=39890`. This isolates the failure to the legacy tool-call history produced around the failed compression boundary, not the endpoint, API key, model, reasoning effort, or cache fields.
+- The historical predecessor repair was request-local and did not rewrite the host database. It is not included in `1.7.4-preview.24`.
+- Historical predecessor release artifact (2026-08-16): the installed release APK is `app/build/outputs/apk/release/app-release.apk`, size `697,819` bytes, SHA-256 `e25102ded11e50e20c0b26f59cd1ad9bf16ceee19cbd24af67eeb41e276c589a`; badging, ZIP integrity, APK signature, DEX-string, staging-hash, and installed-hash checks passed.
+
+## New-chat 30K context — 2026-08-16
+
+- The newest database chat titled `新对话` contains only 4 rows (`ping`, `pong`, `你是什么模型？`, and the answer), totaling 132 content bytes. Therefore its roughly 30K provider input tokens are not 30K tokens of persisted chat history.
+- Host DEX inspection confirms `xj8.p` constructs `model`, `messages`, `stream`, `tools`, `tool_choice`, and `stream_options`; `xj8.o` prepends the host-provided system prompt as a `role=system` message and converts the current chat list into request messages.
+- The 30K is consequently dominated by the host-generated system prompt plus tool/function definitions and request JSON overhead. The raw system prompt is not stored in `chat_message` and was not logged, so its exact text cannot be reconstructed from the database without a separate host-side request capture.

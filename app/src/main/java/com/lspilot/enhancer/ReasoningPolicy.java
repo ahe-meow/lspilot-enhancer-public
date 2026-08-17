@@ -1,4 +1,4 @@
-package dev.operit.lspilot.enhancer;
+package com.lspilot.enhancer;
 
 import org.json.JSONArray;
 import org.json.JSONObject;

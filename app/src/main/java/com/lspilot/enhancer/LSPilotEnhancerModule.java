@@ -1,4 +1,4 @@
-package dev.operit.lspilot.enhancer;
+package com.lspilot.enhancer;
 
 import android.app.Activity;
 import android.content.pm.ApplicationInfo;
@@ -11,14 +11,10 @@ import org.json.JSONObject;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
-import java.lang.reflect.Proxy;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 
 import io.github.libxposed.api.XposedModule;
 
@@ -33,8 +29,6 @@ public final class LSPilotEnhancerModule extends XposedModule {
             "me.yun.lspilot.ui.MainActivity";
     private static final String SUB_SCREEN_ACTIVITY_CLASS =
             "me.yun.lspilot.ui.SubScreenActivity";
-    private static final String CHAT_SCREEN_CLASS =
-            "me.yun.lspilot.ui.screen.aichat.AiChatScreenKt";
     private static final String ARROW_PREFERENCE_CLASS =
             "top.yukonga.miuix.kmp.preference.ArrowPreferenceKt";
 
@@ -42,19 +36,10 @@ public final class LSPilotEnhancerModule extends XposedModule {
     private static final ThreadLocal<Boolean> SETTINGS_ENTRY_REPLAYING = new ThreadLocal<>();
     private static volatile boolean settingsEntryRenderReported;
     private static volatile boolean aboutPreferenceObservedReported;
-    private static volatile boolean publicChatEntryReported;
-    private static volatile boolean chatStateCapturedReported;
     private static volatile boolean reasoningDeltaNormalizedReported;
-    private static final ExecutorService SUMMARY_EXECUTOR =
-            Executors.newSingleThreadExecutor(runnable -> {
-                Thread thread = new Thread(runnable, "lspilot-summary-request");
-                thread.setDaemon(true);
-                return thread;
-            });
 
     private static final class StartupProbe {
         boolean requestBody;
-        boolean compression;
     }
 
     @Override
@@ -75,43 +60,38 @@ public final class LSPilotEnhancerModule extends XposedModule {
         HostAbi abi;
         try {
             abi = HostAbi.resolve(loader, dexPaths, param.getApplicationInfo());
-            ManualCompressionManager.configure(abi);
-            ManualCompressionManager.setSummaryRequester(snapshot ->
-                    requestInternalSummary(abi, snapshot));
+            String resolutionReason = HostAbiCache.lastResolutionReason();
+            log(Log.INFO, TAG, "Host ABI resolution reason=" + resolutionReason);
+            if ("host_update".equals(resolutionReason)
+                    || "host_and_module_update".equals(resolutionReason)) {
+                log(Log.INFO, TAG,
+                        "HOST_UPDATE_DETECTED; DEX_SELF_ADAPTATION completed before hooks");
+            }
             log(Log.INFO, TAG, "Resolved LSPilot host ABI minified=" + abi.minified
                     + " provider=" + abi.providerClass.getName()
                     + " config=" + abi.configClass.getName()
-                    + " viewModel=" + abi.viewModelClass.getName());
+                    + " viewModel=" + (abi.viewModelClass == null
+                            ? "unavailable" : abi.viewModelClass.getName()));
         } catch (Throwable error) {
             ModuleSettings.disableSettings("宿主 ABI 解析失败：" + shortError(error),
                     ModuleSettings.KEY_ENABLED,
                     ModuleSettings.KEY_CACHE_KEY,
                     ModuleSettings.KEY_RETENTION,
                     ModuleSettings.KEY_INCLUDE_USAGE,
-                    ModuleSettings.KEY_CONTEXT_COMPRESSION,
                     ModuleSettings.KEY_REASONING_EFFORT);
             log(Log.ERROR, TAG, "Failed to resolve LSPilot host ABI", error);
             return;
         }
         StartupProbe probe = installRequestHook(loader, abi);
-        if (probe.compression && !abi.hasCompressionAccessors()) {
-            probe.compression = false;
-            log(Log.ERROR, TAG, "Compression endpoint/accessor probe failed");
-        }
         boolean sseUsageHook = installSseUsageHook(abi);
         applyStartupProbe(probe, sseUsageHook, abi);
         installUiHooks(loader, dexPaths);
-        installChatRouteHook(loader, abi);
         installChatViewModelHook(loader, abi);
         installAutoRetryHooks(abi);
-        installSendBeforeCompressionHook(loader, abi);
-        if (!abi.minified) installChatButtonHook(loader);
+        installUserSendHook(abi);
         log(Log.INFO, TAG,
                 "LSPilotEnhancer loaded version=" + BuildConfig.VERSION_NAME
-                        + " (" + BuildConfig.VERSION_CODE + ") dexkit-adaptive-abi");
-        // Disable the experimental Compose TopAppBar injection. The reliable entry is
-        // the Activity-owned native overlay button installed from SubScreenActivity hooks.
-        // installNativeChatTopBarActionHook(loader);
+                        + " (" + BuildConfig.VERSION_CODE + ") dexkit-free-abi");
     }
 
     private static String[] hostDexPaths(ApplicationInfo appInfo) {
@@ -134,7 +114,7 @@ public final class LSPilotEnhancerModule extends XposedModule {
     private StartupProbe installRequestHook(ClassLoader loader, HostAbi abi) {
         StartupProbe probe = new StartupProbe();
         if (abi.minified) {
-            probe.compression = installMinifiedStreamHook(abi);
+            if (abi.streamMessagesMethod != null) installMinifiedStreamHook(abi);
             probe.requestBody = installMinifiedRequestBodyHook(abi);
             InjectedUiController.setRequestHookInstalled(probe.requestBody);
             return probe;
@@ -145,48 +125,25 @@ public final class LSPilotEnhancerModule extends XposedModule {
 
             hook(buildRequest).intercept(chain -> {
                 Object originalResult = chain.proceed();
-                if (ManualCompressionManager.isInternalBuild()) {
-                    return originalResult;
-                }
                 if (!(originalResult instanceof String)) {
                     return originalResult;
                 }
 
                 try {
-                    String originalBody = (String) originalResult;
                     boolean policyEnabled = ModuleSettings.isEnabled();
-                    Object config = chain.getArg(0);
+                    if (!policyEnabled) return originalResult;
                     String systemPrompt = (String) chain.getArg(2);
-                    JSONObject body = new JSONObject(originalBody);
-                    if (ManualCompressionManager.isInternalSummaryRequest(
-                            body.optJSONArray("messages"))) {
-                        return originalResult;
-                    }
-                    JSONArray messages = ManualCompressionManager.sanitizeRequestMessagesOrThrow(
-                            body.optJSONArray("messages"));
-                    body.put("messages", messages);
-                    if (!policyEnabled
-                            && !ManualCompressionManager.hasPreparedForCurrentChat()) {
-                        log(Log.DEBUG, TAG,
-                                "request enhancement bypassed enabled=false prepared=false");
-                        return body.toString();
-                    }
-                    String model = requestModel(body, abi, config);
-                    JSONArray effective = ManualCompressionManager.effectiveRequestMessages(
-                            messages, config, model);
-                    body.put("messages", effective);
-                    log(Log.DEBUG, TAG, "request context applied originalMessages="
-                            + messages.length() + " effectiveMessages=" + effective.length());
-                    applyOpenAiRequestPolicy(body, model, systemPrompt, policyEnabled);
+                    JSONObject body = new JSONObject((String) originalResult);
+                    String model = requestModel(body);
+                    applyOpenAiRequestPolicy(body, model, systemPrompt, true);
                     return body.toString();
                 } catch (Throwable error) {
-                    log(Log.ERROR, TAG, "Request enhancement failed; rejecting request", error);
-                    throw error;
+                    log(Log.ERROR, TAG, "Request enhancement failed; using host request", error);
+                    return originalResult;
                 }
             });
 
             probe.requestBody = true;
-            probe.compression = true;
             InjectedUiController.setRequestHookInstalled(true);
             log(Log.INFO, TAG,
                     "Hook installed for " + PROVIDER_CLASS
@@ -251,39 +208,22 @@ public final class LSPilotEnhancerModule extends XposedModule {
             Method buildRequest = abi.buildRequestMethod;
             hook(buildRequest).intercept(chain -> {
                 Object originalResult = chain.proceed();
-                if (ManualCompressionManager.isInternalBuild()
-                        || !(originalResult instanceof String)) {
+                if (!(originalResult instanceof String)) {
                     return originalResult;
                 }
 
                 try {
                     boolean policyEnabled = ModuleSettings.isEnabled();
-                    Object config = chain.getArg(0);
+                    if (!policyEnabled) return originalResult;
                     String systemPrompt = (String) chain.getArg(2);
                     JSONObject body = new JSONObject((String) originalResult);
-                    if (ManualCompressionManager.isInternalSummaryRequest(
-                            body.optJSONArray("messages"))) {
-                        return originalResult;
-                    }
-                    JSONArray messages = ManualCompressionManager.sanitizeRequestMessagesOrThrow(
-                            body.optJSONArray("messages"));
-                    body.put("messages", messages);
-                    if (!policyEnabled
-                            && !ManualCompressionManager.hasPreparedForCurrentChat()) {
-                        return body.toString();
-                    }
-                    String model = requestModel(body, abi, config);
-                    JSONArray effective = ManualCompressionManager.effectiveRequestMessages(
-                            messages, config, model);
-                    body.put("messages", effective);
-                    log(Log.DEBUG, TAG, "minified request context applied originalMessages="
-                            + messages.length() + " effectiveMessages=" + effective.length());
-                    applyOpenAiRequestPolicy(body, model, systemPrompt, policyEnabled);
+                    String model = requestModel(body);
+                    applyOpenAiRequestPolicy(body, model, systemPrompt, true);
                     return body.toString();
                 } catch (Throwable error) {
                     log(Log.ERROR, TAG,
-                            "Minified request enhancement failed; rejecting request", error);
-                    throw error;
+                            "Minified request enhancement failed; using host request", error);
+                    return originalResult;
                 }
             });
 
@@ -302,9 +242,6 @@ public final class LSPilotEnhancerModule extends XposedModule {
         try {
             Method streamMessages = abi.streamMessagesMethod;
             hook(streamMessages).intercept(chain -> {
-                if (ManualCompressionManager.isInternalBuild()) {
-                    return chain.proceed();
-                }
                 Object viewModel = chain.getThisObject();
                 String chatId = abi.currentChatId(viewModel);
                 Object rawMessages = chain.getArg(1);
@@ -348,6 +285,10 @@ public final class LSPilotEnhancerModule extends XposedModule {
     }
 
     private void installAutoRetryHooks(HostAbi abi) {
+        if (!abi.hasRetryAbi()) {
+            log(Log.WARN, TAG, "Auto retry ABI incomplete; retry hooks disabled");
+            return;
+        }
         Method retryResponse = abi.retryResponseMethod;
         Method stopGeneration = abi.stopGenerationMethod;
         AutoRetryManager.configure(retryResponse);
@@ -378,9 +319,6 @@ public final class LSPilotEnhancerModule extends XposedModule {
             });
             hook(stopGeneration).intercept(chain -> {
                 Object viewModel = chain.getThisObject();
-                if (ManualCompressionManager.blockStopWhileCompressing()) {
-                    return null;
-                }
                 AutoRetryManager.cancelForStop(viewModel, currentChatId(abi, viewModel));
                 return chain.proceed();
             });
@@ -404,9 +342,6 @@ public final class LSPilotEnhancerModule extends XposedModule {
         try {
             Method streamMessages = abi.streamMessagesMethod;
             hook(streamMessages).intercept(chain -> {
-                if (ManualCompressionManager.isInternalBuild()) {
-                    return chain.proceed();
-                }
                 Object viewModel = chain.getThisObject();
                 Object[] args = chain.getArgs().toArray();
                 String chatId = currentChatId(abi, viewModel);
@@ -423,7 +358,7 @@ public final class LSPilotEnhancerModule extends XposedModule {
                     }
                 }
                 args[2] = AutoRetryManager.wrapStreamCallback(
-                        chain.getArg(2), viewModel, chatId);
+                        chain.getArg(2), viewModel, chatId, abi);
                 return chain.proceed(args);
             });
             log(Log.INFO, TAG, "Named stream retry hook installed for "
@@ -436,108 +371,7 @@ public final class LSPilotEnhancerModule extends XposedModule {
     }
 
     private static String currentChatId(HostAbi abi, Object viewModel) {
-        String chatId = abi.currentChatId(viewModel);
-        if (chatId != null && !chatId.trim().isEmpty()) return chatId;
-        ManualCompressionManager.ScreenState screen = ManualCompressionManager.getCurrentScreen();
-        return screen == null ? null : screen.chatId;
-    }
-
-    private void requestInternalSummary(HostAbi abi,
-            ManualCompressionManager.SummaryTaskSnapshot snapshot) {
-        android.os.Handler mainHandler = new android.os.Handler(android.os.Looper.getMainLooper());
-        mainHandler.postDelayed(
-                () -> ManualCompressionManager.onSummaryTimeout(
-                        snapshot.task.taskId, snapshot.task.chatId),
-                ManualCompressionManager.SUMMARY_TIMEOUT_MS);
-        SUMMARY_EXECUTOR.execute(() -> {
-            try {
-                Object viewModel = ManualCompressionManager.currentViewModel(snapshot.task.chatId);
-                if (viewModel == null) {
-                    throw new IllegalStateException("summary viewModel unavailable");
-                }
-                ArrayList<Object> messages = new ArrayList<>();
-                messages.add(abi.newStatusMessage(
-                        "lspilot-summary-" + snapshot.task.taskId,
-                        "user", snapshot.prompt, System.currentTimeMillis()));
-                Object callback = createInternalSummaryCallback(abi, snapshot);
-                ManualCompressionManager.setInternalBuild(true);
-                try {
-                    abi.streamMessagesMethod.invoke(viewModel, snapshot.config, messages, callback);
-                } finally {
-                    ManualCompressionManager.setInternalBuild(false);
-                }
-            } catch (Throwable error) {
-                log(Log.ERROR, TAG, "Internal summary request failed",
-                        unwrapInvocationError(error));
-                ManualCompressionManager.onSummaryResponse(snapshot.task.taskId,
-                        snapshot.task.chatId, "", false, false, false);
-            }
-        });
-    }
-
-    private static Object createInternalSummaryCallback(HostAbi abi,
-            ManualCompressionManager.SummaryTaskSnapshot snapshot) {
-        Class<?> callbackType = abi.streamMessagesMethod.getParameterTypes()[2];
-        StringBuilder markdown = new StringBuilder();
-        boolean[] returnedToolCall = new boolean[]{false};
-        boolean[] completed = new boolean[]{false};
-        return Proxy.newProxyInstance(callbackType.getClassLoader(),
-                new Class<?>[]{callbackType}, (proxy, method, args) -> {
-                    if (method.getDeclaringClass() == Object.class) {
-                        if ("toString".equals(method.getName())) {
-                            return "LSPilotEnhancerSummaryCallback";
-                        }
-                        if ("hashCode".equals(method.getName())) {
-                            return System.identityHashCode(proxy);
-                        }
-                        if ("equals".equals(method.getName())) {
-                            return args != null && args.length == 1 && proxy == args[0];
-                        }
-                    }
-                    if (args != null && args.length > 0) {
-                        onInternalSummaryEvent(snapshot, markdown, returnedToolCall,
-                                completed, args[0]);
-                    }
-                    return null;
-                });
-    }
-
-    private static void onInternalSummaryEvent(
-            ManualCompressionManager.SummaryTaskSnapshot snapshot, StringBuilder markdown,
-            boolean[] returnedToolCall, boolean[] completed, Object event) {
-        if (event == null || completed[0]) return;
-        String name = event.getClass().getName();
-        if (isSummaryErrorEvent(event, name)) {
-            completed[0] = true;
-            ManualCompressionManager.onSummaryResponse(snapshot.task.taskId,
-                    snapshot.task.chatId, "", false, false, false);
-            return;
-        }
-        returnedToolCall[0] |= looksLikeToolCallEvent(event, name);
-        String chunk = summaryEventText(event);
-        if (chunk != null) markdown.append(chunk);
-        if (isSummaryDoneEvent(name)) {
-            completed[0] = true;
-            ManualCompressionManager.onSummaryResponse(snapshot.task.taskId,
-                    snapshot.task.chatId, markdown.toString(), true,
-                    returnedToolCall[0], markdown.length() == 0);
-        }
-    }
-
-    private static boolean isSummaryErrorEvent(Object event, String name) {
-        return HostAbi.isStreamErrorEvent(event, name);
-    }
-
-    private static boolean isSummaryDoneEvent(String name) {
-        return HostAbi.isStreamDoneEvent(name);
-    }
-
-    private static boolean looksLikeToolCallEvent(Object event, String name) {
-        return HostAbi.streamEventHasToolCall(event);
-    }
-
-    private static String summaryEventText(Object event) {
-        return HostAbi.streamEventText(event);
+        return abi.currentChatId(viewModel);
     }
 
     private boolean installSseUsageHook(HostAbi abi) {
@@ -573,7 +407,7 @@ public final class LSPilotEnhancerModule extends XposedModule {
 
     private void applyStartupProbe(StartupProbe probe, boolean sseUsageHook, HostAbi abi) {
         if (probe == null) probe = new StartupProbe();
-        if (!probe.requestBody && !probe.compression) {
+        if (!probe.requestBody) {
             ModuleSettings.disableSettings("请求修改 Hook 接口全部失效",
                     ModuleSettings.KEY_ENABLED);
         }
@@ -584,24 +418,19 @@ public final class LSPilotEnhancerModule extends XposedModule {
                     ModuleSettings.KEY_INCLUDE_USAGE,
                     ModuleSettings.KEY_REASONING_EFFORT);
         }
-        if (!probe.compression) {
-            ModuleSettings.disableSettings("上下文压缩 Hook 接口失效",
-                    ModuleSettings.KEY_CONTEXT_COMPRESSION);
-        }
         if (!sseUsageHook) {
             ModuleSettings.disableSettings("SSE usage Hook 接口失效",
                     ModuleSettings.KEY_INCLUDE_USAGE);
         }
         log(Log.INFO, TAG, "Startup hook probe: minified=" + abi.minified
                 + " requestBody=" + probe.requestBody
-                + " compression=" + probe.compression
                 + " sseUsage=" + sseUsageHook);
     }
 
-    private static String requestModel(JSONObject body, HostAbi abi, Object config) throws Exception {
-        String model = body == null ? null : body.optString("model", null);
-        if (model != null && !model.trim().isEmpty()) return model;
-        return abi.modelName(config);
+    private static String requestModel(JSONObject body) {
+        if (body == null) return null;
+        String model = body.optString("model", null);
+        return model == null || model.trim().isEmpty() ? null : model;
     }
 
     private static String shortError(Throwable error) {
@@ -632,15 +461,12 @@ public final class LSPilotEnhancerModule extends XposedModule {
                     usage.optLong("output_tokens", -1L));
 
             if (ModuleSettings.isVerboseDebugLogEnabled()) {
-                DebugLogger.d("Raw SSE usage event length=" + payload.length()
-                        + " prefix=" + DebugLogger.redact(payload));
+                DebugLogger.d("Raw SSE usage event length=" + payload.length());
             }
             long totalTokens = usage.optLong("total_tokens", -1L);
             long cacheWriteTokens = firstLong(
                     usage.optLong("cache_write_tokens", -1L),
                     usage.optLong("cached_write_tokens", -1L));
-            ManualCompressionManager.onProviderUsage(
-                    inputTokens, outputTokens, cachedTokens, totalTokens);
             log(Log.INFO, TAG,
                     "OpenAI cache usage: input_tokens=" + displayTokenCount(inputTokens)
                             + ", output_tokens=" + displayTokenCount(outputTokens)
@@ -660,59 +486,6 @@ public final class LSPilotEnhancerModule extends XposedModule {
 
     private static String displayTokenCount(long value) {
         return value >= 0L ? Long.toString(value) : "unavailable";
-    }
-
-    private void installNativeChatTopBarActionHook(ClassLoader loader) {
-        try {
-            Class<?> screenClass = Class.forName(CHAT_SCREEN_CLASS, false, loader);
-            Class<?> function0Class = Class.forName(
-                    "kotlin.jvm.functions.Function0", false, loader);
-            Class<?> mutableStateClass = Class.forName(
-                    "androidx.compose.runtime.MutableState", false, loader);
-            Class<?> rowScopeClass = Class.forName(
-                    "androidx.compose.foundation.layout.RowScope", false, loader);
-            Class<?> composerClass = Class.forName(
-                    "androidx.compose.runtime.Composer", false, loader);
-            Method actions = screenClass.getDeclaredMethod(
-                    "AiChatScreenMiuix$lambda$5$0$1",
-                    function0Class,
-                    mutableStateClass,
-                    rowScopeClass,
-                    composerClass,
-                    int.class);
-            actions.setAccessible(true);
-            hook(actions).intercept(chain -> {
-                Object result = chain.proceed();
-                NativeChatTopBarAction.renderAction(loader, chain.getArg(3));
-                return result;
-            });
-            log(Log.INFO, TAG, "Native chat TopAppBar compression action hook installed");
-        } catch (Throwable error) {
-            log(Log.ERROR, TAG, "Failed to install native chat TopAppBar action hook", error);
-        }
-    }
-
-    private void installNativeChatContentPanelHook(ClassLoader loader) {
-        try {
-            Class<?> contentClass = Class.forName(
-                    "me.yun.lspilot.ui.screen.aichat.AiChatScreenKt$$ExternalSyntheticLambda47",
-                    false,
-                    loader);
-            Method invoke = contentClass.getDeclaredMethod(
-                    "invoke",
-                    Object.class,
-                    Object.class,
-                    Object.class);
-            invoke.setAccessible(true);
-            hook(invoke).intercept(chain -> {
-                Object result = chain.proceed();
-                NativeChatTopBarAction.renderPanel(loader, chain.getArg(1));
-                return result;
-            });
-            log(Log.INFO, TAG, "Native chat content compression panel hook installed");
-        } catch (Throwable error) {
-            log(Log.ERROR, TAG, "Failed to install native chat content compression panel hook", error);
-        }
     }
 
     private void installSubScreenCreateHook(ClassLoader loader) {
@@ -737,109 +510,18 @@ public final class LSPilotEnhancerModule extends XposedModule {
         }
     }
 
-    private void installChatRouteHook(ClassLoader loader, HostAbi abi) {
-        if (abi.minified) {
-            installMinifiedMainRouteHooks(loader, abi);
+    private void installChatViewModelHook(ClassLoader loader, HostAbi abi) {
+        if (abi.loadSessionMethod == null) {
+            log(Log.WARN, TAG, "Load-session ABI unavailable; chat retry hook disabled");
             return;
         }
-        try {
-            Class<?> activityClass = Class.forName(SUB_SCREEN_ACTIVITY_CLASS, false, loader);
-            Class<?> routeClass = Class.forName(
-                    "me.yun.lspilot.ui.navigation.Route", false, loader);
-            Class<?> aiChatRouteClass = Class.forName(
-                    "me.yun.lspilot.ui.navigation.Route$AiChat", false, loader);
-            Class<?> composerClass = Class.forName(
-                    "androidx.compose.runtime.Composer", false, loader);
-            Method routeContent = activityClass.getDeclaredMethod(
-                    "onCreate$lambda$0$1",
-                    routeClass, activityClass, composerClass, int.class);
-            routeContent.setAccessible(true);
-            hook(routeContent).intercept(chain -> {
-                Object route = chain.getArg(0);
-                Object owner = chain.getArg(1);
-                if (owner instanceof Activity) {
-                    InjectedUiController.setChatRouteVisible(
-                            (Activity) owner, aiChatRouteClass.isInstance(route));
-                }
-                return chain.proceed();
-            });
-            log(Log.INFO, TAG, "SubScreen route dispatcher hook installed");
-        } catch (Throwable error) {
-            log(Log.ERROR, TAG, "Failed to install SubScreen route dispatcher hook", error);
-        }
-    }
-
-    private void installMinifiedMainRouteHooks(ClassLoader loader, HostAbi abi) {
-        int installed = 0;
-        Class<?> aiChatRouteClass = abi.aiChatRouteClass;
-        if (aiChatRouteClass == null) {
-            try {
-                aiChatRouteClass = Class.forName("lka$b", false, loader);
-            } catch (ClassNotFoundException error) {
-                log(Log.ERROR, TAG, "Minified AiChat route class unavailable", error);
-                return;
-            }
-        }
-        final Class<?> routeClass = aiChatRouteClass;
-        for (char suffix = 'a'; suffix <= 'x'; suffix++) {
-            try {
-                Class<?> contentClass = Class.forName(
-                        MAIN_ACTIVITY_CLASS + "$" + suffix, false, loader);
-                Method invoke = findFunction1Invoke(contentClass);
-                hook(invoke).intercept(chain -> {
-                    InjectedUiController.onMainRouteComposed(
-                            routeClass.isInstance(chain.getArg(0)));
-                    return chain.proceed();
-                });
-                installed++;
-            } catch (ClassNotFoundException | NoSuchMethodException ignored) {
-                // Not every compiler-generated MainActivity class is a route content lambda.
-            } catch (Throwable error) {
-                log(Log.ERROR, TAG, "Failed to hook MainActivity route lambda $" + suffix, error);
-            }
-        }
-        if (installed == 0) {
-            log(Log.ERROR, TAG, "No minified MainActivity route content hooks installed");
-        } else {
-            log(Log.INFO, TAG, "Minified MainActivity route content hooks installed=" + installed);
-        }
-    }
-
-    private static Method findFunction1Invoke(Class<?> owner) throws NoSuchMethodException {
-        Method fallback = null;
-        for (Method method : owner.getDeclaredMethods()) {
-            Class<?>[] parameters = method.getParameterTypes();
-            if (!"invoke".equals(method.getName()) || parameters.length != 1
-                    || method.getReturnType() == void.class) {
-                continue;
-            }
-            method.setAccessible(true);
-            if (parameters[0] == Object.class && method.getReturnType() == Object.class) {
-                return method;
-            }
-            fallback = method;
-        }
-        if (fallback != null) {
-            return fallback;
-        }
-        throw new NoSuchMethodException("Function1 invoke not found on " + owner.getName());
-    }
-
-    private void installChatViewModelHook(ClassLoader loader, HostAbi abi) {
         try {
             Method loadSession = abi.loadSessionMethod;
             hook(loadSession).intercept(chain -> {
                 Object viewModel = chain.getThisObject();
                 String chatId = (String) chain.getArg(1);
                 AutoRetryManager.onChatLoaded(viewModel, chatId);
-                ManualCompressionManager.captureViewModel(viewModel, chatId);
-                ManualCompressionManager.enterChat(chatId);
-                Object result = chain.proceed();
-                if (abi.minified) {
-                    ManualCompressionManager.updateMinifiedScreen(chatId, viewModel);
-                    InjectedUiController.onChatSessionLoaded();
-                }
-                return result;
+                return chain.proceed();
             });
             log(Log.INFO, TAG, "AiChatViewModel.loadSession hook installed");
         } catch (Throwable error) {
@@ -847,84 +529,21 @@ public final class LSPilotEnhancerModule extends XposedModule {
         }
     }
 
-    private void installSendBeforeCompressionHook(ClassLoader loader, HostAbi abi) {
+    private void installUserSendHook(HostAbi abi) {
+        if (abi.sendMessageMethod == null) {
+            log(Log.WARN, TAG, "Send-message ABI unavailable; user-send retry hook disabled");
+            return;
+        }
         try {
             Method sendMessage = abi.sendMessageMethod;
             hook(sendMessage).intercept(chain -> {
-                if (abi.minified) {
-                    Object viewModel = chain.getThisObject();
-                    String chatId = abi.currentChatId(viewModel);
-                    if (chatId != null) {
-                        ManualCompressionManager.enterChat(chatId);
-                        ManualCompressionManager.updateMinifiedScreen(chatId, viewModel);
-                        InjectedUiController.onChatSessionLoaded();
-                    }
-                }
-                Object retryViewModel = chain.getThisObject();
-                AutoRetryManager.onUserSend(
-                        retryViewModel, currentChatId(abi, retryViewModel));
-                if (ManualCompressionManager.blockSendWhilePreparing()) {
-                    log(Log.INFO, TAG, "sendMessage blocked while compression is preparing");
-                    return null;
-                }
+                Object viewModel = chain.getThisObject();
+                AutoRetryManager.onUserSend(viewModel, currentChatId(abi, viewModel));
                 return chain.proceed();
             });
-            log(Log.INFO, TAG, "AiChatViewModel.sendMessage compression guard hook installed");
+            log(Log.INFO, TAG, "AiChatViewModel.sendMessage retry hook installed");
         } catch (Throwable error) {
-            log(Log.ERROR, TAG, "Failed to install send-before-compression hook", error);
-        }
-    }
-
-    private void installChatButtonHook(ClassLoader loader) {
-        try {
-            Class<?> screenClass = Class.forName(CHAT_SCREEN_CLASS, false, loader);
-            Class<?> uiStateClass = Class.forName(
-                    "me.yun.lspilot.ui.viewmodel.AiChatUiState", false, loader);
-            Class<?> function0Class = Class.forName(
-                    "kotlin.jvm.functions.Function0", false, loader);
-            Class<?> function1Class = Class.forName(
-                    "kotlin.jvm.functions.Function1", false, loader);
-            Class<?> function2Class = Class.forName(
-                    "kotlin.jvm.functions.Function2", false, loader);
-            Class<?> composerClass = Class.forName(
-                    "androidx.compose.runtime.Composer", false, loader);
-            Method publicChatScreen = screenClass.getDeclaredMethod(
-                    "AiChatScreen", String.class, String.class, composerClass, int.class);
-            publicChatScreen.setAccessible(true);
-            hook(publicChatScreen).intercept(chain -> {
-                String chatId = (String) chain.getArg(1);
-                ManualCompressionManager.enterChat(chatId);
-                InjectedUiController.showChatCompressionButton();
-                if (!publicChatEntryReported) {
-                    publicChatEntryReported = true;
-                    log(Log.INFO, TAG, "Public AiChatScreen executed; chat button requested");
-                }
-                return chain.proceed();
-            });
-
-            Method chatScreen = screenClass.getDeclaredMethod(
-                    "AiChatScreenMiuix",
-                    String.class, uiStateClass,
-                    function0Class, function0Class, function0Class,
-                    function1Class, function1Class, function2Class,
-                    function0Class, function0Class, function2Class,
-                    function0Class, function0Class, function1Class,
-                    composerClass, int.class, int.class);
-            chatScreen.setAccessible(true);
-            hook(chatScreen).intercept(chain -> {
-                String chatId = (String) chain.getArg(0);
-                Object uiState = chain.getArg(1);
-                ManualCompressionManager.updateScreen(chatId, uiState);
-                InjectedUiController.showChatCompressionButton();
-                if (!chatStateCapturedReported) {
-                    chatStateCapturedReported = true;
-                    log(Log.INFO, TAG, "Internal chat UI state captured");
-                }
-                return chain.proceed();
-            });
-            log(Log.INFO, TAG, "Chat manual compression button hook installed");
-        } catch (Throwable error) {
-            log(Log.ERROR, TAG, "Failed to install chat compression button hook", error);
+            log(Log.ERROR, TAG, "Failed to install user-send hook", error);
         }
     }
 

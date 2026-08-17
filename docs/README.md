@@ -1,7 +1,7 @@
 # Documentation Structure
 
 - Status: current
-- Updated: 2026-08-13
+- Updated: 2026-08-16
 - Purpose: define the canonical document layout, naming rules, and lifecycle for this repository.
 
 ## Directory Map
@@ -10,7 +10,6 @@
 docs/
 |-- README.md
 |-- architecture/
-|   `-- model-context-compression.md
 |-- assets/
 |   `-- icon-source.svg
 |-- design/
@@ -22,7 +21,7 @@ docs/
 `-- work/
     |-- findings.md
     |-- goal.md
-    |-- handoff.md
+    |-- project-handoff.md
     |-- plan.md
     `-- todo.md
 ```
@@ -36,15 +35,15 @@ docs/
 | `design/` | Visual and interaction decisions | Long-term |
 | `project/` | Repository-wide environment, safety, workflow, and release constraints | Long-term |
 | `reference/` | Audits and external API facts with a stated baseline | Revalidate when dependencies change |
-| `work/` | The single current goal, plan, todo list, findings record, and active handoff | Update in place |
+| `work/` | The single current goal, plan, todo list, findings record, and project handoff | Update in place |
 
 Root-level `README.md`, `CHANGELOG.md`, and `AGENTS.md` remain at the root because tools and users discover them there.
 
 ## Naming
 
-- Use lowercase kebab-case for document and asset names: `model-context-compression.md`.
+- Use lowercase kebab-case for document and asset names: `host-abi-discovery.md`.
 - Name files by subject, not author, tool, process, or temporary phase.
-- Keep current-state filenames stable and undated. Update `work/goal.md`, `work/plan.md`, `work/todo.md`, `work/findings.md`, and `work/handoff.md` in place.
+- Keep current-state filenames stable and undated. Update `work/goal.md`, `work/plan.md`, `work/todo.md`, `work/findings.md`, and `work/project-handoff.md` in place.
 - Use dates inside a document when evidence needs a timestamp. Keep current status in the stable `work/` files; Git history is the archive.
 - Use relative repository paths in links and examples unless an environment-specific absolute path is essential.
 
