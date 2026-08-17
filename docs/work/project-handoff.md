@@ -11,7 +11,7 @@
 - Inspect `git status` before changes and preserve unrelated tracked or untracked files.
 - Module package: `com.lspilot.enhancer`
 - Host package: `me.yun.lspilot`
-- Android treats the module identity as a new package. GitHub pre-release `v1.7.4-preview.24` is published and hash-verified; device installation remains pending.
+- Android treats the module identity as a new package. GitHub pre-release `v1.7.4-preview.24` is published, installed, enabled, scoped, and hash-verified.
 
 ## Active objective
 
@@ -58,6 +58,8 @@ The current update resolved provider `zj8`; the previous `d4eb3066...f5d56` host
 - Updated the ABI resolver and descriptor cache for conservative unique candidate groups, current provider profiles, `uob`/`xa` stream carriers, and optional retry failure.
 - Made unavailable-setting persistence host-local only; LSPosed remote preferences remain migration input and are not written.
 - Completed source/package migration to `com.lspilot.enhancer` and verified `1.7.4-preview.24`; exact artifact and check evidence is recorded in `docs/work/findings.md`.
+- Installed the exact APK through KernelSU RunCommandService; source, private stage, `/data/local/tmp`, installed `base.apk`, and release asset hashes match `51e0c3c...928aa`.
+- Verified LSPosed `enabled=1`, unblocked scope `me.yun.lspilot`, database integrity `ok`, then two cold starts ending in `cache_hit`, `provider=zj8`, `requestBody=true`, `sseUsage=true`, and retry/settings hooks installed.
 - Rejected the direct AGP output because the arm64 AAPT2 override produced a 14-entry ZIP without manifest/resources.
 - Historical predecessor artifact: built and privately staged valid module APK `7bc3a22f6a43ef98cd843922c89a0b57ced474cc26583fdca0e4f2089d8c44e8` by replacing only `classes.dex` in a valid module container, then arm64 `zipalign` and `apksigner`.
 - Historical predecessor install evidence: installed only the module; source/stage/install hashes matched. LSPosed config integrity was `ok`, module state was enabled, and scope included `me.yun.lspilot`.
@@ -71,7 +73,7 @@ The current update resolved provider `zj8`; the previous `d4eb3066...f5d56` host
 
 ## Next action
 
-Install the published `com.lspilot.enhancer` APK, enable and re-scope it in LSPosed, then complete manual automatic-retry/stop acceptance.
+Complete the remaining user-driven request/usage/settings and automatic-retry/stop scenarios. No repository, installation, LSPosed, or startup blocker remains.
 
 ## Constraints
 

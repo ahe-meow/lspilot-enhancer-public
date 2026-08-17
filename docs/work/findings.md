@@ -7,7 +7,7 @@
 ## Source state
 
 - Branch: `main`; HEAD before this work: `4e7a212`.
-- Module identity now uses `com.lspilot.enhancer`. Android treats it as a new package, so LSPosed must re-enable the module and re-scope it to `me.yun.lspilot` after installation.
+- Module identity uses `com.lspilot.enhancer`; the exact preview artifact is installed, enabled, and scoped to `me.yun.lspilot` in LSPosed.
 - Context compression was explicitly removed from production source, chat UI, settings, tests, and active documentation.
 - Removed legacy preference keys and stored summary-record prefixes are cleaned from host-local module preferences during initialization; other settings are untouched.
 - Retained features are Prompt Cache policy, compatible retention, usage reporting, reasoning effort, diagnostics, and bounded automatic retries.
@@ -21,7 +21,16 @@
 - `aapt2 dump badging` reports package `com.lspilot.enhancer`, version code `61`, and version name `1.7.4-preview.24`; ZIP integrity, APK v2 signature, required Xposed entries, retired-feature markers, and `git diff --check` passed.
 - `RequestGroupIsolationCheck`, `HostUpdateDetectionCheck`, `AutoRetryManagerCheck`, `PromptCachePolicy`, and `ReasoningPolicy` passed on Dalvik.
 - GitHub pre-release `v1.7.4-preview.24` is published at <https://github.com/ahe-meow/lspilot-enhancer-public/releases/tag/v1.7.4-preview.24>. Re-downloading `LSPilot-Enhancer-v1.7.4-preview.24.apk` reproduced SHA-256 `51e0c3c044ee1f79a4b93ac5e6c6767e2a22cb81c5dd96ac2a1086fd7f7928aa`.
-- Device installation and LSPosed activation remain pending.
+
+## Device runtime verification — 2026-08-17
+
+- KernelSU RunCommandService reported Android `uid=0(root)` with SELinux domain `u:r:ksu:s0`.
+- Source, Termux-private stage, `/data/local/tmp`, and installed `base.apk` all match SHA-256 `51e0c3c044ee1f79a4b93ac5e6c6767e2a22cb81c5dd96ac2a1086fd7f7928aa`; the installed package reports version code `61` and version name `1.7.4-preview.24`.
+- LSPosed automatically registered the new package at the installed APK path. State is `enabled=1`, `scope_request_blocked=0`, scope is exactly `me.yun.lspilot`, and `pragma integrity_check` returned `ok`.
+- The installed host remains SHA-256 `af2283a2978ea650986988ac3d9c01a39474cdd6410d30b842dd8f15e686149c`.
+- First cold start logged `cache_schema_changed`, stored schema `6`, resolved `provider=zj8`, and installed request/SSE/retry/settings hooks.
+- Second cold start logged `Host ABI resolution reason=cache_hit`, `provider=zj8`, `requestBody=true`, `sseUsage=true`, `Auto retry hooks installed`, and `LSPilotEnhancer loaded version=1.7.4-preview.24 (61)`.
+- Manual request/usage/settings and automatic-retry/stop scenarios remain user-driven and are not claimed from startup logs.
 
 ## Git ownership recovery — 2026-08-17
 

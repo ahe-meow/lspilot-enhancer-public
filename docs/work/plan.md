@@ -8,7 +8,9 @@
 
 Repository-side feature removal, package migration to `com.lspilot.enhancer`, conservative ABI discovery, and release verification are complete. The `1.7.4-preview.24` candidate keeps request/SSE available when retry discovery fails, rejects ambiguous request candidates, and stores request-only descriptors with cache schema `6`.
 
-The verified APK is published as GitHub pre-release `v1.7.4-preview.24`; the downloaded asset hash matches the local artifact. Device runtime work remains pending: install the new package, enable it, and re-scope it to `me.yun.lspilot` in LSPosed.
+The verified APK is published as GitHub pre-release `v1.7.4-preview.24`, installed as `com.lspilot.enhancer`, enabled in LSPosed, and scoped to `me.yun.lspilot`. Source, private stage, `/data/local/tmp`, installed `base.apk`, and re-downloaded release asset all match SHA-256 `51e0c3c044ee1f79a4b93ac5e6c6767e2a22cb81c5dd96ac2a1086fd7f7928aa`.
+
+Two cold starts passed: the first rebuilt cache schema `6`, and the second logged `cache_hit`, `provider=zj8`, `requestBody=true`, `sseUsage=true`, and installed retry/settings hooks. Only user-driven request/usage/settings and automatic-retry/stop scenarios remain.
 
 ## Execution order
 
@@ -17,7 +19,8 @@ The verified APK is published as GitHub pre-release `v1.7.4-preview.24`; the dow
 3. Resolve candidates structurally, require a unique coherent winner, and cache validated descriptors by APK content hash and scanner schema.
 4. Add focused request-policy, scanner ambiguity, and cache invalidation checks.
 5. Run release verification, build the migrated package, and verify APK package metadata and integrity.
-6. Install the new package, re-enable it, re-scope it to `me.yun.lspilot` in LSPosed, and manually verify cache request mutation, usage reporting, settings, and retry behavior.
+6. Install the new package, enable it, scope it to `me.yun.lspilot`, and verify two cold starts.
+7. Manually verify cache request mutation, usage reporting, settings, and retry/stop behavior.
 
 ## Current host evidence
 
@@ -41,4 +44,4 @@ The earlier staged host SHA-256 `b6ea30f6...debe` uses the same `va/cb/u7` group
 - A scan with multiple plausible candidates disables that feature group; it does not pick the first match.
 - A retry ABI failure must not disable request caching when the request/SSE ABI is valid.
 - A changed host content fingerprint invalidates cached descriptors before hooks are installed and enables structural `DexFile` discovery; unchanged startup reuses only the validated descriptor.
-- Runtime acceptance remains pending until `com.lspilot.enhancer` is installed, enabled, and scoped to `me.yun.lspilot`; use the exact installed module hash and current host hash for that verification.
+- Static startup acceptance is complete for the exact installed artifact. Manual request/usage/settings and retry/stop behavior remain user-driven.

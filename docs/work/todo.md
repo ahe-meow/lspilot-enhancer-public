@@ -6,16 +6,18 @@
 
 ## In progress
 
-- `v1.7.4-preview.24` is published and hash-verified. Device runtime acceptance still requires installing, enabling, and scoping the new package.
+- `v1.7.4-preview.24` is published, installed, enabled, scoped, and startup-verified. Manual request/usage/settings and automatic-retry/stop acceptance remain user-driven.
 
 ## Next
 
 - [ ] Complete any remaining manual automatic-retry and stop-behavior acceptance separately.
 - [ ] Replace the private AAPT2 APK-container workaround when an arm64-compatible AGP 9.3 AAPT2 is available.
-- [ ] Install the new package `com.lspilot.enhancer`; after installation, enable it and re-scope it to `me.yun.lspilot` in LSPosed. The previous installed package must not be treated as changed in place.
 
 ## Completed
 
+- [x] Install `com.lspilot.enhancer` with SHA-256 `51e0c3c044ee1f79a4b93ac5e6c6767e2a22cb81c5dd96ac2a1086fd7f7928aa`; source, Termux-private stage, `/data/local/tmp`, and installed `base.apk` hashes match.
+- [x] Verify LSPosed state `enabled=1`, `scope_request_blocked=0`, scope `me.yun.lspilot`, and database integrity `ok`.
+- [x] Verify two cold starts: schema `6` rebuild followed by `cache_hit`, `provider=zj8`, request/SSE probes true, and retry/settings hooks installed.
 - [x] Publish GitHub pre-release `v1.7.4-preview.24` and verify the downloaded APK matches SHA-256 `51e0c3c044ee1f79a4b93ac5e6c6767e2a22cb81c5dd96ac2a1086fd7f7928aa`.
 - [x] Stop the full-history context-compression implementation.
 - [x] Remove compression production classes, UI, settings, persistence, tests, build task, dependency, and active documentation.
@@ -33,5 +35,5 @@
 - [x] Confirm `新对话` succeeds on `https://pasw.shop/v1/chat/completions`; its approximately 30K input is host system prompt/tool definitions, not persisted history.
 - [x] Detect host APK content changes on every module startup without trusting version metadata; invalidate stale descriptors and prefer structural DEX self-adaptation on changes.
 - [x] Adapt the updated host (`af2283a2978ea650986988ac3d9c01a39474cdd6410d30b842dd8f15e686149c`) to provider `zj8`; verify cache/SSE/retry hooks after restart.
-- [x] Build and verify the migrated release artifact at `app/build/outputs/apk/release/app-release.apk`; device installation of `com.lspilot.enhancer` remains pending.
+- [x] Build and verify the migrated release artifact at `app/build/outputs/apk/release/app-release.apk`; installed-artifact evidence is recorded in `docs/work/findings.md`.
 - [x] Pass `RequestGroupIsolationCheck`, `HostUpdateDetectionCheck`, `AutoRetryManagerCheck`, prompt-cache/reasoning checks, release assembly, lint, APK integrity/signature/DEX-marker checks, and `git diff --check` for `1.7.4-preview.24`.
