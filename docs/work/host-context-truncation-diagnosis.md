@@ -258,6 +258,44 @@ guard: firstIndex=0, messages=60, hasMoreOlder=true,
 
 因此，对当前 76 行现场，“历史加载不出来”不是数据没加载，而是绝大多数新行被 `role=tool` 过滤，剩余少量气泡又被滚动锚点恢复留在当前视口上方。静态分析发现的空页/异常页 marker 残留仍是代码上存在的独立风险，但本次成功链路没有发生该分支。
 
+### 为什么数据库只剩 76 行
+
+2026-08-18 18:38（UTC+8）再次通过 KernelSU 只读复制当前 `ai_chat.db`、WAL 和 SHM。目标 `chat_id=2dd8efb9-...` 的结果是：
+
+```text
+COUNT(*)=76
+MIN(rowId)=1015816
+MAX(rowId)=1015891
+rowId span=76, contiguous=true
+distinct message_id=76
+roles: user=2, assistant=10, tool=64
+JSON parse errors=0
+integrity_check=ok
+```
+
+也就是说，`rowId < 1015816` 的目标会话记录在当前数据库里确实不存在。数据库中只有两个会话，没有相同消息 ID 跨会话重复，也没有另一个会话持有这批消息。因而继续上拉停止不是分页器漏查；`hasMoreOlder=false` 与数据库事实一致。
+
+但“数据库只有 76 行”本身是宿主保存策略造成的高风险结果，不代表该会话历史天然只有 76 条。当前宿主有一条明确的整列表替换路径：
+
+```text
+va.K（流式请求处理）
+  → 启动 va$k 周期任务
+  → 从 oa/AiChatUiState.messages 读取当前内存列表
+  → va$k$a.invokeSuspend
+  → repository.b.r(chatId, currentList)
+  → c7.b(chatId, rows)
+  → c7.l(chatId)          // 删除该会话全部数据库行
+  → c7.i(rows)            // 只插入当前内存列表
+```
+
+`va.K` 在每次流式请求开始时启动该任务；`va$k` 每 120 ms 检查保存间隔，并周期性把当前 UI 状态列表交给 `repository.b.r`。宿主的取消、停止、生命周期和其他完成路径也有六个额外 `repository.b.r` 调用点。`repository.b.r` 本身不补查数据库旧页，只序列化调用方传入的列表；`c7.b` 固定先删后插。
+
+这与分页设计形成了数据丢失条件：首次进入长会话时 UI 只加载最新 30 行；如果用户尚未把全部旧页加载进 `AiChatUiState.messages` 就发起请求、停止生成或触发生命周期保存，宿主会把这个部分列表当作完整历史覆盖数据库。当前 76 个 `rowId` 完全连续，符合一次整批重插后的形态；此前确认过的四个孤立 tool ID 也已不在当前数据库中。
+
+证据边界如下：当前数据库总量、连续新 `rowId`、先删后插实现和流式周期保存路径都已直接证明；没有保存 12:19 写入当时的运行时调用日志，因此不能指定七个 `repository.b.r` 调用点中的哪一个完成了这一次 76 行覆盖。无论具体调用点是哪一个，正常 UI 分页已经无法恢复被删除的更旧记录；需要宿主数据库备份或单独的 SQLite 取证，而不是继续上拉。
+
+当前稳定模块不发现、不 Hook、也不调用 `repository.b.r`、`c7.b` 或宿主消息 StateFlow；本次模块临时遥测也只有读取和日志，没有写库。因此这个 76 行上限不是当前模块持久化造成的。
+
 ### 为什么经常表现为“加载不出来”
 
 当前静态和运行时证据支持以下原因，按确定程度排序：

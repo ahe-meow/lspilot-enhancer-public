@@ -27,6 +27,8 @@ Stable module `1.7.5 (67)` is installed and startup-verified. Source/private/sta
 
 The separate chat-UI pager investigation is complete. Temporary user-authorized module-only telemetry captured two successful old-page loads in the 76-row chat: state changed `30 → 60 → 76`, cursors changed `1015862 → 1015832 → 1015816`, both guards passed, and the in-flight marker cleared after each scroll restoration. The visible symptom is caused by most loaded rows being hidden `role=tool` messages while `ka$d` restores the old viewport anchor; it is not a failed query or stale marker in this reproduction. Temporary telemetry was removed and the exact stable APK restored; no runtime pager hook remains in source or release artifacts.
 
+A fresh database count confirms 76 is the entire currently persisted chat, not a pagination cap. The missing older history is attributable to the host's full-list replacement design: streaming `va.K` starts `va$k`, which periodically persists partial `AiChatUiState.messages` through `repository.b.r`; DAO `c7.b` deletes all rows for the chat before inserting that current list. The database has 76 contiguous fresh row IDs, consistent with a batch rewrite. The exact historical caller among seven replacement paths was not runtime-captured, so no single path is overstated; current module code does not write host repository or message state.
+
 ## Execution order
 
 1. Remove context compression and automatic retry, including their hooks, host-state writes, persistence, tests, and current UI/docs.

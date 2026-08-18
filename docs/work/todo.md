@@ -15,6 +15,7 @@
 ## Completed
 
 - [x] Runtime-distinguish pagination guard rejection, hidden successful loading, and a stale in-flight marker. User-authorized temporary module telemetry captured `30 → 60 → 76` rows, both `repository.b.o` results, cursor movement, valid guards, scroll restoration, and marker clearing. The current incident is hidden tool rows plus anchor restoration, not a failed query or stale marker; temporary code was removed and stable `1.7.5 (67)` restored.
+- [x] Confirm why pagination stops at 76: the target DB contains exactly 76 contiguous rows and no older/session-duplicate records; host `repository.b.r -> c7.b` deletes the chat and reinserts only the current in-memory list, while the streaming autosaver periodically passes partial paginated UI state. The exact historical replacement caller remains bounded because no write-time log was preserved.
 
 - [x] Diagnose the host's orphan/incomplete tool-call windows, add request-boundary `ToolCallSanitizer`, and prove the final installed artifact repairs `changes=12` in the affected conversation with no new 400/502 log.
 - [x] Analyze the host chat UI history pager: exact top-trigger guards, `rowId` cursor query, silent parse/DB failures, hidden `role=tool` rows, and the static stale-marker risk after an empty/error page; the successful live path was later runtime-confirmed separately.

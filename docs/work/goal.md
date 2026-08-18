@@ -8,7 +8,7 @@
 
 The current acceptance target additionally includes the host conversation failure reported as HTTP 502 `No tool call found for function call output...` and HTTP 400 `Upstream request failed`. The target is met only when the malformed host history is proven, the module repairs it at the outbound JSON boundary without host persistence/state hooks, the affected conversation succeeds on the installed module, and the Chinese Markdown report is current.
 
-The read-only incident extension also covers the host chat UI symptom “历史加载不出来”: distinguish guard rejection, query failure, hidden successful loading, and stale in-flight state with exact runtime evidence, then remove all temporary telemetry and restore the stable module.
+The read-only incident extension also covers the host chat UI symptom “历史加载不出来”: distinguish guard rejection, query failure, hidden successful loading, and stale in-flight state with exact runtime evidence; determine whether the 76-row end is a database fact or pagination defect; then remove all temporary telemetry and restore the stable module.
 
 ## Outcome
 
@@ -40,3 +40,4 @@ Ship a cache-focused LSPilot LSPosed module that adapts conservatively to the cu
 - `ToolCallSanitizerCheck` passes on Dalvik, the final installed artifact logs `Tool-call context repaired changes=12` in the affected conversation and succeeds, and the host database remains intact and unmodified by the module.
 - Stable module `1.7.5 (67)` is hash-verified, installed, and startup-verified against the current host after the repair; source, APK, runtime, and documentation audits have no unresolved required item.
 - The 76-row UI pagination trace captures valid guards, two successful `repository.b.o` queries, state growth `30 → 60 → 76`, cursor movement, and marker clearing; temporary telemetry is absent from source and the installed stable APK.
+- A current DB snapshot proves 76 is the persisted total, and host Smali proves partial `AiChatUiState.messages` can replace all chat rows through `repository.b.r -> c7.b`; the exact historic caller is stated only within the available evidence.
