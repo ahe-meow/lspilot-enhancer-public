@@ -14,7 +14,6 @@ Two cold starts passed: the first rebuilt the ABI descriptor for module version 
 
 The formal GitHub Release `v1.7.5` is now published non-draft/non-prerelease with the named APK asset; its online SHA-256 matches the installed artifact.
 
-
 ## Current incident repair
 
 The active host incident is resolved at the shared outbound JSON boundary. The read-only host baseline is `me.yun.lspilot` `1.1.0 (11)`, APK SHA-256 `af2283a2978ea650986988ac3d9c01a39474cdd6410d30b842dd8f15e686149c`, MT2 workspace `enml4cuy`. Its fixed `LIMIT 30` load can begin with four `role=tool` rows that have no preceding assistant `tool_calls`; `va.x` does not remove those rows, and `zj8.p` serializes them into the provider request. The reported 502 call ID exactly matches the first orphan output. The 400 body was not preserved for a one-request proof, so it remains documented as a high-probability gateway wrapper for the same malformed request class, not as a falsely claimed direct observation.

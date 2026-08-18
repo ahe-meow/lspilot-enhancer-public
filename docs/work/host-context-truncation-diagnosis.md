@@ -329,7 +329,7 @@ va.K（流式请求处理）
 `va.K` 在每次流式请求开始时启动 `va$k`。ViewModel 构造器把保存间隔设为 `400 ms`；`va$k` 每 `120 ms` 轮询一次，达到间隔后读取当前 `AiChatUiState.messages`，再由 `va$k$a` 调用 `repository.b.r`。实际整列表覆盖共有七个调用点：
 
 | 调用点 | 触发场景 | 传给 `repository.b.r` 的列表 |
-|---|---|---|
+| --- | --- | --- |
 | `va$k$a` | 流式请求期间周期保存 | 当时的 `AiChatUiState.messages` |
 | `va$j` | `va.K` 正常/异常结束的最终保存 | 本轮持续增长的请求/工具列表 |
 | `va$d`（经 `va.z`） | 停止或取消后的收尾 | 调用方提供的当前列表 |
