@@ -124,6 +124,92 @@ paired control:  GREEN, orphan_tool_outputs=0
 
 因此，“被丢弃”需要区分：历史消息没有因该限制从数据库删除，但在默认请求中被排除，模型无法看到这些消息。
 
+## 宿主聊天界面的上拉历史分页
+
+当前宿主的上拉加载是本地数据库分页，不会访问模型接口或远程历史服务。
+
+### 首次进入会话
+
+`va$f.invokeSuspend` 先找到当前 `chatId`，调用 `repository.b.n(chatId, 30)`。该方法：
+
+1. 查询该会话的总行数：`SELECT COUNT(*) FROM chat_message WHERE chat_id = ?`。
+2. 查询最新一页：
+
+   ```sql
+   SELECT * FROM chat_message
+   WHERE chat_id = ?
+   ORDER BY rowId DESC
+   LIMIT 30
+   ```
+
+3. 把数据库倒序结果反转为聊天时间正序。
+4. 把每行 JSON 解析成 `u7` 消息；单行解析失败会被跳过。
+5. 返回消息列表、当前页最旧行的 `rowId` 和 `hasMoreOlder`。`hasMoreOlder` 是“总行数大于本页原始数据库行数”。
+
+### 用户上拉到顶部
+
+UI 的 `ka$c.invokeSuspend` 监听 LazyList 滚动状态，只有以下条件同时满足才触发：
+
+- `firstVisibleItemIndex == 0`，必须到达列表第一个可见项目，不是“接近顶部”；
+- `hasMoreOlder == true`；
+- `isLoadingOlder == false`；
+- UI 自己的上拉请求标记为空，避免重复触发。
+
+触发后，UI 先保存当前首项位置、偏移量和消息总数，再调用 `va.E()`。`va.E()` 检查当前会话 ID，然后在 IO 协程中执行 `va$e`。
+
+### 游标分页与列表合并
+
+`va$e` 使用状态里的 `oldestRowId` 调用：
+
+```text
+repository.b.o(chatId, oldestRowId, 30)
+```
+
+DAO 的实际 SQL 是：
+
+```sql
+SELECT * FROM chat_message
+WHERE chat_id = ? AND rowId < ?
+ORDER BY rowId DESC
+LIMIT 30
+```
+
+结果再次反转为时间正序、解析 JSON，然后以：
+
+```text
+olderPage + currentMessages
+```
+
+的顺序写回 `AiChatUiState`，同时更新 `hasMoreOlder` 和 `oldestRowId`。`ka$d` 观察到分页完成后，把列表滚动位置向后移动“新增消息数”，使用户仍停留在原来看到的消息附近，再清除 UI 请求标记。
+
+### UI 合并与滚动恢复的隐藏细节
+
+宿主界面在渲染前会从 `AiChatUiState.messages` 过滤掉所有 `role=tool` 消息，再把剩余列表反转用于显示。数据库分页和状态合并却仍按原始 `chat_message` 行、原始 `u7` 列表计数。因此：
+
+- 一页 30 条数据库记录可能包含大量工具输出，最终可见的新气泡远少于 30 条，甚至没有可见文本。
+- `ka$c` 保存的是状态列表的原始消息数量；`ka$d` 也用原始列表数量计算新增项，再调用 `LazyListState.scrollToItem`。隐藏的工具行会使恢复位置偏移，表现为列表跳动、看起来没有加载或跳过内容。
+- 工具输出跨页时，UI 看不到它们，但它们仍占用数据库分页配额和 `oldestRowId` 游标。
+
+上拉请求还使用一个 UI `Triple(firstIndex, firstOffset, oldMessageCount)` 作为进行中标记。`ka$d` 只以“原始消息数量”和 `isLoadingOlder` 为键观察完成状态：
+
+- 正常返回至少一条可解析消息时，列表数量改变，`ka$d` 恢复位置并清除标记。
+- 空页或异常页走 `va$e$a`：消息列表和 `isLoadingOlder` 不变，只更新分页状态/游标；这两个观察键可能都不变，因此静态代码显示该标记可能不会被清除。
+- 标记一旦残留，`ka$c` 的“进行中标记为空”条件会一直失败；用户继续上拉时不会再次调用 `va.E()`，直到页面/会话重新创建。这是“第一次加载失败后后续都像失效”的高概率根因，尚未用运行时专门日志证明。
+
+此外，已读到的 `va.E()`、`va$e` 上拉路径没有先把 `isLoadingOlder` 置为 true；完成非空页时明确写回 false。当前重复请求保护主要依赖上述 UI 标记，而不是数据库事务或独立分页锁。
+
+### 为什么经常表现为“加载不出来”
+
+当前静态证据支持以下原因，按确定程度排序：
+
+1. **触发条件很窄**：没有到达 `firstVisibleItemIndex == 0`，或者 `hasMoreOlder` 已被设为 false，UI 根本不会执行查询。
+2. **空页后 UI 标记可能卡住**：如果查询异常、游标无效或整页 JSON 都解析失败，列表数量和 `isLoadingOlder` 可能不变，`ka$d` 不会清除进行中标记；后续上拉会被标记条件拦截。这是当前最值得优先用运行时日志验证的路径。
+3. **数据库/解析异常被静默吞掉**：`repository.b.o` 捕获外层异常后返回空列表、`hasMoreOlder=false` 和原游标；单行 JSON 解析失败也只跳过该行，不展示错误。
+4. **工具消息占用分页但不显示**：UI 过滤全部 `role=tool`，而 DAO 仍按原始数据库行分页；工具密集页可能没有新增可见气泡，且滚动恢复按原始消息数计算，导致跳动或看起来没有加载。
+5. **本地异步链路没有错误反馈**：上拉只读本地 Room/SQLite，不是远程加载；查询协程被取消、状态更新未完成或滚动恢复异常时，当前 APK 都不会向用户显示失败原因。工具组跨页还可能造成历史结构不完整，并在后续请求中被 sanitizer 清理。
+
+已确认“数据库查询失败”和“UI 没触发查询”在现有代码中没有用户可见的错误区分。要把“经常”对应到一个具体原因，需要一次运行时记录同时捕获：顶部索引、`hasMoreOlder`、`isLoadingOlder`、`oldestRowId`、查询返回数量和异常结果。
+
 ## 修复后真实验证
 
 ### 第一阶段：坏窗口现场验证

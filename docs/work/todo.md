@@ -15,7 +15,8 @@
 ## Completed
 
 - [x] Diagnose the host's orphan/incomplete tool-call windows, add request-boundary `ToolCallSanitizer`, and prove the final installed artifact repairs `changes=12` in the affected conversation with no new 400/502 log.
-- [x] Record that the host's `LIMIT 30` runs during every request build, excludes older rows from that request without deleting them from `chat_message`, and can split tool-call groups; keep the UI query path as unconfirmed.
+- [x] Analyze the host chat UI history pager: exact top-trigger guards, `rowId` cursor query, silent parse/DB failures, hidden `role=tool` rows, and the likely stuck in-flight marker after an empty/error page; runtime confirmation remains separate.
+- [x] Record that the host's `LIMIT 30` runs during every request build, excludes older rows from that request without deleting them from `chat_message`, and can split tool-call groups; the chat UI uses a separate cursor pager rather than a proven shared query.
 - [x] Build/install stable `1.7.5 (67)`; verify source/private/staged/installed SHA-256 `5d8d3a50c8d21148fbb79e397d30490a58bd955d79096b649e37dd06aa9d9e01`, release/lint, Dalvik checks, APK integrity/signature, current-host ABI, and cold-start hooks.
 - [x] Write `docs/work/host-context-truncation-diagnosis.md` with the confirmed 502 root cause, bounded 400 evidence, repair design, and live validation result.
 - [x] Commit, tag, push, and publish formal GitHub Release `v1.7.5`; verify the named online APK asset matches SHA-256 `5d8d3a50c8d21148fbb79e397d30490a58bd955d79096b649e37dd06aa9d9e01` and 679,443 bytes.

@@ -27,6 +27,7 @@ Preserve conservative request/SSE DEX adaptation, unique coherent candidate sele
 - Fix: `app/src/main/java/com/lspilot/enhancer/ToolCallSanitizer.java` runs at the shared request JSON boundary in both minified request hook paths. It removes invalid tool fragments without touching host persistence/UI/retry behavior.
 - Live evidence: the original affected chat accepted `ping` on the final installed artifact; PID 9774 logged `Tool-call context repaired changes=12`, normal request enhancement, and completed usage (`35374` input / `742` output / `36116` total) with no 400/502/upstream error. The host DB stayed `integrity_check=ok`.
 - Formal GitHub Release `v1.7.5` is published non-draft/non-prerelease at <https://github.com/ahe-meow/lspilot-enhancer-public/releases/tag/v1.7.5>; named asset hash matches the installed APK.
+- Host chat UI history analysis is complete and read-only: it uses a separate `ka$c -> va.E() -> va$e -> repository.b.o(chatId, oldestRowId, 30)` cursor pager. Triggering requires exact top index plus `hasMoreOlder`, `isLoadingOlder`, and a null in-flight marker; page/row parse failures are silent. `role=tool` rows are hidden after pagination but still affect row limits and scroll math. An empty/error page may leave the in-flight marker uncleared, which is a high-probability explanation for later top reaches doing nothing; runtime field logging is still needed to prove that branch in a live session.
 
 ## Current host
 
