@@ -6,7 +6,7 @@
 
 ## In progress
 
-- [ ] Capture one live top-scroll attempt without restarting the host, then distinguish trigger failure, successful-but-mostly-hidden page, scroll restoration failure, and a stuck in-flight marker. The copied DB/WAL/SHM replay already proves page raw/visible/tool counts `30/7/23`, `30/3/27`, and `16/2/14`; live Compose state still requires the device to be unlocked on the affected chat.
+- [ ] Directly distinguish pagination guard rejection, hidden successful loading, and a stale in-flight marker. The live matching-chat gesture capture proves the list responds and returns to the exact top UI hash, while DB replay proves 30 raw rows may yield only 3 visible bubbles; exact Compose state requires temporary read-only runtime telemetry, which is not added under the current no-runtime-modification constraint.
 
 ## Next
 
