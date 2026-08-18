@@ -73,56 +73,94 @@ paired control:  GREEN, orphan_tool_outputs=0
 
 ## 宿主代码链路
 
-对当前宿主 APK 的 DEX/Smali 进行只读分析得到以下链路：
+当前宿主没有一个独立的“上下文管理器”。它把对话上下文分成数据库历史、UI 内存工作集、provider 请求列表和工具输出内容四层；这些层之间通过整列表复制连接。
 
-1. `va$f.invokeSuspend` 使用常量 `0x1e`，调用 `repository.b.n(chatId, 30)`。
-2. `repository.b.n(chatId, 30)` 调用 DAO `c7.a(chatId, 30)`；DAO SQL 是：
+### 会话进入：只建立最新 30 行的 UI 工作集
 
-   ```sql
-   SELECT * FROM chat_message
-   WHERE chat_id = ?
-   ORDER BY rowId DESC LIMIT ?
-   ```
-
-3. `repository.b.n` 先取 `c7.o(chatId)` 的总数，再取限定行、反转为时间正序，并返回 `(messages, lastTimestamp, hasMore)`。
-4. `va$f$a.invokeSuspend` 将返回的最近消息列表写入 `oa` UI 状态的 `messages` 字段。
-5. `va.w` 复制这份列表并调用 `va.x`，然后把处理后的列表交给 provider 协程。
-6. `va.x` 的实际逻辑是：先收集所有 `role=tool` 的 `toolCallId`；再遍历 assistant 的 `toolCalls`，对缺少输出的调用追加 `[用户中断] 工具调用已被取消` 的 tool 消息。它没有删除没有 assistant 声明的孤立 tool 输出。
-7. 当前 provider 的 `zj8.i` 将消息写成 `role=tool`、`tool_call_id`、`content`；`zj8.l` 将 assistant 调用写成 `tool_calls[].id/type/function`；`zj8.p` 将结果放入最终 `messages` JSON。
-8. `va$f` 之后将列表交给 `va$f$a` 更新状态；只有在宿主 streaming 状态满足特定条件时才会调用 `repository.b.r(chatId, list)`。该保存路径通过 `c7.b` 先执行 `c7.l(chatId)` 删除会话消息，再执行 `c7.i(list)` 插入。它证明宿主存在整列表替换能力，但本次证据不能把初始 30 条窗口确定归因于某一次保存；修复后的实时验证反而确认模块没有写回数据库。
-9. `va$e.invokeSuspend` 是另一条按时间游标加载旧消息的路径，同样以常量 `30` 调用 `repository.b.o(chatId, timestamp, 30)`，不是模块的请求 Hook。
-
-因此，固定 30 条边界和 `va.x` 的“只补缺失输出、不删孤立输出”组合，足以把窗口头部的 4 个历史 tool 输出原样送入 provider。
-
-宿主的 `WebSearchManager` 和 `va` 还存在“内容截断”文本标记。这类截断只改变工具输出的文本长度，不会自动生成合法的 `tool_calls`，也不会修复缺失的调用声明；它会放大上下文不稳定的感受，但不是 502 的直接结构原因。
-
-## 30条截断的触发时机与数据保留
-
-宿主的 `30` 是请求构造阶段的读取上限，不是数据库写入或定时清理操作。已确认的时序是：
+当前实际入口是：
 
 ```text
-用户发起模型请求
+ka$a.invokeSuspend
+  → va.F(packageName, chatId, context)
   → va$f.invokeSuspend
   → repository.b.n(chatId, 30)
-  → c7.a(chatId, 30)
-  → SELECT ... ORDER BY rowId DESC LIMIT ?
-  → 反转为时间正序并写入消息状态
-  → va.x 整理工具调用
-  → zj8 序列化 messages
+  → c7.o(chatId)                      // 总行数
+  → c7.a(chatId, 30)                  // 最新 30 行
+  → SELECT ... ORDER BY rowId DESC LIMIT 30
+  → 反转为时间正序
+  → 写入 oa/AiChatUiState.messages
+```
+
+`va$f` 是进入或切换聊天页面时的初始化协程，不是每次模型请求前执行的查询。`repository.b.n` 返回 `(已解析消息, 最旧 rowId, hasMoreOlder)`；单行 JSON 失败会静默跳过，但 `hasMoreOlder` 仍按原始数据库行数计算。
+
+### 用户发送：请求使用当前完整 UI 工作集
+
+发送入口 `va.P()` 先用 `repository.b.c(chatId, userMessage)` 单独插入新的 user 行，再把该消息追加到 `AiChatUiState.messages`，然后启动 `va$l -> va.K`。`va.K` 的实际请求链是：
+
+```text
+AiChatUiState.messages 当前全部消息
+  → ArrayList.addAll(currentMessages)
+  → va.x(list)                         // 补 declared-but-missing tool 输出
+  → va.w(providerConfig, list, callback)
+  → provider bb.a(config, list, systemPrompt, callback)
+  → zj8.o(list, systemPrompt)
+  → 按顺序序列化 list 中每一条消息
+  → zj8.p 生成最终 messages JSON
   → 模块出站 JSON Hook
   → provider
 ```
 
-具体边界如下：
+因此，模型请求不是固定 30 条：
 
-- 每次宿主准备发送模型请求时都会重新执行这次限定查询；消息总行数不超过 30 时没有实际截断。
-- 超过 30 行后，只把最新 30 行加载到本次请求；第 31 行及更早记录仍留在 `chat_message`，不会因 `LIMIT 30` 被删除。
-- 截断不是“达到第 31 条就删除旧消息”，也不是模型回复完成后的数据库清理；当前证据没有发现宿主因该限制删除历史记录。
-- 查询按数据库行截断，而不是按对话轮次或完整 assistant/tool 调用组截断，因此边界可能留下孤立 `role=tool` 输出。
-- 模块位于出站 JSON 边界，看到请求时宿主已经完成 30 行查询；模块可以清理非法工具调用结构，但不能从请求 JSON 恢复窗口外的历史。
-- 当前已确认的是请求加载路径；聊天界面是否复用同一个 `LIMIT 30`，需要单独定位 UI 的查询/分页路径，不能仅凭请求路径推断。
+- 刚进入长会话、尚未上拉时，内存通常是最新 30 行；发送 user 后通常变成 31 行。
+- 如果先加载一页旧历史，内存可以是 60、61 或更多，请求会携带这些已加载消息。
+- 同一页面持续对话时，新 assistant/tool/user 消息继续累加，请求列表也可以持续超过 30。
+- 重新进入会话时又会从数据库最新 30 行重新建立工作集。
 
-因此，“被丢弃”需要区分：历史消息没有因该限制从数据库删除，但在默认请求中被排除，模型无法看到这些消息。
+`zj8.o/p` 没有 `takeLast`、`subList`、token 预算或消息数量裁剪。它只在 system prompt 非空时前置一条 `role=system`，然后序列化调用方传入的全部消息；启用工具时再加入完整工具定义。其他两个 `bb` provider 实现也接收同一份列表，没有发现消息数量裁剪。
+
+### 工具调用整理
+
+`va.x` 先收集已有 `role=tool` 的 `toolCallId`，再遍历 assistant 的 `toolCalls`，只为 declared-but-missing 调用追加 `[用户中断] 工具调用已被取消`。它不删除没有 assistant 声明的孤立 tool 输出。
+
+当前 provider 的 `zj8.i/j/l` 将 tool、普通消息和 assistant tool calls 写入 JSON。因而只要最新 30 行建立的 UI 工作集恰好从 tool 输出中间开始，孤立 tool 就会随当前工作集原样进入请求。固定 30 行的会话初始化边界与 `va.x` 的单向补齐逻辑共同构成了 502 的结构根因。
+
+## “30 条”截断的真实语义
+
+`LIMIT 30` 本身只是会话进入时的只读分页查询；它不会在执行 SQL 时删除第 31 行。但宿主随后会把这个部分列表当成可持久化的完整列表，因此整体行为分成两个阶段：
+
+```text
+阶段 A：进入会话
+数据库完整历史
+  → 最新 30 行进入 AiChatUiState.messages
+  → 更旧行暂时仍在数据库，可通过上拉分页加入内存
+
+阶段 B：发送/停止/恢复/销毁时保存
+当前 AiChatUiState.messages
+  → repository.b.r(chatId, currentList)
+  → c7.b
+  → DELETE FROM chat_message WHERE chat_id = ?
+  → 批量 INSERT currentList
+  → 未加载进内存的旧行永久消失
+```
+
+所以“截断”有三种不同含义：
+
+1. **请求可见性截断**：模型只能看到当前 UI 工作集；未上拉加载的旧行不在请求列表中。
+2. **数据库破坏性截断**：一旦整列表保存发生，未加载旧行会被先删后插逻辑永久移除。
+3. **内容长度截断**：个别工具输出会按字符数裁剪，但消息行仍存在。
+
+模块位于 provider 出站 JSON 边界，只能修复当次请求中已有消息的工具调用结构；它不能读取未进入工作集的数据库旧页，也不能恢复已经被宿主整列表覆盖删除的历史。
+
+## 工具输出的内容级截断
+
+宿主还存在与消息数量无关的字符级裁剪：
+
+- `va.g` 是 `va.K` 工具执行回调；它把持续累积的工具结果限制为前 `4000` 字符，并附加 `// ... (N more chars, truncated)`，然后更新对应消息和 UI 状态。
+- `WebSearchManager.fetchPage` 的默认抓取上限是 `12000` 字符，调用参数会被限制在 `1000..30000`；超过时追加 `[Content truncated. Original length: ~N chars]`。HTTP 错误正文只保留前 `500` 字符。
+- 插件编辑工具 `jb.o` 只把 old/new diff 预览各保留前 `80` 字符；这是工具返回摘要，不是聊天历史裁剪。
+
+这些内容级截断会降低模型可见的工具正文，但不会删除整条 chat_message，也不会修复 assistant/tool 配对。
 
 ## 宿主聊天界面的上拉历史分页
 
@@ -288,7 +326,21 @@ va.K（流式请求处理）
   → c7.i(rows)            // 只插入当前内存列表
 ```
 
-`va.K` 在每次流式请求开始时启动该任务；`va$k` 每 120 ms 检查保存间隔，并周期性把当前 UI 状态列表交给 `repository.b.r`。宿主的取消、停止、生命周期和其他完成路径也有六个额外 `repository.b.r` 调用点。`repository.b.r` 本身不补查数据库旧页，只序列化调用方传入的列表；`c7.b` 固定先删后插。
+`va.K` 在每次流式请求开始时启动 `va$k`。ViewModel 构造器把保存间隔设为 `400 ms`；`va$k` 每 `120 ms` 轮询一次，达到间隔后读取当前 `AiChatUiState.messages`，再由 `va$k$a` 调用 `repository.b.r`。实际整列表覆盖共有七个调用点：
+
+| 调用点 | 触发场景 | 传给 `repository.b.r` 的列表 |
+|---|---|---|
+| `va$k$a` | 流式请求期间周期保存 | 当时的 `AiChatUiState.messages` |
+| `va$j` | `va.K` 正常/异常结束的最终保存 | 本轮持续增长的请求/工具列表 |
+| `va$d`（经 `va.z`） | 停止或取消后的收尾 | 调用方提供的当前列表 |
+| `va$b$b$a` | 内部 stream 状态流结束 | 状态流发布的列表 |
+| `va$g`（`va.d()`） | ViewModel 销毁且仍在 streaming | 当前 `AiChatUiState.messages` |
+| `va$f` | 进入会话时发现遗留 streaming 标记 | 刚从数据库加载的最新 30 行 |
+| `va.y()` | 用户撤回/编辑最后一条 user 消息 | 最后一个 user 之前的前缀列表 |
+
+其中 `va.y()` 是明确的尾部回退操作；其余六处属于流式保存、停止或恢复。另一个 UI 重试入口 `va.J()` 虽然不直接调用 `b.r`，但会找到最后一个 assistant 及其对应 user，只把截至该 user 的前缀放回状态并重新调用 `va.K`；随后的周期/最终保存同样会把旧 assistant/tool 尾部永久删除。`repository.b.r` 本身不补查数据库旧页，只序列化调用方传入的列表；`c7.b` 固定先删后插。
+
+发送动作 `va.P()` 在启动请求前会先用 `repository.b.c` 单独插入新 user 行，所以旧数据库记录在这一刻仍存在；但流式任务启动约数百毫秒后，`va$k$a` 就可能用“最新 30 行 + 新 user + 已产生的 assistant/tool”覆盖整张会话历史。
 
 这与分页设计形成了数据丢失条件：首次进入长会话时 UI 只加载最新 30 行；如果用户尚未把全部旧页加载进 `AiChatUiState.messages` 就发起请求、停止生成或触发生命周期保存，宿主会把这个部分列表当作完整历史覆盖数据库。当前 76 个 `rowId` 完全连续，符合一次整批重插后的形态；此前确认过的四个孤立 tool ID 也已不在当前数据库中。
 
@@ -361,11 +413,11 @@ OpenAI cache usage: input_tokens=35374, output_tokens=742, total_tokens=36116, c
 
 修复位于模块唯一的出站请求 JSON 边界：`LSPilotEnhancerModule` 的两条 request-body ABI hook 都调用 `ToolCallSanitizer.repair(body)`。
 
-修复后的请求会在发送给 provider 前满足：所有保留的 tool 输出属于紧邻的 assistant 工具调用组；所有保留的 assistant 工具调用都有输出；普通文本消息不被删除。它不能凭空恢复宿主已经从 30 条窗口之外删除的旧上下文；旧上下文恢复需要另一个宿主数据加载策略，不能通过猜测补造。
+修复后的请求会在发送给 provider 前满足：所有保留的 tool 输出属于紧邻的 assistant 工具调用组；所有保留的 assistant 工具调用都有输出；普通文本消息不被删除。它不能凭空恢复没有进入当前 `AiChatUiState.messages` 的数据库旧页，也不能恢复已经被宿主整列表覆盖删除的历史。
 
 ## 验证结论
 
 - 502 的 `call_id` 与数据库孤立输出精确匹配；红/绿结构验证证明该序列本身非法。
-- 宿主固定 `LIMIT 30` 和 `va.x` 的“只补缺失输出、不删孤立输出”组合是根因链。
+- 会话进入时的固定 `LIMIT 30` 可能把 UI 工作集切在工具调用组中间；发送链把当前工作集完整交给 provider，而 `va.x` 只补缺失输出、不删孤立输出。这三者共同构成 502 根因链。
 - 400 的完整出站 JSON 没有被现场持久化，因此文档仍把它标为同类 malformed request 经网关包装的高概率表现，不伪称逐请求证明。
-- 最终模块已安装、模块进程已实际执行 `changes=12` 修复、请求成功返回、SSE usage 正常、数据库保持完整；当前目标要求的中文诊断与修复证据已闭环。
+- 最终模块已安装、模块进程已实际执行 `changes=12` 修复、请求成功返回且 SSE usage 正常。SQLite `integrity_check=ok` 只证明数据库结构有效；它不代表历史未丢失。运行时和源码证据证明模块没有写库，而宿主的部分列表整表覆盖会删除未加载历史。

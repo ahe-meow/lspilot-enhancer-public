@@ -29,6 +29,8 @@ The separate chat-UI pager investigation is complete. Temporary user-authorized 
 
 A fresh database count confirms 76 is the entire currently persisted chat, not a pagination cap. The missing older history is attributable to the host's full-list replacement design: streaming `va.K` starts `va$k`, which periodically persists partial `AiChatUiState.messages` through `repository.b.r`; DAO `c7.b` deletes all rows for the chat before inserting that current list. The database has 76 contiguous fresh row IDs, consistent with a batch rewrite. The exact historical caller among seven replacement paths was not runtime-captured, so no single path is overstated; current module code does not write host repository or message state.
 
+The corrected request model is: `LIMIT 30` initializes the UI working set when a chat is entered; it is not rerun before each provider request. `va.P -> va.K -> va.w` sends the entire currently loaded state, so loading older pages first expands model-visible context. `zj8` performs no message-count/token trimming. Separately, stream autosave polls every 120 ms and saves on a 400 ms interval, and tool content has 4,000/12,000-character caps.
+
 ## Execution order
 
 1. Remove context compression and automatic retry, including their hooks, host-state writes, persistence, tests, and current UI/docs.

@@ -19,7 +19,7 @@
 
 - [x] Diagnose the host's orphan/incomplete tool-call windows, add request-boundary `ToolCallSanitizer`, and prove the final installed artifact repairs `changes=12` in the affected conversation with no new 400/502 log.
 - [x] Analyze the host chat UI history pager: exact top-trigger guards, `rowId` cursor query, silent parse/DB failures, hidden `role=tool` rows, and the static stale-marker risk after an empty/error page; the successful live path was later runtime-confirmed separately.
-- [x] Record that the host's `LIMIT 30` runs during every request build, excludes older rows from that request without deleting them from `chat_message`, and can split tool-call groups; the chat UI uses a separate cursor pager rather than a proven shared query.
+- [x] Reconstruct the host's exact context business: `LIMIT 30` initializes the chat UI working set only; send uses the entire current `AiChatUiState.messages`; provider serialization has no count/token cap; streaming/stop/recovery paths can replace all DB rows with that partial list; tool-result content has separate 4,000/12,000-character caps.
 - [x] Build/install stable `1.7.5 (67)`; verify source/private/staged/installed SHA-256 `5d8d3a50c8d21148fbb79e397d30490a58bd955d79096b649e37dd06aa9d9e01`, release/lint, Dalvik checks, APK integrity/signature, current-host ABI, and cold-start hooks.
 - [x] Write `docs/work/host-context-truncation-diagnosis.md` with the confirmed 502 root cause, bounded 400 evidence, repair design, and live validation result.
 - [x] Commit, tag, push, and publish formal GitHub Release `v1.7.5`; verify the named online APK asset matches SHA-256 `5d8d3a50c8d21148fbb79e397d30490a58bd955d79096b649e37dd06aa9d9e01` and 679,443 bytes.
