@@ -12,7 +12,8 @@ The verified stable APK is installed as `com.lspilot.enhancer` and matches SHA-2
 
 Two cold starts passed: the first rebuilt the ABI descriptor for module version code `64`; the second logged `cache_hit`, `provider=zj8`, `requestBody=true`, `sseUsage=true`, and `Native host settings page hooks installed with AutoAwesome icon`. Neither start logged automatic-retry hook installation or native-settings hook failure.
 
-Stable `v1.7.4` is published as a non-prerelease GitHub Release at <https://github.com/ahe-meow/lspilot-enhancer-public/releases/tag/v1.7.4>. The exact installed and released APK is 678,659 bytes with SHA-256 `e3ba4ba5d7241c29a04923592996a67e91b8f2d90a2c1688add0880034972102`; release/lint, diagnostics, APK integrity/signature, focused Dalvik checks, exact current-host ABI, four-stage install hashes, LSPosed state/scope/integrity, module-update rebuild, subsequent `cache_hit`, user UI acceptance, and downloaded-asset hash verification pass.
+The formal GitHub Release `v1.7.5` is now published non-draft/non-prerelease with the named APK asset; its online SHA-256 matches the installed artifact.
+
 
 ## Current incident repair
 

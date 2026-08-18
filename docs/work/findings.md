@@ -13,6 +13,7 @@
 - `ToolCallSanitizerCheck` passes on Dalvik, including a replay of the observed four-orphan/6+8+8-call window. The installed candidate logged `Tool-call context repaired changes=4` while the user sent `ping` in the original affected chat; the request returned successfully, with no filtered 400/502/upstream error. A post-request SQLite snapshot remains `integrity_check=ok` and still contains the four orphan rows, proving request-local repair.
 - Stable module `1.7.5 (67)` is installed. Source APK, Termux-private stage, `/data/local/tmp`, and installed `base.apk` match SHA-256 `5d8d3a50c8d21148fbb79e397d30490a58bd955d79096b649e37dd06aa9d9e01` (679,443 bytes). Release/lint, Dalvik checks, current-host native-settings ABI, APK structure/signature, and cold-start hook checks pass.
 - Final installed-artifact verification: PID 9774 loaded `1.7.5 (67)`, the original affected chat logged `Tool-call context repaired changes=12`, normal request enhancement, and completed usage (`35374` input / `742` output / `36116` total); the user received a successful response and the captured window contained no HTTP 400/502/upstream error.
+- Formal GitHub Release `v1.7.5` is published as non-draft/non-prerelease at <https://github.com/ahe-meow/lspilot-enhancer-public/releases/tag/v1.7.5>. Asset `lspilot-enhancer-v1.7.5.apk` is 679,443 bytes and matches the installed/source SHA-256 above.
 
 ## Source state
 

@@ -26,7 +26,7 @@ Preserve conservative request/SSE DEX adaptation, unique coherent candidate sele
 - Diagnosis: the host's fixed 30-message context window can start with four orphan `role=tool` outputs. `va.x` only adds cancellation outputs for declared-but-missing calls; it does not remove orphan outputs. `zj8.p` serializes the malformed sequence, producing the reported 502. The 400 wrapper is high-probability related but lacks a preserved request body for direct proof.
 - Fix: `app/src/main/java/com/lspilot/enhancer/ToolCallSanitizer.java` runs at the shared request JSON boundary in both minified request hook paths. It removes invalid tool fragments without touching host persistence/UI/retry behavior.
 - Live evidence: the original affected chat accepted `ping` on the final installed artifact; PID 9774 logged `Tool-call context repaired changes=12`, normal request enhancement, and completed usage (`35374` input / `742` output / `36116` total) with no 400/502/upstream error. The host DB stayed `integrity_check=ok`.
-- Detailed Chinese report: [`docs/work/host-context-truncation-diagnosis.md`](host-context-truncation-diagnosis.md).
+- Formal GitHub Release `v1.7.5` is published non-draft/non-prerelease at <https://github.com/ahe-meow/lspilot-enhancer-public/releases/tag/v1.7.5>; named asset hash matches the installed APK.
 
 ## Current host
 
