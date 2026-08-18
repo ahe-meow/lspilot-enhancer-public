@@ -1,7 +1,7 @@
 # Documentation Structure
 
 - Status: current
-- Updated: 2026-08-16
+- Updated: 2026-08-18
 - Purpose: define the canonical document layout, naming rules, and lifecycle for this repository.
 
 ## Directory Map
@@ -21,6 +21,7 @@ docs/
 `-- work/
     |-- findings.md
     |-- goal.md
+    |-- host-context-truncation-diagnosis.md
     |-- project-handoff.md
     |-- plan.md
     `-- todo.md

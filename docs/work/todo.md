@@ -6,13 +6,17 @@
 
 ## In progress
 
-- Replace the private AAPT2 APK-container workaround when an arm64-compatible AGP 9.3 AAPT2 is available.
+- None for the active incident repair.
 
 ## Next
 
 - [ ] Replace the private AAPT2 APK-container workaround when an arm64-compatible AGP 9.3 AAPT2 is available.
 
 ## Completed
+
+- [x] Diagnose the host's orphan/incomplete tool-call windows, add request-boundary `ToolCallSanitizer`, and prove the final installed artifact repairs `changes=12` in the affected conversation with no new 400/502 log.
+- [x] Build/install stable `1.7.5 (67)`; verify source/private/staged/installed SHA-256 `5d8d3a50c8d21148fbb79e397d30490a58bd955d79096b649e37dd06aa9d9e01`, release/lint, Dalvik checks, APK integrity/signature, current-host ABI, and cold-start hooks.
+- [x] Write `docs/work/host-context-truncation-diagnosis.md` with the confirmed 502 root cause, bounded 400 evidence, repair design, and live validation result.
 
 - [x] Commit stable source, tag `v1.7.4`, push main/tag, publish a non-prerelease GitHub Release, and verify the downloaded 678,659-byte asset matches SHA-256 `e3ba4ba5d7241c29a04923592996a67e91b8f2d90a2c1688add0880034972102`.
 - [x] Receive explicit user acceptance for alternating About/module navigation, native settings layout/labels, and setting persistence.

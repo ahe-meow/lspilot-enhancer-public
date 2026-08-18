@@ -13,7 +13,7 @@
 - Host package: `me.yun.lspilot`
 - Android treats the module identity as a new package. GitHub pre-release `v1.7.4-preview.27` is published, installed, enabled, scoped, and hash-verified.
 - Installed `v1.7.4-preview.27` has the first host-native Miuix settings implementation; user testing found its hook targeted legacy `a2.f` instead of active Miuix `t1.J`, and its card was appended after the host bottom safe-area item.
-- The user accepted the `preview.28` navigation and settings behavior. The exact stable `1.7.4 (66)` APK is built, installed, runtime-verified, and published at <https://github.com/ahe-meow/lspilot-enhancer-public/releases/tag/v1.7.4> with SHA-256 `e3ba4ba5d7241c29a04923592996a67e91b8f2d90a2c1688add0880034972102`.
+- Current stable module: `com.lspilot.enhancer` `1.7.5 (67)`, installed and hash-verified at `5d8d3a50c8d21148fbb79e397d30490a58bd955d79096b649e37dd06aa9d9e01` (679,443 bytes). It is the repaired request-boundary build; the public `v1.7.4` release remains historical and is not the installed artifact.
 
 ## Active objective
 
@@ -21,9 +21,15 @@ Keep only request caching, usage, reasoning, diagnostics, and settings UI. Conte
 
 Preserve conservative request/SSE DEX adaptation, unique coherent candidate selection, ambiguity failure, and host-content-hash descriptor caching.
 
+## Active incident handoff
+
+- Diagnosis: the host's fixed 30-message context window can start with four orphan `role=tool` outputs. `va.x` only adds cancellation outputs for declared-but-missing calls; it does not remove orphan outputs. `zj8.p` serializes the malformed sequence, producing the reported 502. The 400 wrapper is high-probability related but lacks a preserved request body for direct proof.
+- Fix: `app/src/main/java/com/lspilot/enhancer/ToolCallSanitizer.java` runs at the shared request JSON boundary in both minified request hook paths. It removes invalid tool fragments without touching host persistence/UI/retry behavior.
+- Live evidence: the original affected chat accepted `ping` on the final installed artifact; PID 9774 logged `Tool-call context repaired changes=12`, normal request enhancement, and completed usage (`35374` input / `742` output / `36116` total) with no 400/502/upstream error. The host DB stayed `integrity_check=ok`.
+- Detailed Chinese report: [`docs/work/host-context-truncation-diagnosis.md`](host-context-truncation-diagnosis.md).
+
 ## Current host
 
-- Installed version: `1.1.0 (11)`
 - Installed SHA-256: `af2283a2978ea650986988ac3d9c01a39474cdd6410d30b842dd8f15e686149c` (current host update)
 - Size: `16,716,410` bytes
 - MT2 workspace: `enml4cuy`

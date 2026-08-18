@@ -117,13 +117,8 @@ public final class LSPilotEnhancerModule extends XposedModule {
                 }
 
                 try {
-                    boolean policyEnabled = ModuleSettings.isEnabled();
-                    if (!policyEnabled) return originalResult;
                     String systemPrompt = (String) chain.getArg(2);
-                    JSONObject body = new JSONObject((String) originalResult);
-                    String model = requestModel(body);
-                    applyOpenAiRequestPolicy(body, model, systemPrompt, true);
-                    return body.toString();
+                    return enhanceRequest((String) originalResult, systemPrompt);
                 } catch (Throwable error) {
                     log(Log.ERROR, TAG, "Request enhancement failed; using host request", error);
                     return originalResult;
@@ -191,6 +186,27 @@ public final class LSPilotEnhancerModule extends XposedModule {
         }
     }
 
+    private String enhanceRequest(String originalRequest, String systemPrompt) throws Exception {
+        JSONObject body = new JSONObject(originalRequest);
+        int repairedChanges = ToolCallSanitizer.repair(body);
+        if (repairedChanges > 0) {
+            log(Log.WARN, TAG, "Tool-call context repaired changes=" + repairedChanges);
+        }
+
+        if (!ModuleSettings.isEnabled()) {
+            return repairedChanges == 0 ? originalRequest : body.toString();
+        }
+        String model = requestModel(body);
+        try {
+            applyOpenAiRequestPolicy(body, model, systemPrompt, true);
+            return body.toString();
+        } catch (Throwable error) {
+            log(Log.ERROR, TAG,
+                    "Optional request policy failed; keeping repaired request", error);
+            return repairedChanges == 0 ? originalRequest : body.toString();
+        }
+    }
+
     private boolean installMinifiedRequestBodyHook(HostAbi abi) {
         try {
             Method buildRequest = abi.buildRequestMethod;
@@ -201,13 +217,8 @@ public final class LSPilotEnhancerModule extends XposedModule {
                 }
 
                 try {
-                    boolean policyEnabled = ModuleSettings.isEnabled();
-                    if (!policyEnabled) return originalResult;
                     String systemPrompt = (String) chain.getArg(2);
-                    JSONObject body = new JSONObject((String) originalResult);
-                    String model = requestModel(body);
-                    applyOpenAiRequestPolicy(body, model, systemPrompt, true);
-                    return body.toString();
+                    return enhanceRequest((String) originalResult, systemPrompt);
                 } catch (Throwable error) {
                     log(Log.ERROR, TAG,
                             "Minified request enhancement failed; using host request", error);

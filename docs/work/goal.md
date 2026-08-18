@@ -1,8 +1,12 @@
 # Current goal
 
 - Status: current
-- Updated: 2026-08-17
+- Updated: 2026-08-18
 - Purpose: define the single active outcome and its acceptance boundary.
+
+## Current incident extension
+
+The current acceptance target additionally includes the host conversation failure reported as HTTP 502 `No tool call found for function call output...` and HTTP 400 `Upstream request failed`. The target is met only when the malformed host history is proven, the module repairs it at the outbound JSON boundary without host persistence/state hooks, the affected conversation succeeds on the installed module, and the Chinese Markdown report is current.
 
 ## Outcome
 
@@ -30,4 +34,6 @@ Ship a cache-focused LSPilot LSPosed module that adapts conservatively to the cu
 - The module entry is an independent host-native settings card using `Rounded.AutoAwesome`; its page uses host navigation and native preference components.
 - Ambiguous or incomplete scans disable only the affected feature group.
 - Focused checks, release build, lint, and `git diff --check` pass.
-- The exact module APK is hash-verified, installed, loaded by LSPosed, and startup-verified against the updated host: `provider=zj8`, `requestBody=true`, `sseUsage=true`, and `Host ABI resolution reason=cache_hit` on the subsequent startup.
+- The host tool-call failure is documented in Chinese at `docs/work/host-context-truncation-diagnosis.md`, including the exact confirmed 502 evidence, the bounded uncertainty around 400, repair rules, and live verification.
+- `ToolCallSanitizerCheck` passes on Dalvik, the final installed artifact logs `Tool-call context repaired changes=12` in the affected conversation and succeeds, and the host database remains intact and unmodified by the module.
+- Stable module `1.7.5 (67)` is hash-verified, installed, and startup-verified against the current host after the repair; source, APK, runtime, and documentation audits have no unresolved required item.

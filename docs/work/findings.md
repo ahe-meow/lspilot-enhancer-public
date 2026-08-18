@@ -4,10 +4,19 @@
 - Updated: 2026-08-18
 - Purpose: record current verified implementation and host compatibility facts.
 
+## Tool-call incident repair — 2026-08-18
+
+- The read-only host baseline is `me.yun.lspilot` `1.1.0 (11)`, APK SHA-256 `af2283a2978ea650986988ac3d9c01a39474cdd6410d30b842dd8f15e686149c`, MT2 workspace `enml4cuy`.
+- The initial 30-message window began with four `role=tool` rows whose `toolCallId` values had no preceding assistant `toolCalls`; the first ID hashes to `ddb4f4b1a425`, exactly matching the reported `call_NMvsSJWSiSvOA8T0hs66v4Il`. The structure validator is RED and its paired control is GREEN.
+- Current-host Smali confirms `va$f -> repository.b.n(chatId, 30) -> c7.a(chatId, 30)`, `va.w -> va.x -> provider`, and `zj8.i/p` serialize the invalid tool sequence into the outbound `messages`. `va.x` adds cancellation outputs for missing results but leaves orphan outputs in place. The host's `c7.b` replacement path is separate and was not modified.
+- Added `ToolCallSanitizer` at the shared request-body hook. It removes orphan/duplicate tool outputs, drops assistant calls without outputs, preserves ordinary content, and never writes host state or the host database. It runs even when optional cache-policy settings are disabled so the structural safety invariant is independent of those settings.
+- `ToolCallSanitizerCheck` passes on Dalvik, including a replay of the observed four-orphan/6+8+8-call window. The installed candidate logged `Tool-call context repaired changes=4` while the user sent `ping` in the original affected chat; the request returned successfully, with no filtered 400/502/upstream error. A post-request SQLite snapshot remains `integrity_check=ok` and still contains the four orphan rows, proving request-local repair.
+- Stable module `1.7.5 (67)` is installed. Source APK, Termux-private stage, `/data/local/tmp`, and installed `base.apk` match SHA-256 `5d8d3a50c8d21148fbb79e397d30490a58bd955d79096b649e37dd06aa9d9e01` (679,443 bytes). Release/lint, Dalvik checks, current-host native-settings ABI, APK structure/signature, and cold-start hook checks pass.
+- Final installed-artifact verification: PID 9774 loaded `1.7.5 (67)`, the original affected chat logged `Tool-call context repaired changes=12`, normal request enhancement, and completed usage (`35374` input / `742` output / `36116` total); the user received a successful response and the captured window contained no HTTP 400/502/upstream error.
+
 ## Source state
 
-- Branch: `main`; stable release commit/tag: `23bbcbbe476cb2685d1f1d57121af480993ee049` / `v1.7.4`.
-- Module identity uses `com.lspilot.enhancer`; the exact preview artifact is installed, enabled, and scoped to `me.yun.lspilot` in LSPosed.
+- Module identity uses `com.lspilot.enhancer`; stable `1.7.5 (67)` is installed, enabled, and scoped to `me.yun.lspilot` in LSPosed.
 - Context compression was explicitly removed from production source, chat UI, settings, tests, and active documentation.
 - Removed legacy preference keys and stored summary-record prefixes are cleaned from host-local module preferences during initialization; other settings are untouched.
 - Retained features are Prompt Cache policy, compatible retention, usage reporting, reasoning effort, diagnostics, and settings UI. Automatic retry and its host-context writes are removed from source and the installed artifact.
