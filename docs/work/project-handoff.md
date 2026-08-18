@@ -6,7 +6,7 @@
 
 ## Repository
 
-- Branch: `main`
+- Branch: `feature/host-history-retention-hooks` (stable main baseline remains separate)
 - Stable release commit/tag: `23bbcbbe476cb2685d1f1d57121af480993ee049` / `v1.7.4`
 - Inspect `git status` before changes and preserve unrelated tracked or untracked files.
 - Module package: `com.lspilot.enhancer`
@@ -17,18 +17,19 @@
 
 ## Active objective
 
-Keep only request caching, usage, reasoning, diagnostics, and settings UI. Context compression and automatic retry—including host message-state replacement and repository persistence—are removed from current source.
+Keep request caching, usage, reasoning, diagnostics, and settings UI. Context compression and automatic retry—including host message-state replacement—remain removed from current source. This branch adds only an opt-in, fail-closed host-history retention guard around the destructive full-list save path.
 
 Preserve conservative request/SSE DEX adaptation, unique coherent candidate selection, ambiguity failure, and host-content-hash descriptor caching.
 
 ## Active incident handoff
 
+- Active feature branch: `feature/host-history-retention-hooks` adds a default-enabled native `保留历史消息` setting and hooks `repository.b.r(String,List):void`. It verifies `b.i(chatId).size()` against DAO `c7.o(chatId)`, merges persisted and current messages by `u7.f()`, and skips the host save on any verification ambiguity. The switch off-path calls the host method unchanged. Static checks, module-only install, cold-start injection, two enabled-mode saves, and back-navigation acceptance pass: the target grew `76 → 98 → 110` rows while all prior IDs survived with no duplicates or parse errors. The route sentinel was moved from host `eca$m` `Route.LogViewer` to `eca$c`; the user confirmed return to host settings. Disabled-mode write behavior is intentionally not exercised on a real long chat; final checks and commit/push remain.
 - Diagnosis: entering/switching a chat initializes `AiChatUiState.messages` from the newest 30 raw DB rows; this boundary can start with four orphan `role=tool` outputs. Sending does not requery a fixed 30: `va.P -> va.K -> va.w` passes the entire current UI working set to `zj8`, whose provider serialization has no count/token cap. `va.x` only adds cancellation outputs for declared-but-missing calls and leaves orphans, producing the reported 502. The 400 wrapper is high-probability related but lacks a preserved request body for direct proof.
 - Fix: `app/src/main/java/com/lspilot/enhancer/ToolCallSanitizer.java` runs at the shared request JSON boundary in both minified request hook paths. It removes invalid tool fragments without touching host persistence/UI/retry behavior.
 - Live evidence: the original affected chat accepted `ping` on the final installed artifact; PID 9774 logged `Tool-call context repaired changes=12`, normal request enhancement, and completed usage (`35374` input / `742` output / `36116` total) with no 400/502/upstream error. The host DB stayed `integrity_check=ok`.
 - Formal GitHub Release `v1.7.5` is published non-draft/non-prerelease at <https://github.com/ahe-meow/lspilot-enhancer-public/releases/tag/v1.7.5>; named asset hash matches the installed APK.
 - Host chat UI history diagnosis is complete: it uses `ka$c -> va.E() -> va$e -> repository.b.o(chatId, oldestRowId, 30)`. Current DB/WAL/SHM replay confirms raw/visible/tool page counts `30/7/23`, `30/3/27`, and `16/2/14`. User-authorized temporary module-only telemetry in PID `32576` captured valid guards, queries returning `30` then `16` rows, state growth `30 → 60 → 76`, cursor movement `1015862 → 1015832 → 1015816`, `hasMoreOlder=false` at the end, and marker clearing after viewport restoration to `firstIndex=9/10`. The concrete current cause of “loads nothing” is hidden tool rows plus anchor-preserving scroll restoration, not guard rejection, DB failure, or a stale marker. Temporary telemetry was removed, never published, and the exact stable APK was restored.
-- A later exact count proves the target database really contains only 76 rows (`rowId 1015816..1015891`, contiguous). The missing older history is upstream of pagination: host `repository.b.r` plus `c7.b` performs delete-all-then-insert-current-list. `va.K` launches an autosaver that polls every 120 ms and persists on a 400 ms interval; together with finalization, stop/cancel, stream-state completion, ViewModel destruction, stale-stream recovery, and user-tail rollback, seven paths can replace the chat with a partial `AiChatUiState.messages` list. The exact 12:19 caller was not logged, but database shape and all replacement call sites are documented. Current module source has no repository/StateFlow persistence path.
+- A later exact count proves the target database really contains only 76 rows (`rowId 1015816..1015891`, contiguous). The missing older history is upstream of pagination: host `repository.b.r` plus `c7.b` performs delete-all-then-insert-current-list. `va.K` launches an autosaver that polls every 120 ms and persists on a 400 ms interval; together with finalization, stop/cancel, stream-state completion, ViewModel destruction, stale-stream recovery, and user-tail rollback, seven paths can replace the chat with a partial `AiChatUiState.messages` list. The exact 12:19 caller was not logged, but database shape and all replacement call sites are documented. The feature branch now guards this save seam and has no host StateFlow/message replacement path.
 - Host content truncation is separate: tool execution output is capped at 4,000 characters, web page fetch defaults to 12,000 and clamps to 1,000–30,000, HTTP errors retain 500, and plugin diff previews retain 80 characters per side. No general message-count or token-budget truncation was found in the provider request path.
 
 ## Current host
@@ -80,7 +81,7 @@ The current update resolved provider `zj8`; the previous `d4eb3066...f5d56` host
 
 ## Next action
 
-Replace the private AAPT2 APK-container workaround when an arm64-compatible AGP 9.3 AAPT2 is available.
+Run final focused checks, commit `feature/host-history-retention-hooks`, and push it after the user-accepted enabled-mode and navigation evidence. Replace the private AAPT2 APK-container workaround later when an arm64-compatible AGP 9.3 AAPT2 is available.
 
 ## Constraints
 

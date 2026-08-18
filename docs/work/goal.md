@@ -4,6 +4,10 @@
 - Updated: 2026-08-18
 - Purpose: define the single active outcome and its acceptance boundary.
 
+## Current feature branch
+
+This branch adds an opt-in host-history retention Hook. It intercepts `repository.b.r(chatId, currentList)`, verifies that `repository.b.i(chatId)` returned the same number of rows as `c7.o(chatId)`, merges persisted messages with the current UI list by message ID, and passes the complete list to the host's existing save path. If ABI discovery, database verification, parsing, or message IDs are ambiguous, the Hook skips the destructive save. The native settings page exposes `保留历史消息`, enabled by default and disabled only when the Hook is unavailable. This is targeted history preservation, not context compression or host message-state replacement.
+
 ## Current incident extension
 
 The current acceptance target additionally includes the host conversation failure reported as HTTP 502 `No tool call found for function call output...` and HTTP 400 `Upstream request failed`. The target is met only when the malformed host history is proven, the module repairs it at the outbound JSON boundary without host persistence/state hooks, the affected conversation succeeds on the installed module, and the Chinese Markdown report is current.
@@ -25,7 +29,7 @@ Ship a cache-focused LSPilot LSPosed module that adapts conservatively to the cu
 ## Out of scope
 
 - Context compression, summaries, compacted baselines, compression status rows, chat overlays, or compression settings.
-- Automatic retry, host message-list replacement, or host repository persistence.
+- Automatic retry, host message-list replacement, and unguarded host repository persistence. The targeted opt-in history-retention guard on this feature branch is in scope.
 - Patching, rebuilding, signing, or installing the host APK.
 - Guessing hook endpoints from strings alone.
 
@@ -40,5 +44,5 @@ Ship a cache-focused LSPilot LSPosed module that adapts conservatively to the cu
 - `ToolCallSanitizerCheck` passes on Dalvik, the final installed artifact logs `Tool-call context repaired changes=12` in the affected conversation and succeeds, and the host database remains intact and unmodified by the module.
 - Stable module `1.7.5 (67)` is hash-verified, installed, and startup-verified against the current host after the repair; source, APK, runtime, and documentation audits have no unresolved required item.
 - The 76-row UI pagination trace captures valid guards, two successful `repository.b.o` queries, state growth `30 → 60 → 76`, cursor movement, and marker clearing; temporary telemetry is absent from source and the installed stable APK.
-- A current DB snapshot proves 76 is the persisted total, and host Smali proves partial `AiChatUiState.messages` can replace all chat rows through `repository.b.r -> c7.b`; the exact historic caller is stated only within the available evidence.
+- The feature-branch history-retention Hook is statically verified, installed as a module-only candidate, and manually tested with the switch enabled plus non-destructive switch persistence while disabled. Enabled mode preserves rows outside the current UI page across two saves; disabled mode leaves the host path at direct `chain.proceed()` and is not exercised with a destructive real long-chat write. The module-settings sentinel route does not reuse host `Route.LogViewer`, and back navigation returns to host settings.
 - Documentation distinguishes session-entry `LIMIT 30`, current-state request serialization, cursor pagination, seven full-list replacement paths, and tool-content character caps without claiming a provider-level fixed 30-message or token-budget truncation.

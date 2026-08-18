@@ -55,6 +55,8 @@ public final class HostNativeSettingsAbiCheck {
         Object moduleRoute = HostNativeSettings.rewriteNavigationRoute(about);
         assertTrue(moduleRoute != about && HostNativeSettings.isModuleRoute(moduleRoute),
                 "module click must receive a dedicated sentinel route");
+        assertTrue(moduleRoute.getClass() != realLog.getClass(),
+                "module route must not reuse the host LogViewer route class");
         assertSame(about, HostNativeSettings.rewriteNavigationRoute(about),
                 "route rewrite must be one-shot");
         HostNativeSettings.beginModuleNavigationForCheck();

@@ -6,10 +6,11 @@
 
 ## In progress
 
-- None.
+- [x] Implement and runtime-verify the opt-in host-history retention Hook. Static implementation intercepts `repository.b.r`, verifies the full persisted row count, merges by message ID, fails closed on ambiguity, exposes a default-enabled native `保留历史消息` switch, and leaves the disabled path at direct `chain.proceed()`. Java compilation, `HistoryRetentionCheck`, release assembly, lint, module-only installation, cold-start injection, two enabled-mode runtime saves (`76 → 98 → 110` with all prior IDs retained), and the settings back-navigation regression pass. The disabled destructive write path is intentionally not exercised on a real long chat.
 
 ## Next
 
+- [ ] Commit and push `feature/host-history-retention-hooks` after the recorded user acceptance.
 - [ ] Replace the private AAPT2 APK-container workaround when an arm64-compatible AGP 9.3 AAPT2 is available.
 
 ## Completed
@@ -36,7 +37,7 @@
 - [x] Pass release/lint, LSP, pi-lens, DEX marker, APK integrity/signature, and `NativeSettingsNavigationCheck` verification for the `preview.27` candidate.
 - [x] Publish and install `v1.7.4-preview.26`; verify SHA-256 across source, GitHub download, Termux-private stage, `/data/local/tmp`, and installed `base.apk`.
 - [x] Verify LSPosed state/scope/database integrity and two host cold starts: schema `7` rebuild followed by `cache_hit`, request/SSE/settings hooks installed, and no automatic-retry hook log.
-- [x] Remove automatic retry, host retry/session/stream/repository hooks, StateFlow message replacement, repository persistence, retry ABI discovery/cache fields, and retry-only tests.
+- [x] Remove automatic retry, host retry/session/stream hooks, StateFlow message replacement, unguarded repository persistence, retry ABI discovery/cache fields, and retry-only tests.
 - [x] Remove the 24-hour retention model-family whitelist; retain blank-model protection and explicit GPT-5.6 breakpoint precedence, then pass Java and Dalvik policy checks.
 - [x] Clear all three pi-lens `unsafe-reflection` warnings with equivalent non-initializing `ClassLoader.loadClass` calls; pass LSP, Java compilation, and focused Dalvik checks.
 - [x] Remove the `gpt-5.6-sol` reasoning-effort restriction for all non-empty model names; pass Java compilation and the Dalvik `ReasoningPolicy` check.

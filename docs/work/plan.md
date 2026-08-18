@@ -8,12 +8,15 @@
 
 Repository-side feature removal, package migration to `com.lspilot.enhancer`, conservative request/SSE ABI discovery, incident repair, and stable artifact verification are complete. Installed `1.7.5 (67)` includes request-local tool-call sanitization and the separate host-native Miuix settings page.
 
-The verified stable APK is installed as `com.lspilot.enhancer` and matches SHA-256 `5d8d3a50c8d21148fbb79e397d30490a58bd955d79096b649e37dd06aa9d9e01` (679,443 bytes). Cold-start evidence confirms `cache_hit`, `provider=zj8`, `requestBody=true`, `sseUsage=true`, and native settings hooks without automatic-retry installation or fatal/Compose errors.
+The verified feature candidate is installed as `com.lspilot.enhancer` and matches SHA-256 `52bd0aad6fd4dc13ea8d3cea1b906334a7a3d2126027a3e613c3088317db7fbe` (681,063 bytes). Cold start confirms request/SSE/history/settings hooks. The module-settings back-navigation regression is fixed by moving the sentinel route away from the host `eca$m` `Route.LogViewer` class to `eca$c`; the user confirmed return to host settings. Enabled history retention passed two real saves (`76 → 98 → 110`) with all prior message IDs preserved, no duplicate IDs, and no parse errors.
 
 Two cold starts passed: the first rebuilt the ABI descriptor for module version code `64`; the second logged `cache_hit`, `provider=zj8`, `requestBody=true`, `sseUsage=true`, and `Native host settings page hooks installed with AutoAwesome icon`. Neither start logged automatic-retry hook installation or native-settings hook failure.
 
 The formal GitHub Release `v1.7.5` is now published non-draft/non-prerelease with the named APK asset; its online SHA-256 matches the installed artifact.
 
+## Current feature branch
+
+`feature/host-history-retention-hooks` is implementing the first prevention step: a default-enabled native `保留历史消息` switch and a fail-closed Hook around `repository.b.r`. The Hook reads the current persisted list through `repository.b.i`, verifies its size against DAO `c7.o`, merges it with the partial UI list by message ID, and then allows the host's existing transactional replacement to proceed with the complete merged list. Setting off calls the original host method unchanged. Static code, focused merge check, release assembly, lint, module-only installation, cold-start injection, enabled-mode runtime acceptance, and the settings back-navigation regression pass. Enabled mode preserved all prior IDs across two saves; the disabled destructive write path is intentionally not exercised on a real long chat.
 
 ## Current incident repair
 
@@ -27,7 +30,7 @@ Stable module `1.7.5 (67)` is installed and startup-verified. Source/private/sta
 
 The separate chat-UI pager investigation is complete. Temporary user-authorized module-only telemetry captured two successful old-page loads in the 76-row chat: state changed `30 → 60 → 76`, cursors changed `1015862 → 1015832 → 1015816`, both guards passed, and the in-flight marker cleared after each scroll restoration. The visible symptom is caused by most loaded rows being hidden `role=tool` messages while `ka$d` restores the old viewport anchor; it is not a failed query or stale marker in this reproduction. Temporary telemetry was removed and the exact stable APK restored; no runtime pager hook remains in source or release artifacts.
 
-A fresh database count confirms 76 is the entire currently persisted chat, not a pagination cap. The missing older history is attributable to the host's full-list replacement design: streaming `va.K` starts `va$k`, which periodically persists partial `AiChatUiState.messages` through `repository.b.r`; DAO `c7.b` deletes all rows for the chat before inserting that current list. The database has 76 contiguous fresh row IDs, consistent with a batch rewrite. The exact historical caller among seven replacement paths was not runtime-captured, so no single path is overstated; current module code does not write host repository or message state.
+A fresh database count confirms 76 is the entire currently persisted chat, not a pagination cap. The missing older history is attributable to the host's full-list replacement design: streaming `va.K` starts `va$k`, which periodically persists partial `AiChatUiState.messages` through `repository.b.r`; DAO `c7.b` deletes all rows for the chat before inserting that current list. The database has 76 contiguous fresh row IDs, consistent with a batch rewrite. The exact historical caller among seven replacement paths was not runtime-captured, so no single path is overstated; the feature-branch module now guards the host repository save only through the opt-in retention Hook and does not replace host message state.
 
 The corrected request model is: `LIMIT 30` initializes the UI working set when a chat is entered; it is not rerun before each provider request. `va.P -> va.K -> va.w` sends the entire currently loaded state, so loading older pages first expands model-visible context. `zj8` performs no message-count/token trimming. Separately, stream autosave polls every 120 ms and saves on a 400 ms interval, and tool content has 4,000/12,000-character caps.
 

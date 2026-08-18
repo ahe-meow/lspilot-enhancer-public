@@ -15,6 +15,8 @@ import java.lang.reflect.Proxy;
 /** Bridges the module settings into the host's native Miuix Compose settings navigation. */
 final class HostNativeSettings {
     private static final String TITLE = "模型请求增强";
+    private static final String MODULE_ROUTE_CLASS = "eca$c";
+    private static final String LOG_ROUTE_CLASS = "eca$m";
     private static final String MODULE_ROUTE_SENTINEL = "__lspilot_enhancer_settings__";
     private static final String[] REASONING_LABELS = {
             "low", "medium", "high", "xhigh", "max", "ultra"
@@ -94,7 +96,7 @@ final class HostNativeSettings {
 
         Class<?> routeClass = hostLoader.loadClass("eca");
         Class<?> aboutRouteClass = hostLoader.loadClass("eca$a");
-        Class<?> moduleRouteClass = hostLoader.loadClass("eca$m");
+        Class<?> moduleRouteClass = hostLoader.loadClass(MODULE_ROUTE_CLASS);
         aboutRoute = singleton(aboutRouteClass, "INSTANCE");
         moduleRouteConstructor = moduleRouteClass.getDeclaredConstructor(String.class);
         moduleRouteConstructor.setAccessible(true);
@@ -264,7 +266,10 @@ final class HostNativeSettings {
     }
 
     static Object realLogRouteForCheck() throws Exception {
-        return moduleRouteConstructor.newInstance("me.yun.lspilot");
+        Class<?> logRouteClass = loader.loadClass(LOG_ROUTE_CLASS);
+        Constructor<?> constructor = logRouteClass.getDeclaredConstructor(String.class);
+        constructor.setAccessible(true);
+        return constructor.newInstance("me.yun.lspilot");
     }
 
     static void beginHostList() {
@@ -332,6 +337,8 @@ final class HostNativeSettings {
     private static void renderSettings(Object composer) throws Exception {
         renderSwitch(composer, ModuleSettings.KEY_ENABLED, "启用模型请求增强",
                 "关闭后保留 Hook，但不修改请求");
+        renderSwitch(composer, ModuleSettings.KEY_HISTORY_RETENTION, "保留历史消息",
+                "阻止宿主用未加载的部分列表覆盖旧历史");
         renderReasoning(composer);
         renderSwitch(composer, ModuleSettings.KEY_CACHE_KEY, "稳定缓存路由键",
                 "按模型与系统提示词生成无明文 prompt_cache_key");
@@ -429,6 +436,8 @@ final class HostNativeSettings {
     private static void syncStates() throws Exception {
         if (STATES.isEmpty()) {
             STATES.put(ModuleSettings.KEY_ENABLED, newState(ModuleSettings.isEnabled()));
+            STATES.put(ModuleSettings.KEY_HISTORY_RETENTION,
+                    newState(ModuleSettings.isHistoryRetentionEnabled()));
             STATES.put(ModuleSettings.KEY_CACHE_KEY, newState(ModuleSettings.isCacheKeyEnabled()));
             STATES.put(ModuleSettings.KEY_RETENTION, newState(ModuleSettings.isRetentionEnabled()));
             STATES.put(ModuleSettings.KEY_INCLUDE_USAGE,
@@ -441,6 +450,8 @@ final class HostNativeSettings {
             return;
         }
         setState(STATES.get(ModuleSettings.KEY_ENABLED), ModuleSettings.isEnabled());
+        setState(STATES.get(ModuleSettings.KEY_HISTORY_RETENTION),
+                ModuleSettings.isHistoryRetentionEnabled());
         setState(STATES.get(ModuleSettings.KEY_CACHE_KEY), ModuleSettings.isCacheKeyEnabled());
         setState(STATES.get(ModuleSettings.KEY_RETENTION), ModuleSettings.isRetentionEnabled());
         setState(STATES.get(ModuleSettings.KEY_INCLUDE_USAGE),

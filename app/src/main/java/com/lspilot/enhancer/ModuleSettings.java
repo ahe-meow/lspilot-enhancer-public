@@ -18,6 +18,7 @@ final class ModuleSettings {
     static final String KEY_CACHE_KEY = "cache_key_enabled";
     static final String KEY_RETENTION = "retention_enabled";
     static final String KEY_INCLUDE_USAGE = "include_usage_enabled";
+    static final String KEY_HISTORY_RETENTION = "history_retention_enabled";
     static final String KEY_REASONING_EFFORT = "reasoning_effort";
     static final String KEY_DEBUG_LOG = "debug_log_enabled";
     static final String KEY_VERBOSE_DEBUG_LOG = "verbose_debug_log_enabled";
@@ -71,6 +72,11 @@ final class ModuleSettings {
 
     static boolean isIncludeUsageEnabled() {
         return isSettingAvailable(KEY_INCLUDE_USAGE) && getBoolean(KEY_INCLUDE_USAGE, true);
+    }
+
+    static boolean isHistoryRetentionEnabled() {
+        return isSettingAvailable(KEY_HISTORY_RETENTION)
+                && getBoolean(KEY_HISTORY_RETENTION, true);
     }
 
     static String getReasoningEffort() {
@@ -132,6 +138,7 @@ final class ModuleSettings {
         appendUnavailable(result, "缓存路由键", KEY_CACHE_KEY);
         appendUnavailable(result, "缓存保留", KEY_RETENTION);
         appendUnavailable(result, "用量统计", KEY_INCLUDE_USAGE);
+        appendUnavailable(result, "历史消息保留", KEY_HISTORY_RETENTION);
         appendUnavailable(result, "推理强度", KEY_REASONING_EFFORT);
         return result.toString();
     }
@@ -192,6 +199,7 @@ final class ModuleSettings {
                 || KEY_CACHE_KEY.equals(key)
                 || KEY_RETENTION.equals(key)
                 || KEY_INCLUDE_USAGE.equals(key)
+                || KEY_HISTORY_RETENTION.equals(key)
                 || KEY_REASONING_EFFORT.equals(key);
     }
 
@@ -272,6 +280,7 @@ final class ModuleSettings {
             copyBoolean(remote, editor, KEY_CACHE_KEY);
             copyBoolean(remote, editor, KEY_RETENTION);
             copyBoolean(remote, editor, KEY_INCLUDE_USAGE);
+            copyBoolean(remote, editor, KEY_HISTORY_RETENTION);
             copyBoolean(remote, editor, KEY_DEBUG_LOG);
             copyBoolean(remote, editor, KEY_VERBOSE_DEBUG_LOG);
             copyString(remote, editor, KEY_REASONING_EFFORT);
@@ -294,6 +303,7 @@ final class ModuleSettings {
                 || preferences.contains(KEY_CACHE_KEY)
                 || preferences.contains(KEY_RETENTION)
                 || preferences.contains(KEY_INCLUDE_USAGE)
+                || preferences.contains(KEY_HISTORY_RETENTION)
                 || preferences.contains(KEY_DEBUG_LOG)
                 || preferences.contains(KEY_VERBOSE_DEBUG_LOG)
                 || preferences.contains(KEY_REASONING_EFFORT);
