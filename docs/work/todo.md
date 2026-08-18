@@ -6,7 +6,7 @@
 
 ## In progress
 
-- [ ] Directly distinguish pagination guard rejection, hidden successful loading, and a stale in-flight marker. The live matching-chat gesture capture proves the list responds and returns to the exact top UI hash, while DB replay proves 30 raw rows may yield only 3 visible bubbles; exact Compose state requires temporary read-only runtime telemetry, which is not added under the current no-runtime-modification constraint.
+- None.
 
 ## Next
 
@@ -14,8 +14,10 @@
 
 ## Completed
 
+- [x] Runtime-distinguish pagination guard rejection, hidden successful loading, and a stale in-flight marker. User-authorized temporary module telemetry captured `30 → 60 → 76` rows, both `repository.b.o` results, cursor movement, valid guards, scroll restoration, and marker clearing. The current incident is hidden tool rows plus anchor restoration, not a failed query or stale marker; temporary code was removed and stable `1.7.5 (67)` restored.
+
 - [x] Diagnose the host's orphan/incomplete tool-call windows, add request-boundary `ToolCallSanitizer`, and prove the final installed artifact repairs `changes=12` in the affected conversation with no new 400/502 log.
-- [x] Analyze the host chat UI history pager: exact top-trigger guards, `rowId` cursor query, silent parse/DB failures, hidden `role=tool` rows, and the likely stuck in-flight marker after an empty/error page; runtime confirmation remains separate.
+- [x] Analyze the host chat UI history pager: exact top-trigger guards, `rowId` cursor query, silent parse/DB failures, hidden `role=tool` rows, and the static stale-marker risk after an empty/error page; the successful live path was later runtime-confirmed separately.
 - [x] Record that the host's `LIMIT 30` runs during every request build, excludes older rows from that request without deleting them from `chat_message`, and can split tool-call groups; the chat UI uses a separate cursor pager rather than a proven shared query.
 - [x] Build/install stable `1.7.5 (67)`; verify source/private/staged/installed SHA-256 `5d8d3a50c8d21148fbb79e397d30490a58bd955d79096b649e37dd06aa9d9e01`, release/lint, Dalvik checks, APK integrity/signature, current-host ABI, and cold-start hooks.
 - [x] Write `docs/work/host-context-truncation-diagnosis.md` with the confirmed 502 root cause, bounded 400 evidence, repair design, and live validation result.

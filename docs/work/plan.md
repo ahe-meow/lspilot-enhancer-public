@@ -23,6 +23,10 @@ The active host incident is resolved at the shared outbound JSON boundary. The r
 
 Stable module `1.7.5 (67)` is installed and startup-verified. Source/private/staged/installed APKs all match SHA-256 `5d8d3a50c8d21148fbb79e397d30490a58bd955d79096b649e37dd06aa9d9e01` (679,443 bytes); release/lint, focused Dalvik checks, exact current-host ABI, APK integrity/signature, and request/SSE/settings startup hooks pass.
 
+## Pagination runtime diagnosis
+
+The separate chat-UI pager investigation is complete. Temporary user-authorized module-only telemetry captured two successful old-page loads in the 76-row chat: state changed `30 → 60 → 76`, cursors changed `1015862 → 1015832 → 1015816`, both guards passed, and the in-flight marker cleared after each scroll restoration. The visible symptom is caused by most loaded rows being hidden `role=tool` messages while `ka$d` restores the old viewport anchor; it is not a failed query or stale marker in this reproduction. Temporary telemetry was removed and the exact stable APK restored; no runtime pager hook remains in source or release artifacts.
+
 ## Execution order
 
 1. Remove context compression and automatic retry, including their hooks, host-state writes, persistence, tests, and current UI/docs.
