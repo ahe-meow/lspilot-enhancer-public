@@ -6,7 +6,7 @@
 
 ## In progress
 
-- None for the active incident repair.
+- [ ] Capture one live top-scroll attempt without restarting the host, then distinguish trigger failure, successful-but-mostly-hidden page, scroll restoration failure, and a stuck in-flight marker. The copied DB/WAL/SHM replay already proves page raw/visible/tool counts `30/7/23`, `30/3/27`, and `16/2/14`; live Compose state still requires the device to be unlocked on the affected chat.
 
 ## Next
 
