@@ -10,7 +10,9 @@ Repository-side feature removal, package migration to `com.lspilot.enhancer`, co
 
 The accepted candidate globally serializes enabled saves within the module process, lets host-save exceptions propagate outside the verification catch, keeps history retention enabled when an unrelated request Hook fails, and validates non-empty current message IDs even when the persisted row count is zero. Full release assembly and lint, focused debug/unit Java compilation, `HistoryRetentionCheck`, and `git diff --check` passed. A fresh post-fix reliability review returned `PASS` with no release blocker.
 
-Commit, tag, and GitHub Release publication are still pending. The last public stable release remains `v1.7.5`; exact accepted-candidate evidence is centralized in [findings.md](findings.md).
+Formal GitHub Release `v1.8.0` is published and online at <https://github.com/ahe-meow/lspilot-enhancer-public/releases/tag/v1.8.0> as a non-draft, non-prerelease release. Tag `v1.8.0` points to commit `5e62d81`, pushed on `feature/host-history-retention-hooks`; `main` was not merged or changed. The named APK asset is online and verified through the GitHub API endpoint against the accepted candidate; exact artifact evidence is centralized in [findings.md](findings.md). The browser-style asset URL briefly returned HTTP 404 during propagation, but the API asset was valid and the release is complete.
+
+The remaining next action is to replace the private AAPT2 APK-container workaround when a compatible AGP 9.3 arm64 AAPT2 becomes available.
 
 ## Current feature branch
 
@@ -34,10 +36,10 @@ The corrected request model is: `LIMIT 30` initializes the UI working set when a
 
 ## Release execution
 
-1. Commit the accepted source and canonical work-document updates on `feature/host-history-retention-hooks`.
-2. Push the feature branch. Do not merge `main`, per the user's explicit release choice.
-3. Create and push tag `v1.8.0` from the accepted feature-branch commit.
-4. Publish the GitHub Release with named asset `lspilot-enhancer-v1.8.0.apk`, then download or otherwise read back the online asset and verify SHA-256 `ab0153af67788aa4ba0ab9cc5bd6c76cd9a1cfd99d1cb7a7893d54692cce2d64`.
+1. [x] Commit the accepted source and canonical work-document updates on `feature/host-history-retention-hooks`.
+2. [x] Push the feature branch without merging `main`, per the user's explicit release choice.
+3. [x] Create and push tag `v1.8.0` from commit `5e62d81` on that feature branch.
+4. [x] Publish the GitHub Release with named asset `lspilot-enhancer-v1.8.0.apk`; the online asset is verified through the GitHub API endpoint against the accepted candidate. Exact size and SHA-256 are canonical in [findings.md](findings.md).
 
 ## Current host evidence
 

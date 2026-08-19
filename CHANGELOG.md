@@ -7,6 +7,8 @@
 - Serialize retention saves, keep host save exceptions visible, and keep history retention independent from unrelated request-hook failures.
 - Fix the native settings route so returning from the module page reaches host settings instead of the log viewer.
 
+## 1.7.5
+
 - Repair outbound tool-call history after the host's 30-message context window leaves orphan, delayed, duplicate, or incomplete assistant tool calls.
 - Keep the repair request-local; enforce contiguous completed tool-call groups, do not rewrite host chat history, and do not reintroduce automatic retry/repository persistence.
 

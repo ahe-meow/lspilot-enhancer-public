@@ -12,7 +12,11 @@ This branch adds an opt-in host-history retention Hook. It intercepts `repositor
 
 The user explicitly accepted the installed `v1.8.0 (68)` release candidate on 2026-08-19. The reliability review and build gates passed, so runtime acceptance is complete; exact artifact and verification evidence is recorded in [findings.md](findings.md).
 
-Publication has not started from the accepted source state. The active outcome is to commit the accepted source and documentation, push `feature/host-history-retention-hooks`, create and push tag `v1.8.0` from that feature-branch commit, publish the named APK asset, and verify its online SHA-256. The user explicitly chose not to merge `main`.
+Formal GitHub Release `v1.8.0` is published and online at <https://github.com/ahe-meow/lspilot-enhancer-public/releases/tag/v1.8.0> as a non-draft, non-prerelease release. Tag `v1.8.0` points to commit `5e62d81`, which is pushed on `feature/host-history-retention-hooks`; `main` was not merged or changed. The named `lspilot-enhancer-v1.8.0.apk` asset was downloaded and verified through the GitHub API endpoint against the accepted candidate; the exact size and SHA-256 are canonical in [findings.md](findings.md). The browser-style asset URL briefly returned HTTP 404 during propagation, but the API asset was valid, so publication is complete.
+
+## Remaining next action
+
+Replace the private AAPT2 APK-container workaround when a compatible AGP 9.3 arm64 AAPT2 becomes available.
 
 ## Current incident extension
 
@@ -51,5 +55,5 @@ Ship a cache-focused LSPilot LSPosed module that adapts conservatively to the cu
 - Stable module `1.7.5 (67)` is hash-verified, installed, and startup-verified against the current host after the repair; source, APK, runtime, and documentation audits have no unresolved required item.
 - The 76-row UI pagination trace captures valid guards, two successful `repository.b.o` queries, state growth `30 → 60 → 76`, cursor movement, and marker clearing; temporary telemetry is absent from source and the installed stable APK.
 - The feature-branch history-retention Hook is statically verified, installed as a module-only candidate, and manually tested with the switch enabled plus non-destructive switch persistence while disabled. Enabled mode preserves rows outside the current UI page across ordinary saves, a pagination-followed-by-save, a generation-stop save, and host re-entry; the target chat grew `76 → 98 → 110 → 112 → 116` with all prior IDs retained, no duplicates, and no parse errors. Disabled mode leaves the host path at direct `chain.proceed()` and is not exercised with a destructive real long-chat write. The module-settings sentinel route does not reuse host `Route.LogViewer`, and back navigation returns to host settings.
-- Accepted `v1.8.0 (68)` source and documentation are committed and pushed on the feature branch; tag `v1.8.0` is created and pushed from that branch without merging `main`; the named GitHub Release APK reproduces the accepted candidate's SHA-256.
+- Accepted `v1.8.0 (68)` source and documentation are committed and pushed on the feature branch; tag `v1.8.0` is created and pushed from that branch without merging `main`; the named GitHub Release APK is published and its online asset matches the accepted candidate. Exact artifact evidence is canonical in [findings.md](findings.md).
 - Documentation distinguishes session-entry `LIMIT 30`, current-state request serialization, cursor pagination, seven full-list replacement paths, and tool-content character caps without claiming a provider-level fixed 30-message or token-budget truncation.

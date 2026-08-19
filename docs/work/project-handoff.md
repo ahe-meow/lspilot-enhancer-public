@@ -7,13 +7,13 @@
 ## Repository
 
 - Branch: `feature/host-history-retention-hooks` (stable main baseline remains separate)
-- Last published stable release: `v1.7.5`; the earlier stable release commit/tag `23bbcbbe476cb2685d1f1d57121af480993ee049` / `v1.7.4` remains historical evidence.
+- Current formal release: `v1.8.0` is published as a non-draft/non-prerelease release at <https://github.com/ahe-meow/lspilot-enhancer-public/releases/tag/v1.8.0>. Tag `v1.8.0` points to commit `5e62d81` on `feature/host-history-retention-hooks`; `main` remains separate. Prior `v1.7.5` publication facts remain historical evidence below.
 - Inspect `git status` before changes and preserve unrelated tracked or untracked files.
 - Module package: `com.lspilot.enhancer`
 - Host package: `me.yun.lspilot`
 - Android treats the module identity as a new package. GitHub pre-release `v1.7.4-preview.27` is historical, published, and hash-verified.
 - The historical `v1.7.4-preview.27` install had the first host-native Miuix settings implementation; user testing found its hook targeted legacy `a2.f` instead of active Miuix `t1.J`, and its card was appended after the host bottom safe-area item.
-- Current installed module: accepted `com.lspilot.enhancer` `v1.8.0 (68)` release candidate, 681,195 bytes, SHA-256 `ab0153af67788aa4ba0ab9cc5bd6c76cd9a1cfd99d1cb7a7893d54692cce2d64`. Source build, private stage, and installed `base.apk` hashes match. It is not yet committed, tagged, or published as `v1.8.0`.
+- Current installed module: accepted `com.lspilot.enhancer` `v1.8.0 (68)` release candidate, 681,195 bytes. Source build, private stage, and installed `base.apk` hashes match; the exact candidate hash and release comparison are canonical in `docs/work/findings.md`. The formal GitHub Release is now published and its named online asset is verified through the GitHub API endpoint. The browser-style asset URL briefly returned HTTP 404 during propagation, but the verified API asset means publication is complete.
 
 ## Active objective
 
@@ -82,9 +82,7 @@ The current update resolved provider `zj8`; the previous `d4eb3066...f5d56` host
 
 ## Next action
 
-Commit the accepted source and canonical documentation, push `feature/host-history-retention-hooks`, create and push tag `v1.8.0` from that feature-branch commit, publish named asset `lspilot-enhancer-v1.8.0.apk`, and verify its online SHA-256 is `ab0153af67788aa4ba0ab9cc5bd6c76cd9a1cfd99d1cb7a7893d54692cce2d64`. Do not merge `main`; the user explicitly chose a feature-branch release.
-
-After publication, the remaining maintenance item is replacing the private AAPT2 APK-container workaround when an arm64-compatible AGP 9.3 AAPT2 is available.
+Replace the private AAPT2 APK-container workaround when a compatible AGP 9.3 arm64 AAPT2 becomes available.
 
 ## Constraints
 

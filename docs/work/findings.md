@@ -11,7 +11,9 @@
 - The candidate was built after four reliability fixes: enabled saves are globally serialized within the module process; the host save runs outside the verification catch so its exceptions propagate; an unrelated request Hook failure no longer disables history retention; and a non-empty current save validates message IDs even when the persisted row count is zero.
 - Full release assembly and lint passed. Focused debug/unit Java compilation, `HistoryRetentionCheck`, and `git diff --check` also passed.
 - A fresh post-fix reliability review returned `PASS` with no release blocker.
-- Commit, tag, and GitHub Release publication are not yet complete. Next: commit the accepted source/docs, push `feature/host-history-retention-hooks`, create and push tag `v1.8.0` from that branch, publish `lspilot-enhancer-v1.8.0.apk`, and verify the online asset reproduces the accepted hash. The user explicitly chose not to merge `main`.
+- Formal GitHub Release `v1.8.0` is published as non-draft/non-prerelease at <https://github.com/ahe-meow/lspilot-enhancer-public/releases/tag/v1.8.0>. Tag `v1.8.0` points to commit `5e62d81`, pushed on `feature/host-history-retention-hooks`; `main` was not merged or changed.
+- The online asset `lspilot-enhancer-v1.8.0.apk` is 681,195 bytes and matches the accepted source/build/installed SHA-256 recorded above. The GitHub API asset endpoint downloaded a valid ZIP/APK beginning `50 4b 03 04`; the browser-style asset URL temporarily returned HTTP 404 during propagation, but the API asset verified successfully and the release is complete.
+- Remaining next action: replace the private AAPT2 APK-container workaround when a compatible AGP 9.3 arm64 AAPT2 becomes available.
 
 ## Host-history retention feature branch — 2026-08-18
 
@@ -44,7 +46,7 @@
 
 ## Source state
 
-- Module identity uses `com.lspilot.enhancer`; the accepted `v1.8.0 (68)` candidate is installed. `v1.7.5` remains the last published stable release until the pending feature-branch release steps complete.
+- Module identity uses `com.lspilot.enhancer`; the accepted `v1.8.0 (68)` candidate is installed and the formal `v1.8.0` release is published and online asset-verified as recorded above. The prior `v1.7.5` release evidence remains historical below.
 - Context compression was explicitly removed from production source, chat UI, settings, tests, and active documentation.
 - Removed legacy preference keys and stored summary-record prefixes are cleaned from host-local module preferences during initialization; other settings are untouched.
 - Retained features are Prompt Cache policy, compatible retention, usage reporting, reasoning effort, diagnostics, and settings UI. Automatic retry and its host-context writes are removed from source and the installed artifact.
