@@ -1,12 +1,12 @@
 # Current todo
 
 - Status: current
-- Updated: 2026-08-18
+- Updated: 2026-08-19
 - Purpose: track the remaining work and acceptance evidence.
 
 ## In progress
 
-- [x] Implement and runtime-verify the opt-in host-history retention Hook. Static implementation intercepts `repository.b.r`, verifies the full persisted row count, merges by message ID, fails closed on ambiguity, exposes a default-enabled native `保留历史消息` switch, and leaves the disabled path at direct `chain.proceed()`. Java compilation, `HistoryRetentionCheck`, release assembly, lint, module-only installation, cold-start injection, two enabled-mode runtime saves (`76 → 98 → 110` with all prior IDs retained), settings back-navigation, pagination-followed-by-save (`110 → 112`), generation-stop save (`112 → 116`), and host re-entry (`116 → 116`) pass. No duplicate IDs or parse errors were observed. The disabled destructive write path is intentionally not exercised on a real long chat.
+- [ ] Publish the user-accepted `v1.8.0 (68)` release candidate from `feature/host-history-retention-hooks`. The installed 681,195-byte candidate and its private stage match SHA-256 `ab0153af67788aa4ba0ab9cc5bd6c76cd9a1cfd99d1cb7a7893d54692cce2d64`; release gates and the fresh reliability review pass. Remaining work is to commit the accepted source/docs, push the feature branch, create and push tag `v1.8.0` from it, publish `lspilot-enhancer-v1.8.0.apk`, and verify the online hash. Do not merge `main`.
 
 ## Next
 
@@ -14,6 +14,7 @@
 
 ## Completed
 
+- [x] Implement and runtime-verify the opt-in host-history retention Hook. Static implementation intercepts `repository.b.r`, verifies the full persisted row count, merges by message ID, fails closed on ambiguity, exposes a default-enabled native `保留历史消息` switch, and leaves the disabled path at direct `chain.proceed()`. Java compilation, `HistoryRetentionCheck`, release assembly, lint, module-only installation, cold-start injection, two enabled-mode runtime saves (`76 → 98 → 110` with all prior IDs retained), settings back-navigation, pagination-followed-by-save (`110 → 112`), generation-stop save (`112 → 116`), and host re-entry (`116 → 116`) pass. No duplicate IDs or parse errors were observed. The disabled destructive write path is intentionally not exercised on a real long chat.
 - [x] Runtime-distinguish pagination guard rejection, hidden successful loading, and a stale in-flight marker. User-authorized temporary module telemetry captured `30 → 60 → 76` rows, both `repository.b.o` results, cursor movement, valid guards, scroll restoration, and marker clearing. The current incident is hidden tool rows plus anchor restoration, not a failed query or stale marker; temporary code was removed and stable `1.7.5 (67)` restored.
 - [x] Confirm why pagination stops at 76: the target DB contains exactly 76 contiguous rows and no older/session-duplicate records; host `repository.b.r -> c7.b` deletes the chat and reinserts only the current in-memory list, while the streaming autosaver periodically passes partial paginated UI state. The exact historical replacement caller remains bounded because no write-time log was preserved.
 

@@ -29,6 +29,8 @@ public final class LSPilotEnhancerModule extends XposedModule {
     private static final String CACHE_NAMESPACE = "lspilot:v3:";
     private static final ThreadLocal<Boolean> NATIVE_ROUTE_REPLAYING = new ThreadLocal<>();
     private static final ThreadLocal<Boolean> NATIVE_TOP_BAR_REPLAYING = new ThreadLocal<>();
+    // ponytail: global lock is the ceiling; upgrade to keyed per-chat locks if contention matters.
+    private static final Object HISTORY_RETENTION_LOCK = new Object();
     private static volatile boolean reasoningDeltaNormalizedReported;
 
     private static final class StartupProbe {
@@ -278,48 +280,52 @@ public final class LSPilotEnhancerModule extends XposedModule {
                 if (!ModuleSettings.isHistoryRetentionEnabled()) {
                     return chain.proceed();
                 }
-                try {
-                    Object repository = chain.getThisObject();
-                    Object chatIdValue = chain.getArg(0);
-                    Object currentValue = chain.getArg(1);
-                    if (!(chatIdValue instanceof String) || !(currentValue instanceof java.util.List)) {
-                        log(Log.ERROR, TAG, "History retention skipped invalid save arguments");
-                        return null;
-                    }
-                    String chatId = (String) chatIdValue;
-                    java.util.List<?> current = (java.util.List<?>) currentValue;
-                    int rowCount = history.countRows(repository, chatId);
-                    java.util.List<?> persisted = history.readAll(repository, chatId);
-                    if (persisted == null || persisted.size() != rowCount) {
+                synchronized (HISTORY_RETENTION_LOCK) {
+                    Object[] saveArgs = null;
+                    try {
+                        Object repository = chain.getThisObject();
+                        Object chatIdValue = chain.getArg(0);
+                        Object currentValue = chain.getArg(1);
+                        if (!(chatIdValue instanceof String) || !(currentValue instanceof java.util.List)) {
+                            log(Log.ERROR, TAG, "History retention skipped invalid save arguments");
+                            return null;
+                        }
+                        String chatId = (String) chatIdValue;
+                        java.util.List<?> current = (java.util.List<?>) currentValue;
+                        int rowCount = history.countRows(repository, chatId);
+                        java.util.List<?> persisted = history.readAll(repository, chatId);
+                        if (!HistoryRetention.hasExpectedPersistedCount(persisted, rowCount)) {
+                            log(Log.ERROR, TAG,
+                                    "History retention blocked unsafe save persisted="
+                                            + (persisted == null ? -1 : persisted.size())
+                                            + " rows=" + rowCount);
+                            return null;
+                        }
+                        if (!(rowCount == 0 && current.isEmpty())) {
+                            Method idMethod = HostHistoryAbi.messageIdMethod(persisted, current);
+                            java.util.List<Object> merged = HistoryRetention.merge(
+                                    persisted, current, message -> {
+                                        Object value = idMethod.invoke(message);
+                                        return value instanceof String ? (String) value : null;
+                                    });
+                            if (merged == null) {
+                                log(Log.ERROR, TAG,
+                                        "History retention blocked ambiguous message IDs");
+                                return null;
+                            }
+                            saveArgs = chain.getArgs().toArray();
+                            saveArgs[1] = merged;
+                            log(Log.INFO, TAG, "History retention merged persisted="
+                                    + persisted.size() + " current=" + current.size()
+                                    + " saved=" + merged.size());
+                        }
+                    } catch (Throwable error) {
                         log(Log.ERROR, TAG,
-                                "History retention blocked unsafe save persisted="
-                                        + (persisted == null ? -1 : persisted.size())
-                                        + " rows=" + rowCount);
+                                "History retention blocked save after verification failure", error);
                         return null;
                     }
-                    if (rowCount == 0) {
-                        return chain.proceed();
-                    }
-                    Method idMethod = HostHistoryAbi.messageIdMethod(persisted, current);
-                    java.util.List<Object> merged = HistoryRetention.merge(
-                            persisted, current, message -> {
-                                Object value = idMethod.invoke(message);
-                                return value instanceof String ? (String) value : null;
-                            });
-                    if (merged == null) {
-                        log(Log.ERROR, TAG, "History retention blocked ambiguous message IDs");
-                        return null;
-                    }
-                    Object[] args = chain.getArgs().toArray();
-                    args[1] = merged;
-                    log(Log.INFO, TAG, "History retention merged persisted="
-                            + persisted.size() + " current=" + current.size()
-                            + " saved=" + merged.size());
-                    return chain.proceed(args);
-                } catch (Throwable error) {
-                    log(Log.ERROR, TAG,
-                            "History retention blocked save after verification failure", error);
-                    return null;
+                    // Keep host save exceptions visible; only verification failures fail closed.
+                    return saveArgs == null ? chain.proceed() : chain.proceed(saveArgs);
                 }
             });
             log(Log.INFO, TAG, "Host history retention hook installed for "
@@ -343,7 +349,6 @@ public final class LSPilotEnhancerModule extends XposedModule {
                     ModuleSettings.KEY_CACHE_KEY,
                     ModuleSettings.KEY_RETENTION,
                     ModuleSettings.KEY_INCLUDE_USAGE,
-                    ModuleSettings.KEY_HISTORY_RETENTION,
                     ModuleSettings.KEY_REASONING_EFFORT);
         }
         if (!sseUsageHook) {

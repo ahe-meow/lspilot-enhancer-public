@@ -1,8 +1,17 @@
 # Current findings
 
 - Status: current
-- Updated: 2026-08-18
+- Updated: 2026-08-19
 - Purpose: record current verified implementation and host compatibility facts.
+
+## Accepted v1.8.0 release candidate — 2026-08-19
+
+- The user explicitly accepted the installed `v1.8.0 (68)` release candidate on 2026-08-19.
+- Exact candidate/source build: `app/build/outputs/apk/release/app-release.apk`, 681,195 bytes, SHA-256 `ab0153af67788aa4ba0ab9cc5bd6c76cd9a1cfd99d1cb7a7893d54692cce2d64`. The private staging copy and installed `base.apk` produced the same hash.
+- The candidate was built after four reliability fixes: enabled saves are globally serialized within the module process; the host save runs outside the verification catch so its exceptions propagate; an unrelated request Hook failure no longer disables history retention; and a non-empty current save validates message IDs even when the persisted row count is zero.
+- Full release assembly and lint passed. Focused debug/unit Java compilation, `HistoryRetentionCheck`, and `git diff --check` also passed.
+- A fresh post-fix reliability review returned `PASS` with no release blocker.
+- Commit, tag, and GitHub Release publication are not yet complete. Next: commit the accepted source/docs, push `feature/host-history-retention-hooks`, create and push tag `v1.8.0` from that branch, publish `lspilot-enhancer-v1.8.0.apk`, and verify the online asset reproduces the accepted hash. The user explicitly chose not to merge `main`.
 
 ## Host-history retention feature branch — 2026-08-18
 
@@ -29,13 +38,13 @@
 - Content truncation is separate from row retention: `va.g` caps accumulated tool execution output at 4,000 characters; `WebSearchManager.fetchPage` defaults to 12,000 characters and clamps its argument to 1,000–30,000; HTTP error bodies keep 500 characters; plugin-edit diff previews keep 80 characters per side. No general message-count or token-budget truncation was found in `va.w`, `bb`, or `zj8`.
 - Added `ToolCallSanitizer` at the shared request-body hook. It removes orphan/duplicate tool outputs, drops assistant calls without outputs, preserves ordinary content, and never writes host state or the host database. It runs even when optional cache-policy settings are disabled so the structural safety invariant is independent of those settings.
 - `ToolCallSanitizerCheck` passes on Dalvik, including a replay of the observed four-orphan/6+8+8-call window. The installed candidate logged `Tool-call context repaired changes=4` while the user sent `ping` in the original affected chat; the request returned successfully, with no filtered 400/502/upstream error. A post-request SQLite snapshot remains `integrity_check=ok` and still contains the four orphan rows, proving request-local repair.
-- Stable module `1.7.5 (67)` is installed. Source APK, Termux-private stage, `/data/local/tmp`, and installed `base.apk` match SHA-256 `5d8d3a50c8d21148fbb79e397d30490a58bd955d79096b649e37dd06aa9d9e01` (679,443 bytes). Release/lint, Dalvik checks, current-host native-settings ABI, APK structure/signature, and cold-start hook checks pass.
+- Before the accepted `v1.8.0` candidate was installed, stable module `1.7.5 (67)` was installed. Source APK, Termux-private stage, `/data/local/tmp`, and installed `base.apk` matched SHA-256 `5d8d3a50c8d21148fbb79e397d30490a58bd955d79096b649e37dd06aa9d9e01` (679,443 bytes). Release/lint, Dalvik checks, current-host native-settings ABI, APK structure/signature, and cold-start hook checks passed.
 - Final installed-artifact verification: PID 9774 loaded `1.7.5 (67)`, the original affected chat logged `Tool-call context repaired changes=12`, normal request enhancement, and completed usage (`35374` input / `742` output / `36116` total); the user received a successful response and the captured window contained no HTTP 400/502/upstream error.
 - Formal GitHub Release `v1.7.5` is published as non-draft/non-prerelease at <https://github.com/ahe-meow/lspilot-enhancer-public/releases/tag/v1.7.5>. Asset `lspilot-enhancer-v1.7.5.apk` is 679,443 bytes and matches the installed/source SHA-256 above.
 
 ## Source state
 
-- Module identity uses `com.lspilot.enhancer`; stable `1.7.5 (67)` is installed, enabled, and scoped to `me.yun.lspilot` in LSPosed.
+- Module identity uses `com.lspilot.enhancer`; the accepted `v1.8.0 (68)` candidate is installed. `v1.7.5` remains the last published stable release until the pending feature-branch release steps complete.
 - Context compression was explicitly removed from production source, chat UI, settings, tests, and active documentation.
 - Removed legacy preference keys and stored summary-record prefixes are cleaned from host-local module preferences during initialization; other settings are untouched.
 - Retained features are Prompt Cache policy, compatible retention, usage reporting, reasoning effort, diagnostics, and settings UI. Automatic retry and its host-context writes are removed from source and the installed artifact.

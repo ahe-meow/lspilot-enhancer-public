@@ -42,6 +42,10 @@ final class HistoryRetention {
         return result;
     }
 
+    static boolean hasExpectedPersistedCount(List<?> persisted, int rowCount) {
+        return persisted != null && rowCount >= 0 && persisted.size() == rowCount;
+    }
+
     private static String normalize(String value) {
         if (value == null) return null;
         String normalized = value.trim();

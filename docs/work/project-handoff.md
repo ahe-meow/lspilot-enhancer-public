@@ -1,19 +1,19 @@
 # Project handoff
 
 - Status: current
-- Updated: 2026-08-18
+- Updated: 2026-08-19
 - Purpose: let the next agent resume without reconstructing host identity or removed feature scope.
 
 ## Repository
 
 - Branch: `feature/host-history-retention-hooks` (stable main baseline remains separate)
-- Stable release commit/tag: `23bbcbbe476cb2685d1f1d57121af480993ee049` / `v1.7.4`
+- Last published stable release: `v1.7.5`; the earlier stable release commit/tag `23bbcbbe476cb2685d1f1d57121af480993ee049` / `v1.7.4` remains historical evidence.
 - Inspect `git status` before changes and preserve unrelated tracked or untracked files.
 - Module package: `com.lspilot.enhancer`
 - Host package: `me.yun.lspilot`
-- Android treats the module identity as a new package. GitHub pre-release `v1.7.4-preview.27` is published, installed, enabled, scoped, and hash-verified.
-- Installed `v1.7.4-preview.27` has the first host-native Miuix settings implementation; user testing found its hook targeted legacy `a2.f` instead of active Miuix `t1.J`, and its card was appended after the host bottom safe-area item.
-- Current stable module: `com.lspilot.enhancer` `1.7.5 (67)`, installed and hash-verified at `5d8d3a50c8d21148fbb79e397d30490a58bd955d79096b649e37dd06aa9d9e01` (679,443 bytes). It is the repaired request-boundary build; the public `v1.7.4` release remains historical and is not the installed artifact.
+- Android treats the module identity as a new package. GitHub pre-release `v1.7.4-preview.27` is historical, published, and hash-verified.
+- The historical `v1.7.4-preview.27` install had the first host-native Miuix settings implementation; user testing found its hook targeted legacy `a2.f` instead of active Miuix `t1.J`, and its card was appended after the host bottom safe-area item.
+- Current installed module: accepted `com.lspilot.enhancer` `v1.8.0 (68)` release candidate, 681,195 bytes, SHA-256 `ab0153af67788aa4ba0ab9cc5bd6c76cd9a1cfd99d1cb7a7893d54692cce2d64`. Source build, private stage, and installed `base.apk` hashes match. It is not yet committed, tagged, or published as `v1.8.0`.
 
 ## Active objective
 
@@ -23,7 +23,8 @@ Preserve conservative request/SSE DEX adaptation, unique coherent candidate sele
 
 ## Active incident handoff
 
-- Active feature branch: `feature/host-history-retention-hooks` adds a default-enabled native `保留历史消息` setting and hooks `repository.b.r(String,List):void`. It verifies `b.i(chatId).size()` against DAO `c7.o(chatId)`, merges persisted and current messages by `u7.f()`, and skips the host save on any verification ambiguity. The switch off-path calls the host method unchanged. Static checks, module-only install, cold-start injection, two enabled-mode saves, pagination-followed-by-save, generation-stop save, host re-entry, and back-navigation acceptance pass: the target grew `76 → 98 → 110 → 112 → 116` while all prior IDs survived with no duplicates or parse errors. The route sentinel was moved from host `eca$m` `Route.LogViewer` to `eca$c`; the user confirmed return to host settings. Disabled-mode write behavior is intentionally not exercised on a real long chat. Commit `6d8e9fd` is pushed; subsequent acceptance evidence is documented locally.
+- Active feature branch: `feature/host-history-retention-hooks` adds a default-enabled native `保留历史消息` setting and hooks `repository.b.r(String,List):void`. It verifies `b.i(chatId).size()` against DAO `c7.o(chatId)`, merges persisted and current messages by `u7.f()`, and skips the host save on any verification ambiguity. The switch off-path calls the host method unchanged. Static checks, module-only install, cold-start injection, two enabled-mode saves, pagination-followed-by-save, generation-stop save, host re-entry, and back-navigation acceptance pass: the target grew `76 → 98 → 110 → 112 → 116` while all prior IDs survived with no duplicates or parse errors. The route sentinel was moved from host `eca$m` `Route.LogViewer` to `eca$c`; the user confirmed return to host settings. Disabled-mode write behavior is intentionally not exercised on a real long chat. Earlier commit `6d8e9fd` is pushed; the accepted reliability fixes and documentation remain in the pending release source state.
+- Accepted reliability state: enabled saves are serialized globally within the module process; host-save exceptions propagate outside verification; request Hook failure is isolated from history retention; and non-empty zero-persisted-row saves still validate IDs. Full release assembly/lint, focused Java compilation, `HistoryRetentionCheck`, `git diff --check`, and a fresh reliability review pass with no release blocker. The user explicitly accepted installed `v1.8.0 (68)` on 2026-08-19.
 - Diagnosis: entering/switching a chat initializes `AiChatUiState.messages` from the newest 30 raw DB rows; this boundary can start with four orphan `role=tool` outputs. Sending does not requery a fixed 30: `va.P -> va.K -> va.w` passes the entire current UI working set to `zj8`, whose provider serialization has no count/token cap. `va.x` only adds cancellation outputs for declared-but-missing calls and leaves orphans, producing the reported 502. The 400 wrapper is high-probability related but lacks a preserved request body for direct proof.
 - Fix: `app/src/main/java/com/lspilot/enhancer/ToolCallSanitizer.java` runs at the shared request JSON boundary in both minified request hook paths. It removes invalid tool fragments without touching host persistence/UI/retry behavior.
 - Live evidence: the original affected chat accepted `ping` on the final installed artifact; PID 9774 logged `Tool-call context repaired changes=12`, normal request enhancement, and completed usage (`35374` input / `742` output / `36116` total) with no 400/502/upstream error. The host DB stayed `integrity_check=ok`.
@@ -81,7 +82,9 @@ The current update resolved provider `zj8`; the previous `d4eb3066...f5d56` host
 
 ## Next action
 
-The feature work and runtime acceptance are complete. The remaining maintenance item is replacing the private AAPT2 APK-container workaround when an arm64-compatible AGP 9.3 AAPT2 is available.
+Commit the accepted source and canonical documentation, push `feature/host-history-retention-hooks`, create and push tag `v1.8.0` from that feature-branch commit, publish named asset `lspilot-enhancer-v1.8.0.apk`, and verify its online SHA-256 is `ab0153af67788aa4ba0ab9cc5bd6c76cd9a1cfd99d1cb7a7893d54692cce2d64`. Do not merge `main`; the user explicitly chose a feature-branch release.
+
+After publication, the remaining maintenance item is replacing the private AAPT2 APK-container workaround when an arm64-compatible AGP 9.3 AAPT2 is available.
 
 ## Constraints
 

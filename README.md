@@ -11,6 +11,7 @@ An LSPosed module for `me.yun.lspilot` that adds request-level caching, usage re
 - Requests streaming usage data and records redacted cache-token metrics.
 - Adds selectable reasoning effort to every named model request and normalizes compatible reasoning SSE fields.
 - Adds a separate `Rounded.AutoAwesome` entry and native Miuix settings page inside the host settings navigation.
+- Protects persisted host chat history with an enabled-by-default `保留历史消息` setting; partial UI saves are merged with verified persisted rows and unsafe/ambiguous saves fail closed.
 - Resolves minified host endpoints with conservative `DexFile` structural discovery and rejects ambiguous candidates.
 - Detects host APK content changes at startup, invalidates stale ABI mappings, and re-adapts before installing cache hooks.
 - Caches validated ABI descriptors by host APK and split-APK content hashes.

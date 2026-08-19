@@ -1,12 +1,18 @@
 # Current goal
 
 - Status: current
-- Updated: 2026-08-18
+- Updated: 2026-08-19
 - Purpose: define the single active outcome and its acceptance boundary.
 
 ## Current feature branch
 
 This branch adds an opt-in host-history retention Hook. It intercepts `repository.b.r(chatId, currentList)`, verifies that `repository.b.i(chatId)` returned the same number of rows as `c7.o(chatId)`, merges persisted messages with the current UI list by message ID, and passes the complete list to the host's existing save path. If ABI discovery, database verification, parsing, or message IDs are ambiguous, the Hook skips the destructive save. The native settings page exposes `保留历史消息`, enabled by default and disabled only when the Hook is unavailable. This is targeted history preservation, not context compression or host message-state replacement.
+
+## Current release gate
+
+The user explicitly accepted the installed `v1.8.0 (68)` release candidate on 2026-08-19. The reliability review and build gates passed, so runtime acceptance is complete; exact artifact and verification evidence is recorded in [findings.md](findings.md).
+
+Publication has not started from the accepted source state. The active outcome is to commit the accepted source and documentation, push `feature/host-history-retention-hooks`, create and push tag `v1.8.0` from that feature-branch commit, publish the named APK asset, and verify its online SHA-256. The user explicitly chose not to merge `main`.
 
 ## Current incident extension
 
@@ -45,4 +51,5 @@ Ship a cache-focused LSPilot LSPosed module that adapts conservatively to the cu
 - Stable module `1.7.5 (67)` is hash-verified, installed, and startup-verified against the current host after the repair; source, APK, runtime, and documentation audits have no unresolved required item.
 - The 76-row UI pagination trace captures valid guards, two successful `repository.b.o` queries, state growth `30 → 60 → 76`, cursor movement, and marker clearing; temporary telemetry is absent from source and the installed stable APK.
 - The feature-branch history-retention Hook is statically verified, installed as a module-only candidate, and manually tested with the switch enabled plus non-destructive switch persistence while disabled. Enabled mode preserves rows outside the current UI page across ordinary saves, a pagination-followed-by-save, a generation-stop save, and host re-entry; the target chat grew `76 → 98 → 110 → 112 → 116` with all prior IDs retained, no duplicates, and no parse errors. Disabled mode leaves the host path at direct `chain.proceed()` and is not exercised with a destructive real long-chat write. The module-settings sentinel route does not reuse host `Route.LogViewer`, and back navigation returns to host settings.
+- Accepted `v1.8.0 (68)` source and documentation are committed and pushed on the feature branch; tag `v1.8.0` is created and pushed from that branch without merging `main`; the named GitHub Release APK reproduces the accepted candidate's SHA-256.
 - Documentation distinguishes session-entry `LIMIT 30`, current-state request serialization, cursor pagination, seven full-list replacement paths, and tool-content character caps without claiming a provider-level fixed 30-message or token-budget truncation.

@@ -1,22 +1,20 @@
 # Current plan
 
 - Status: current
-- Updated: 2026-08-18
-- Purpose: define the ordered path from the current repository state to runtime acceptance.
+- Updated: 2026-08-19
+- Purpose: define the ordered path from the current repository state to release publication.
 
 ## Current phase
 
-Repository-side feature removal, package migration to `com.lspilot.enhancer`, conservative request/SSE ABI discovery, incident repair, and stable artifact verification are complete. Installed `1.7.5 (67)` includes request-local tool-call sanitization and the separate host-native Miuix settings page.
+Repository-side feature removal, package migration to `com.lspilot.enhancer`, conservative request/SSE ABI discovery, incident repair, history-retention reliability work, and local release verification are complete. The user explicitly accepted the installed `v1.8.0 (68)` candidate on 2026-08-19.
 
-The verified feature candidate is installed as `com.lspilot.enhancer` and matches SHA-256 `52bd0aad6fd4dc13ea8d3cea1b906334a7a3d2126027a3e613c3088317db7fbe` (681,063 bytes). Cold start confirms request/SSE/history/settings hooks. The module-settings back-navigation regression is fixed by moving the sentinel route away from the host `eca$m` `Route.LogViewer` class to `eca$c`; the user confirmed return to host settings. Enabled history retention passed two real saves (`76 → 98 → 110`) with all prior message IDs preserved, no duplicate IDs, and no parse errors.
+The accepted candidate globally serializes enabled saves within the module process, lets host-save exceptions propagate outside the verification catch, keeps history retention enabled when an unrelated request Hook fails, and validates non-empty current message IDs even when the persisted row count is zero. Full release assembly and lint, focused debug/unit Java compilation, `HistoryRetentionCheck`, and `git diff --check` passed. A fresh post-fix reliability review returned `PASS` with no release blocker.
 
-Two cold starts passed: the first rebuilt the ABI descriptor for module version code `64`; the second logged `cache_hit`, `provider=zj8`, `requestBody=true`, `sseUsage=true`, and `Native host settings page hooks installed with AutoAwesome icon`. Neither start logged automatic-retry hook installation or native-settings hook failure.
-
-The formal GitHub Release `v1.7.5` is now published non-draft/non-prerelease with the named APK asset; its online SHA-256 matches the installed artifact.
+Commit, tag, and GitHub Release publication are still pending. The last public stable release remains `v1.7.5`; exact accepted-candidate evidence is centralized in [findings.md](findings.md).
 
 ## Current feature branch
 
-`feature/host-history-retention-hooks` has completed the first prevention step: a default-enabled native `保留历史消息` switch and a fail-closed Hook around `repository.b.r`. The Hook reads the current persisted list through `repository.b.i`, verifies its size against DAO `c7.o`, merges it with the partial UI list by message ID, and then allows the host's existing transactional replacement to proceed with the complete merged list. Setting off calls the original host method unchanged. Static code, focused merge check, release assembly, lint, module-only installation, cold-start injection, settings back-navigation, two ordinary enabled-mode saves, pagination-followed-by-save, stop/cancel save, and host re-entry all pass. The target chat grew `76 → 98 → 110 → 112 → 116` while every prior ID remained present; the disabled destructive write path is intentionally not exercised on a real long chat.
+`feature/host-history-retention-hooks` now contains the accepted release source: a default-enabled native `保留历史消息` switch and a fail-closed Hook around `repository.b.r`. The Hook reads the current persisted list through `repository.b.i`, verifies its size against DAO `c7.o`, merges it with the partial UI list by message ID, and then allows the host's existing transactional replacement to proceed with the complete merged list. Setting off calls the original host method unchanged. Static checks, module-only installation, cold-start injection, settings back-navigation, two ordinary enabled-mode saves, pagination-followed-by-save, stop/cancel save, host re-entry, and the post-fix reliability review all pass. The target chat grew `76 → 98 → 110 → 112 → 116` while every prior ID remained present; the disabled destructive write path is intentionally not exercised on a real long chat.
 
 ## Current incident repair
 
@@ -34,18 +32,12 @@ A fresh database count confirms 76 is the entire currently persisted chat, not a
 
 The corrected request model is: `LIMIT 30` initializes the UI working set when a chat is entered; it is not rerun before each provider request. `va.P -> va.K -> va.w` sends the entire currently loaded state, so loading older pages first expands model-visible context. `zj8` performs no message-count/token trimming. Separately, stream autosave polls every 120 ms and saves on a 400 ms interval, and tool content has 4,000/12,000-character caps.
 
-## Execution order
+## Release execution
 
-1. Remove context compression and automatic retry, including their hooks, host-state writes, persistence, tests, and current UI/docs.
-2. Keep request/SSE and settings-entry ABI discovery only; reject ambiguous request candidates.
-3. Cache validated request/SSE descriptors by APK content hash and scanner schema.
-4. Keep focused request-policy, scanner ambiguity, cache invalidation, prompt-cache, and reasoning checks.
-5. Run release verification, build the migrated package, and verify APK package metadata and integrity.
-6. Install the new package, enable it, scope it to `me.yun.lspilot`, and verify two cold starts.
-7. Manually verify cache request mutation, usage reporting, and settings.
-8. Capture the host's malformed tool-call window read-only and prove the orphan sequence with a red/green structural validator.
-9. Repair the sequence at the shared request-body boundary, add a minimal Dalvik regression check, and verify the current host ABI remains intact.
-10. Install the repaired module, validate the original affected conversation, record the Chinese diagnosis, then rebuild/install the stable artifact and run final source/runtime gates.
+1. Commit the accepted source and canonical work-document updates on `feature/host-history-retention-hooks`.
+2. Push the feature branch. Do not merge `main`, per the user's explicit release choice.
+3. Create and push tag `v1.8.0` from the accepted feature-branch commit.
+4. Publish the GitHub Release with named asset `lspilot-enhancer-v1.8.0.apk`, then download or otherwise read back the online asset and verify SHA-256 `ab0153af67788aa4ba0ab9cc5bd6c76cd9a1cfd99d1cb7a7893d54692cce2d64`.
 
 ## Current host evidence
 

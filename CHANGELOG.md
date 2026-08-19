@@ -1,8 +1,11 @@
 # Changelog
 
-## Unreleased
+## 1.8.0
 
-## 1.7.5
+- Add an enabled-by-default `保留历史消息` hook that merges persisted host messages with the current partial UI list before full-list saves.
+- Fail closed on database count mismatches, inaccessible history, blank or duplicate message IDs, and ambiguous host history ABIs; preserve the host save path when the setting is disabled.
+- Serialize retention saves, keep host save exceptions visible, and keep history retention independent from unrelated request-hook failures.
+- Fix the native settings route so returning from the module page reaches host settings instead of the log viewer.
 
 - Repair outbound tool-call history after the host's 30-message context window leaves orphan, delayed, duplicate, or incomplete assistant tool calls.
 - Keep the repair request-local; enforce contiguous completed tool-call groups, do not rewrite host chat history, and do not reintroduce automatic retry/repository persistence.
