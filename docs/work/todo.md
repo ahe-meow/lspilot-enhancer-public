@@ -6,11 +6,10 @@
 
 ## In progress
 
-- [x] Implement and runtime-verify the opt-in host-history retention Hook. Static implementation intercepts `repository.b.r`, verifies the full persisted row count, merges by message ID, fails closed on ambiguity, exposes a default-enabled native `保留历史消息` switch, and leaves the disabled path at direct `chain.proceed()`. Java compilation, `HistoryRetentionCheck`, release assembly, lint, module-only installation, cold-start injection, two enabled-mode runtime saves (`76 → 98 → 110` with all prior IDs retained), and the settings back-navigation regression pass. The disabled destructive write path is intentionally not exercised on a real long chat.
+- [x] Implement and runtime-verify the opt-in host-history retention Hook. Static implementation intercepts `repository.b.r`, verifies the full persisted row count, merges by message ID, fails closed on ambiguity, exposes a default-enabled native `保留历史消息` switch, and leaves the disabled path at direct `chain.proceed()`. Java compilation, `HistoryRetentionCheck`, release assembly, lint, module-only installation, cold-start injection, two enabled-mode runtime saves (`76 → 98 → 110` with all prior IDs retained), settings back-navigation, pagination-followed-by-save (`110 → 112`), generation-stop save (`112 → 116`), and host re-entry (`116 → 116`) pass. No duplicate IDs or parse errors were observed. The disabled destructive write path is intentionally not exercised on a real long chat.
 
 ## Next
 
-- [ ] Commit and push `feature/host-history-retention-hooks` after the recorded user acceptance.
 - [ ] Replace the private AAPT2 APK-container workaround when an arm64-compatible AGP 9.3 AAPT2 is available.
 
 ## Completed
