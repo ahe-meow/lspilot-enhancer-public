@@ -52,45 +52,73 @@ public final class HookArgumentContractCheck {
     private static void assertRequestInstallableGuards() {
         try {
             Method guard = RequestPolicyHook.class.getDeclaredMethod(
-                    "isInstallable", HostAbi.RequestCapability.class);
+                    "isInstallable", HostAbi.RequestCapability.class,
+                    HostAbi.ReasoningCapability.class);
             Assert.assertFalse("isInstallable must be package-visible",
                     Modifier.isPrivate(guard.getModifiers())
                             || Modifier.isProtected(guard.getModifiers())
                             || Modifier.isPublic(guard.getModifiers()));
 
-            Method currentGeneric = GuardFixtures.class.getDeclaredMethod(
-                    "requestCurrentGeneric", GuardFixtures.vb.class, List.class,
+            HostAbi.ReasoningCapability reasoning = newReasoningCapability();
+            Method unknownGeneric = GuardFixtures.class.getDeclaredMethod(
+                    "requestWithUnknownTypes", GuardFixtures.ProviderQ.class, List.class,
+                    String.class, boolean.class, String.class, GuardFixtures.ModeR.class);
+            Method unknownThinking = GuardFixtures.class.getDeclaredMethod(
+                    "thinkingWithUnknownTypes", GuardFixtures.ProviderQ.class, List.class,
+                    String.class, GuardFixtures.ModeR.class);
+            Method wrongFinal = GuardFixtures.class.getDeclaredMethod(
+                    "requestWithWrongFinalEnum", GuardFixtures.ProviderQ.class, List.class,
                     String.class, boolean.class, String.class, GuardFixtures.a69.class);
-            Method staleGeneric = GuardFixtures.class.getDeclaredMethod(
-                    "requestStaleGeneric", GuardFixtures.wb.class, List.class,
-                    String.class, boolean.class, String.class, GuardFixtures.oi9.class);
             Method staticMethod = GuardFixtures.class.getDeclaredMethod(
-                    "requestStatic", GuardFixtures.vb.class, List.class,
-                    String.class, boolean.class, String.class, GuardFixtures.a69.class);
+                    "requestStaticWithUnknownTypes", GuardFixtures.ProviderQ.class, List.class,
+                    String.class, boolean.class, String.class, GuardFixtures.ModeR.class);
             Method wrongReturn = GuardFixtures.class.getDeclaredMethod(
-                    "requestWrongReturn", GuardFixtures.vb.class, List.class,
-                    String.class, boolean.class, String.class, GuardFixtures.a69.class);
+                    "requestWrongReturnWithUnknownTypes", GuardFixtures.ProviderQ.class,
+                    List.class, String.class, boolean.class, String.class,
+                    GuardFixtures.ModeR.class);
+            Method wrongPositions = GuardFixtures.class.getDeclaredMethod(
+                    "requestWithWrongParameterPositions", GuardFixtures.ProviderQ.class,
+                    String.class, List.class, boolean.class, String.class,
+                    GuardFixtures.ModeR.class);
 
+            Assert.assertTrue("unknown request types must be accepted",
+                    invokeRequestInstallable(new HostAbi.RequestCapability(
+                            unknownGeneric, RequestJsonPolicy.ProviderKind.GENERIC), reasoning));
+            Assert.assertTrue("unknown thinking types must be accepted",
+                    invokeRequestInstallable(new HostAbi.RequestCapability(
+                            unknownThinking, RequestJsonPolicy.ProviderKind.THINKING), reasoning));
+            Assert.assertFalse("wrong final enum must be rejected",
+                    invokeRequestInstallable(new HostAbi.RequestCapability(
+                            wrongFinal, RequestJsonPolicy.ProviderKind.GENERIC), reasoning));
+            Assert.assertFalse("static methods must be rejected",
+                    invokeRequestInstallable(new HostAbi.RequestCapability(
+                            staticMethod, RequestJsonPolicy.ProviderKind.GENERIC), reasoning));
+            Assert.assertFalse("wrong return types must be rejected",
+                    invokeRequestInstallable(new HostAbi.RequestCapability(
+                            wrongReturn, RequestJsonPolicy.ProviderKind.GENERIC), reasoning));
+            Assert.assertFalse("wrong parameter positions must be rejected",
+                    invokeRequestInstallable(new HostAbi.RequestCapability(
+                            wrongPositions, RequestJsonPolicy.ProviderKind.GENERIC), reasoning));
             Assert.assertFalse(invokeRequestInstallable(new HostAbi.RequestCapability(
-                    staleGeneric, RequestJsonPolicy.ProviderKind.GENERIC)));
-            Assert.assertFalse(invokeRequestInstallable(new HostAbi.RequestCapability(
-                    staticMethod, RequestJsonPolicy.ProviderKind.GENERIC)));
-            Assert.assertFalse(invokeRequestInstallable(new HostAbi.RequestCapability(
-                    wrongReturn, RequestJsonPolicy.ProviderKind.GENERIC)));
-            Assert.assertFalse(invokeRequestInstallable(new HostAbi.RequestCapability(
-                    currentGeneric, RequestJsonPolicy.ProviderKind.UNKNOWN)));
-            Assert.assertFalse(invokeRequestInstallable(null));
+                    unknownGeneric, RequestJsonPolicy.ProviderKind.UNKNOWN), reasoning));
+            Assert.assertFalse(invokeRequestInstallable(null, reasoning));
+            Assert.assertFalse(invokeRequestInstallable(
+                    new HostAbi.RequestCapability(
+                            unknownGeneric, RequestJsonPolicy.ProviderKind.GENERIC), null));
         } catch (Exception exception) {
             throw new AssertionError("request installer guard fixture failed", exception);
         }
     }
 
-    private static boolean invokeRequestInstallable(HostAbi.RequestCapability capability)
+    private static boolean invokeRequestInstallable(
+            HostAbi.RequestCapability capability,
+            HostAbi.ReasoningCapability reasoningCapability)
             throws Exception {
         Method guard = RequestPolicyHook.class.getDeclaredMethod(
-                "isInstallable", HostAbi.RequestCapability.class);
+                "isInstallable", HostAbi.RequestCapability.class,
+                HostAbi.ReasoningCapability.class);
         guard.setAccessible(true);
-        return ((Boolean) guard.invoke(null, capability)).booleanValue();
+        return ((Boolean) guard.invoke(null, capability, reasoningCapability)).booleanValue();
     }
 
     private static void assertHostValueRewritesGenericRequest() {
@@ -182,18 +210,8 @@ public final class HookArgumentContractCheck {
 
     private static HostAbi.ReasoningCapability newReasoningCapability() throws Exception {
         Method getter = FakeHostRepository.class.getDeclaredMethod("getReasoning");
-        for (Constructor<?> constructor : HostAbi.ReasoningCapability.class
-                .getDeclaredConstructors()) {
-            Class<?>[] parameters = constructor.getParameterTypes();
-            if (parameters.length == 2
-                    && parameters[0] == Method.class
-                    && parameters[1] == Constructor.class) {
-                constructor.setAccessible(true);
-                Constructor<?> repository = FakeHostRepository.class.getDeclaredConstructor();
-                return (HostAbi.ReasoningCapability) constructor.newInstance(getter, repository);
-            }
-        }
-        throw new AssertionError("host reasoning capability constructor is missing");
+        Constructor<?> repository = FakeHostRepository.class.getDeclaredConstructor();
+        return new HostAbi.ReasoningCapability(getter, repository, GuardFixtures.ModeR.class);
     }
 
     private static void assertRequestNonStringFallbackAndSingleProceed() {
@@ -283,6 +301,13 @@ public final class HookArgumentContractCheck {
     }
 
     private static final class GuardFixtures {
+        private static final class ProviderQ {
+        }
+
+        private enum ModeR {
+            OFF, AUTO, LOW, MEDIUM, HIGH, MAX
+        }
+
         private static final class vb {
         }
 
@@ -295,6 +320,40 @@ public final class HookArgumentContractCheck {
         private static final class oi9 {
         }
 
+        String requestWithUnknownTypes(
+                ProviderQ provider, List<?> messages, String model, boolean stream,
+                String ignored, ModeR mode) {
+            return "{}";
+        }
+
+        String thinkingWithUnknownTypes(
+                ProviderQ provider, List<?> messages, String model, ModeR mode) {
+            return "{}";
+        }
+
+        String requestWithWrongFinalEnum(
+                ProviderQ provider, List<?> messages, String model, boolean stream,
+                String ignored, a69 mode) {
+            return "{}";
+        }
+
+        static String requestStaticWithUnknownTypes(
+                ProviderQ provider, List<?> messages, String model, boolean stream,
+                String ignored, ModeR mode) {
+            return "{}";
+        }
+
+        int requestWrongReturnWithUnknownTypes(
+                ProviderQ provider, List<?> messages, String model, boolean stream,
+                String ignored, ModeR mode) {
+            return model == null ? 0 : model.length();
+        }
+
+        String requestWithWrongParameterPositions(
+                ProviderQ provider, String model, List<?> messages, boolean stream,
+                String ignored, ModeR mode) {
+            return "{}";
+        }
         String requestCurrentGeneric(
                 vb provider, List<?> messages, String model, boolean stream,
                 String effort, a69 reasoning) {

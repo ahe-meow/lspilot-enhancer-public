@@ -582,27 +582,13 @@ final class DexKitAbiScanner {
             if (prerequisite == null || prerequisite.enumClass == null) {
                 return new CapabilityResolution<HostAbi.RequestCapability>(null, 0);
             }
-            Class<?> providerClass = loadHostClass(loader, TYPE_PROVIDER);
             Class<?> reasoningClass = prerequisite.enumClass;
-            if (providerClass == null || reasoningClass == null) {
-                return new CapabilityResolution<HostAbi.RequestCapability>(null, 0);
-            }
-            String[] parameterNames = new String[]{
-                    TYPE_PROVIDER, TYPE_LIST, TYPE_STRING, "boolean", TYPE_STRING,
-                    reasoningClass.getName()};
-            Class<?>[] parameterTypes = new Class<?>[]{
-                    providerClass, List.class, String.class, boolean.class,
-                    String.class, reasoningClass};
-            List<Method> candidates = queryExactMethods(
-                    bridge,
-                    loader,
-                    TYPE_STRING,
-                    false,
-                    parameterNames,
-                    parameterTypes,
-                    "reasoning_effort",
-                    "messages",
-                    "stream");
+            MethodMatcher genericMatcher = new MethodMatcher()
+                    .returnType(String.class)
+                    .paramCount(6)
+                    .usingEqStrings("reasoning_effort", "messages", "stream");
+            List<Method> candidates = queryRequestMethods(
+                    bridge, loader, genericMatcher, reasoningClass, true);
             Method method = (Method) chooseUnique("genericRequest", candidates);
             if (method == null) {
                 return new CapabilityResolution<HostAbi.RequestCapability>(
@@ -623,25 +609,13 @@ final class DexKitAbiScanner {
             if (prerequisite == null || prerequisite.enumClass == null) {
                 return new CapabilityResolution<HostAbi.RequestCapability>(null, 0);
             }
-            Class<?> providerClass = loadHostClass(loader, TYPE_PROVIDER);
             Class<?> reasoningClass = prerequisite.enumClass;
-            if (providerClass == null || reasoningClass == null) {
-                return new CapabilityResolution<HostAbi.RequestCapability>(null, 0);
-            }
-            String[] parameterNames = new String[]{
-                    TYPE_PROVIDER, TYPE_LIST, TYPE_STRING, reasoningClass.getName()};
-            Class<?>[] parameterTypes = new Class<?>[]{
-                    providerClass, List.class, String.class, reasoningClass};
-            List<Method> candidates = queryExactMethods(
-                    bridge,
-                    loader,
-                    TYPE_STRING,
-                    false,
-                    parameterNames,
-                    parameterTypes,
-                    "max_tokens",
-                    "thinking",
-                    "budget_tokens");
+            MethodMatcher thinkingMatcher = new MethodMatcher()
+                    .returnType(String.class)
+                    .paramCount(4)
+                    .usingEqStrings("max_tokens", "thinking", "budget_tokens");
+            List<Method> candidates = queryRequestMethods(
+                    bridge, loader, thinkingMatcher, reasoningClass, false);
             Method method = (Method) chooseUnique("thinkingRequest", candidates);
             if (method == null) {
                 return new CapabilityResolution<HostAbi.RequestCapability>(
@@ -656,58 +630,98 @@ final class DexKitAbiScanner {
         }
     }
 
-    private static List<Method> queryExactMethods(
-            DexKitBridge bridge,
-            ClassLoader loader,
-            String returnTypeName,
-            boolean staticExpected,
-            String[] parameterNames,
-            Class<?>[] parameterTypes,
-            String... usingStrings) {
-        MethodMatcher matcher = new MethodMatcher()
-                .returnType(returnTypeName)
-                .paramTypes(parameterNames);
-        if (usingStrings != null && usingStrings.length > 0) {
-            matcher.usingEqStrings(usingStrings);
-        }
-        return queryExactMethods(
-                bridge, loader, matcher, loadType(loader, returnTypeName), staticExpected,
-                parameterNames, parameterTypes);
-    }
-
-    private static List<Method> queryExactMethods(
+    private static List<Method> queryRequestMethods(
             DexKitBridge bridge,
             ClassLoader loader,
             MethodMatcher matcher,
-            Class<?> returnType,
-            boolean staticExpected,
-            String[] parameterNames,
-            Class<?>[] parameterTypes,
-            String... requiredInvokeDescriptors) {
-        if (returnType == null || parameterNames == null || parameterTypes == null
-                || parameterNames.length != parameterTypes.length) {
+            Class<?> reasoningClass,
+            boolean generic) {
+        if (bridge == null || loader == null || matcher == null || reasoningClass == null) {
             return new ArrayList<Method>();
         }
         try {
             List<MethodData> data = queryMethodData(bridge, new FindMethod().matcher(matcher));
             List<Method> methods = new ArrayList<Method>();
             for (MethodData methodData : data) {
-                if (!matchesExactMetadata(
-                        methodData, returnTypeName(returnType), staticExpected, parameterNames)
-                        || !hasAllInvokeDescriptors(methodData, requiredInvokeDescriptors)) {
+                if (!matchesRequestMetadata(methodData, loader, reasoningClass, generic)) {
                     continue;
                 }
                 Method method = reflectMethod(methodData, loader);
-                if (method == null) {
-                    continue;
+                if (method != null
+                        && matchesRequestReflection(method, reasoningClass, generic)) {
+                    methods.add(method);
                 }
-                methods.addAll(filterMethods(
-                        Collections.singletonList(method), returnType, staticExpected, parameterTypes));
             }
             return methods;
         } catch (Throwable ignored) {
             return new ArrayList<Method>();
         }
+    }
+
+    private static boolean matchesRequestMetadata(
+            MethodData methodData,
+            ClassLoader loader,
+            Class<?> reasoningClass,
+            boolean generic) {
+        if (methodData == null || loader == null || reasoningClass == null) {
+            return false;
+        }
+        try {
+            if (loadType(loader, methodData.getReturnTypeName()) != String.class
+                    || Modifier.isStatic(methodData.getModifiers())) {
+                return false;
+            }
+            int expectedCount = generic ? 6 : 4;
+            if (methodData.getParamCount() != expectedCount) {
+                return false;
+            }
+            List<String> parameterNames = methodData.getParamTypeNames();
+            if (parameterNames == null || parameterNames.size() != expectedCount) {
+                return false;
+            }
+            Class<?> providerClass = loadType(loader, parameterNames.get(0));
+            if (providerClass == null || providerClass.isPrimitive()
+                    || !matchesMetadataType(loader, parameterNames, 1, List.class)
+                    || !matchesMetadataType(loader, parameterNames, 2, String.class)) {
+                return false;
+            }
+            if (generic
+                    && (!matchesMetadataType(loader, parameterNames, 3, boolean.class)
+                    || !matchesMetadataType(loader, parameterNames, 4, String.class))) {
+                return false;
+            }
+            return matchesMetadataType(
+                    loader, parameterNames, expectedCount - 1, reasoningClass);
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    private static boolean matchesMetadataType(
+            ClassLoader loader, List<String> parameterNames, int index, Class<?> expected) {
+        if (loader == null || parameterNames == null || expected == null
+                || index < 0 || index >= parameterNames.size()) {
+            return false;
+        }
+        Class<?> actual = loadType(loader, parameterNames.get(index));
+        return actual == expected;
+    }
+
+    private static boolean matchesRequestReflection(
+            Method method, Class<?> reasoningClass, boolean generic) {
+        if (method == null || reasoningClass == null
+                || Modifier.isStatic(method.getModifiers())
+                || method.getReturnType() != String.class) {
+            return false;
+        }
+        Class<?>[] actual = method.getParameterTypes();
+        int expectedCount = generic ? 6 : 4;
+        if (actual.length != expectedCount || actual[0].isPrimitive()
+                || actual[1] != List.class || actual[2] != String.class
+                || actual[actual.length - 1] != reasoningClass) {
+            return false;
+        }
+        return !generic || (actual[3] == boolean.class && actual[4] == String.class);
     }
 
     private static List<Method> queryMethodsInClass(

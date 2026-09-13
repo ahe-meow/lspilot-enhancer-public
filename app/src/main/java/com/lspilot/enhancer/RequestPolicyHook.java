@@ -3,6 +3,7 @@ package com.lspilot.enhancer;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
+import java.util.List;
 
 /** Applies the current host reasoning policy at one provider JSON seam. */
 public final class RequestPolicyHook {
@@ -18,15 +19,20 @@ public final class RequestPolicyHook {
                 || registry == null || registry.isClosed()) {
             return;
         }
-        if (!isInstallable(capability) || !isReadable(reasoningCapability)) {
+        if (!isInstallable(capability, reasoningCapability)
+                || !isReadable(reasoningCapability)) {
             return;
         }
         RequestPolicyHookApi.install(capability, reasoningCapability, registry);
     }
 
-    static boolean isInstallable(HostAbi.RequestCapability capability) {
+    static boolean isInstallable(
+            HostAbi.RequestCapability capability,
+            HostAbi.ReasoningCapability reasoningCapability) {
         if (capability == null || capability.method == null || capability.providerKind == null
-                || capability.providerKind == RequestJsonPolicy.ProviderKind.UNKNOWN) {
+                || capability.providerKind == RequestJsonPolicy.ProviderKind.UNKNOWN
+                || reasoningCapability == null || reasoningCapability.reasoningEnumClass == null
+                || !reasoningCapability.reasoningEnumClass.isEnum()) {
             return false;
         }
         if (Modifier.isStatic(capability.method.getModifiers())
@@ -34,18 +40,17 @@ public final class RequestPolicyHook {
             return false;
         }
 
-        String[] expected = capability.providerKind == RequestJsonPolicy.ProviderKind.GENERIC
-                ? new String[]{
-                        "vb", "java.util.List", "java.lang.String", "boolean",
-                        "java.lang.String", "a69"}
-                : new String[]{
-                        "vb", "java.util.List", "java.lang.String", "a69"};
+        Class<?>[] stableTypes = capability.providerKind == RequestJsonPolicy.ProviderKind.GENERIC
+                ? new Class<?>[]{List.class, String.class, boolean.class, String.class}
+                : new Class<?>[]{List.class, String.class};
         Class<?>[] actual = capability.method.getParameterTypes();
-        if (actual.length != expected.length) {
+        if (actual.length != stableTypes.length + 2
+                || actual[0].isPrimitive()
+                || actual[actual.length - 1] != reasoningCapability.reasoningEnumClass) {
             return false;
         }
-        for (int i = 0; i < expected.length; i++) {
-            if (!expected[i].equals(actual[i].getName())) {
+        for (int i = 0; i < stableTypes.length; i++) {
+            if (actual[i + 1] != stableTypes[i]) {
                 return false;
             }
         }

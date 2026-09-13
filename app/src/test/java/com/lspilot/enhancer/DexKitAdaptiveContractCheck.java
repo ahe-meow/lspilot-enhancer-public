@@ -28,6 +28,7 @@ public final class DexKitAdaptiveContractCheck {
         assertAmbiguousResourceGetterSelection();
         assertReasoningCapabilityCarriesEnumClass();
         assertScannerUsesNoFixedEnumLookups();
+        assertRequestDiscoveryUsesStructuralMatchers();
     }
 
     private static void assertStructuralEnumPredicate() {
@@ -130,6 +131,48 @@ public final class DexKitAdaptiveContractCheck {
                     source.contains("getDeclaredMethod(\"m\")"));
         } catch (Exception exception) {
             throw new AssertionError("scanner source contract failed", exception);
+        }
+    }
+
+    private static void assertRequestDiscoveryUsesStructuralMatchers() {
+        try {
+            String scannerSource = readSource(
+                    "app/src/main/java/com/lspilot/enhancer/DexKitAbiScanner.java");
+            Assert.assertTrue("generic request query must use a broad return matcher",
+                    scannerSource.contains("MethodMatcher genericMatcher"));
+            Assert.assertTrue("generic request query must use parameter count",
+                    scannerSource.contains(".paramCount(6)"));
+            Assert.assertTrue("thinking request query must use parameter count",
+                    scannerSource.contains(".paramCount(4)"));
+            Assert.assertTrue("request query must match JSON literals",
+                    scannerSource.contains(
+                            "usingEqStrings(\"reasoning_effort\", \"messages\", \"stream\")"));
+            Assert.assertTrue("thinking query must match JSON literals",
+                    scannerSource.contains(
+                            "usingEqStrings(\"max_tokens\", \"thinking\", \"budget_tokens\")"));
+            Assert.assertTrue("request metadata must inspect parameter positions",
+                    scannerSource.contains("getParamTypeNames()"));
+            Assert.assertTrue("request metadata must reject primitive providers",
+                    scannerSource.contains("isPrimitive()"));
+            Assert.assertTrue("request candidates must be unique per capability",
+                    scannerSource.contains("chooseUnique(\"genericRequest\"")
+                            && scannerSource.contains("chooseUnique(\"thinkingRequest\""));
+            Assert.assertFalse("request discovery must not use fixed provider parameter names",
+                    scannerSource.contains("parameterNames = new String[]{\n                    TYPE_PROVIDER"));
+
+            String hookSource = readSource(
+                    "app/src/main/java/com/lspilot/enhancer/RequestPolicyHook.java");
+            Assert.assertTrue("installer must receive the reasoning capability",
+                    hookSource.contains(
+                            "isInstallable(capability, reasoningCapability)"));
+            Assert.assertTrue("installer must compare the final discovered enum type",
+                    hookSource.contains("actual[actual.length - 1]"));
+            Assert.assertFalse("installer must not compare the fixed provider type",
+                    hookSource.contains("\"vb\""));
+            Assert.assertFalse("installer must not compare the fixed reasoning type",
+                    hookSource.contains("\"a69\""));
+        } catch (Exception exception) {
+            throw new AssertionError("type-driven request discovery contract failed", exception);
         }
     }
 
