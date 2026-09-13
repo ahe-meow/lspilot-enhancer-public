@@ -1,19 +1,76 @@
 package com.lspilot.enhancer;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 import java.io.File;
+import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
+import java.nio.file.attribute.BasicFileAttributes;
+import java.nio.file.attribute.FileTime;
 import java.util.Arrays;
 import java.util.Collections;
 
 import org.junit.Test;
 
 public final class HostApkFingerprintCheck {
+    @Test
+    public void sameSizeRewriteIsRejectedByStabilityGuard() throws Exception {
+        File apk = File.createTempFile("host-stability", ".apk");
+        try {
+            Files.write(apk.toPath(), new byte[]{1, 2, 3, 4});
+            Files.setLastModifiedTime(apk.toPath(), FileTime.fromMillis(1000L));
+            HostApkFingerprint.Snapshot before = snapshot(apk);
+
+            Files.write(apk.toPath(), new byte[]{4, 3, 2, 1});
+            Files.setLastModifiedTime(apk.toPath(), FileTime.fromMillis(2000L));
+            HostApkFingerprint.Snapshot between = snapshot(apk);
+            HostApkFingerprint.Snapshot after = snapshot(apk);
+
+            assertFalse(HostApkFingerprint.isStableSnapshot(
+                    before, between, after, "same-digest", "same-digest"));
+        } finally {
+            assertTrue(apk.delete());
+        }
+    }
+
+    @Test
+    public void differingContentDigestsAreRejectedByStabilityGuard() {
+        HostApkFingerprint.Snapshot snapshot = new HostApkFingerprint.Snapshot(
+                true, 4L, FileTime.fromMillis(1000L), "identity");
+        assertFalse(HostApkFingerprint.isStableSnapshot(
+                snapshot, snapshot, snapshot, "digest-a", "digest-b"));
+    }
+
+    @Test
+    public void unreadableSourceDisablesFingerprintingWhenReadPermissionIsRemoved() throws Exception {
+        File unreadable = File.createTempFile("host-unreadable", ".apk");
+        try {
+            Files.write(unreadable.toPath(), new byte[]{1});
+            unreadable.setReadable(false, false);
+            if (!unreadable.canRead()) {
+                assertNull(HostApkFingerprint.compute(
+                        Collections.singletonList(unreadable.getAbsolutePath())));
+            }
+        } finally {
+            unreadable.setReadable(true, false);
+            assertTrue(unreadable.delete());
+        }
+    }
+
+    private static HostApkFingerprint.Snapshot snapshot(File file) throws IOException {
+        BasicFileAttributes attributes = Files.readAttributes(
+                file.toPath(), BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+        return new HostApkFingerprint.Snapshot(
+                attributes.isRegularFile(), attributes.size(),
+                attributes.lastModifiedTime(), attributes.fileKey());
+    }
+
     @Test
     public void changedPrimaryOrSplitBytesChangeTheFingerprint() throws Exception {
         File primary = File.createTempFile("host-primary", ".apk");
