@@ -29,6 +29,7 @@ public final class DexKitAdaptiveContractCheck {
         assertReasoningCapabilityCarriesEnumClass();
         assertScannerUsesNoFixedEnumLookups();
         assertMenuCallerRequiresBothInvokes();
+        assertMenuResolverSelectionUsesCallerEvidence();
         assertRequestDiscoveryUsesStructuralMatchers();
         assertMenuDiscoveryUsesStructuralCallers();
     }
@@ -200,6 +201,20 @@ public final class DexKitAdaptiveContractCheck {
                     hookSource.contains("\"a69\""));
         } catch (Exception exception) {
             throw new AssertionError("type-driven request discovery contract failed", exception);
+        }
+    }
+
+    private static void assertMenuResolverSelectionUsesCallerEvidence() {
+        try {
+            String scannerSource = readSource(
+                    "app/src/main/java/com/lspilot/enhancer/DexKitAbiScanner.java");
+            String normalizedSource = scannerSource.replaceAll("\\s+", "");
+            int callerEvidence = normalizedSource.indexOf("getCallers()");
+            int rawSelection = normalizedSource.indexOf("chooseUnique(\"menuResolver\"");
+            Assert.assertTrue("menu resolver uniqueness must be decided after caller evidence",
+                    callerEvidence >= 0 && rawSelection >= 0 && callerEvidence < rawSelection);
+        } catch (Exception exception) {
+            throw new AssertionError("menu resolver selection contract failed", exception);
         }
     }
 

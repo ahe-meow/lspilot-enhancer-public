@@ -486,96 +486,111 @@ final class DexKitAbiScanner {
             List<MenuResolverCandidate> resolverCandidates =
                     new ArrayList<MenuResolverCandidate>();
             for (MethodData data : resolverData) {
-                if (!matchesMenuResolverMetadata(data, loader)) {
-                    continue;
+                try {
+                    if (!matchesMenuResolverMetadata(data, loader)) {
+                        continue;
+                    }
+                    Method method = reflectMethod(data, loader);
+                    if (matchesMenuResolverReflection(method)) {
+                        resolverCandidates.add(new MenuResolverCandidate(data, method));
+                    }
+                } catch (Throwable ignored) {
+                    // An invalid resolver candidate must not suppress other candidates.
                 }
-                Method method = reflectMethod(data, loader);
-                if (matchesMenuResolverReflection(method)) {
-                    resolverCandidates.add(new MenuResolverCandidate(data, method));
-                }
-            }
-            MenuResolverCandidate resolver = (MenuResolverCandidate) chooseUnique(
-                    "menuResolver", resolverCandidates);
-            if (resolver == null) {
-                return new CapabilityResolution<HostAbi.MenuCapability>(
-                        null, resolverCandidates.size());
             }
 
             Class<?> enumClass = prerequisite.enumClass;
-            String resolverDescriptor = resolver.data.getDescriptor();
             String resourceDescriptor = prerequisite.resourceIdDescriptor;
-            if (resolverDescriptor == null || resourceDescriptor == null) {
-                return new CapabilityResolution<HostAbi.MenuCapability>(null, 0);
-            }
-            MethodDataList callerData = resolver.data.getCallers();
             Class<?> unitClass = loadHostClass(loader, TYPE_KOTLIN_UNIT);
-            if (callerData == null || unitClass == null) {
+            if (resourceDescriptor == null || unitClass == null) {
                 return new CapabilityResolution<HostAbi.MenuCapability>(null, 0);
             }
 
-            List<Method> menuMethods = new ArrayList<Method>();
-            List<Method> buttonMethods = new ArrayList<Method>();
-            for (MethodData data : callerData) {
-                if (!matchesMenuCallerMetadata(
-                        data, loader, enumClass, resolverDescriptor, resourceDescriptor)) {
-                    continue;
-                }
-                Method method = reflectMethod(data, loader);
-                if (!matchesMenuCallerReflection(method, enumClass)) {
-                    continue;
-                }
-                if (method.getReturnType() == unitClass) {
-                    menuMethods.add(method);
-                } else if (method.getReturnType() == void.class) {
-                    buttonMethods.add(method);
-                }
-            }
-            Method menuMethod = (Method) chooseUnique("menuCaller", menuMethods);
-            Method buttonMethod = (Method) chooseUnique("buttonCaller", buttonMethods);
-            int callerCount = Math.max(menuMethods.size(), buttonMethods.size());
-            if (menuMethod == null || buttonMethod == null) {
-                return new CapabilityResolution<HostAbi.MenuCapability>(null, callerCount);
-            }
-            int buttonEnumIndex = enumParameterIndex(buttonMethod, enumClass);
-            if (buttonEnumIndex < 0) {
-                return new CapabilityResolution<HostAbi.MenuCapability>(null, 0);
-            }
+            List<HostAbi.MenuCapability> completeCandidates =
+                    new ArrayList<HostAbi.MenuCapability>();
+            for (MenuResolverCandidate resolver : resolverCandidates) {
+                try {
+                    String resolverDescriptor = resolver.data.getDescriptor();
+                    if (resolverDescriptor == null) {
+                        continue;
+                    }
+                    MethodDataList callerData = resolver.data.getCallers();
+                    if (callerData == null) {
+                        continue;
+                    }
 
-            Method resourceId = prerequisite.resourceIdGetter;
-            resourceId.setAccessible(true);
-            Map<Integer, String> labels = new HashMap<Integer, String>();
-            Object[] constants = enumClass.getEnumConstants();
-            if (constants == null || constants.length != ReasoningPolicy.SUPPORTED.length) {
-                return new CapabilityResolution<HostAbi.MenuCapability>(null, 0);
-            }
-            for (Object constant : constants) {
-                if (!(constant instanceof Enum<?>)) {
-                    return new CapabilityResolution<HostAbi.MenuCapability>(null, 0);
-                }
-                Object id = resourceId.invoke(constant);
-                String display = ReasoningPolicy.fromHostEnumName(
-                        ((Enum<?>) constant).name());
-                if (!(id instanceof Integer)
-                        || labels.put((Integer) id, display) != null) {
-                    return new CapabilityResolution<HostAbi.MenuCapability>(null, 0);
-                }
-            }
-            if (labels.size() != ReasoningPolicy.SUPPORTED.length) {
-                return new CapabilityResolution<HostAbi.MenuCapability>(null, 0);
-            }
+                    List<Method> menuMethods = new ArrayList<Method>();
+                    List<Method> buttonMethods = new ArrayList<Method>();
+                    for (MethodData data : callerData) {
+                        if (!matchesMenuCallerMetadata(
+                                data, loader, enumClass, resolverDescriptor, resourceDescriptor)) {
+                            continue;
+                        }
+                        Method method = reflectMethod(data, loader);
+                        if (!matchesMenuCallerReflection(method, enumClass)) {
+                            continue;
+                        }
+                        if (method.getReturnType() == unitClass) {
+                            menuMethods.add(method);
+                        } else if (method.getReturnType() == void.class) {
+                            buttonMethods.add(method);
+                        }
+                    }
+                    Method menuMethod = (Method) chooseUnique("menuCaller", menuMethods);
+                    Method buttonMethod = (Method) chooseUnique("buttonCaller", buttonMethods);
+                    if (menuMethod == null || buttonMethod == null) {
+                        continue;
+                    }
+                    int buttonEnumIndex = enumParameterIndex(buttonMethod, enumClass);
+                    if (buttonEnumIndex < 0) {
+                        continue;
+                    }
 
-            resolver.method.setAccessible(true);
-            menuMethod.setAccessible(true);
-            buttonMethod.setAccessible(true);
-            return new CapabilityResolution<HostAbi.MenuCapability>(
-                    new HostAbi.MenuCapability(
+                    Method resourceId = prerequisite.resourceIdGetter;
+                    resourceId.setAccessible(true);
+                    Map<Integer, String> labels = new HashMap<Integer, String>();
+                    Object[] constants = enumClass.getEnumConstants();
+                    if (constants == null
+                            || constants.length != ReasoningPolicy.SUPPORTED.length) {
+                        continue;
+                    }
+                    for (Object constant : constants) {
+                        if (!(constant instanceof Enum<?>)) {
+                            labels.clear();
+                            break;
+                        }
+                        Object id = resourceId.invoke(constant);
+                        String display = ReasoningPolicy.fromHostEnumName(
+                                ((Enum<?>) constant).name());
+                        if (!(id instanceof Integer)
+                                || labels.put((Integer) id, display) != null) {
+                            labels.clear();
+                            break;
+                        }
+                    }
+                    if (labels.size() != ReasoningPolicy.SUPPORTED.length) {
+                        continue;
+                    }
+
+                    resolver.method.setAccessible(true);
+                    menuMethod.setAccessible(true);
+                    buttonMethod.setAccessible(true);
+                    completeCandidates.add(new HostAbi.MenuCapability(
                             resolver.method,
                             labels,
                             menuMethod,
                             buttonMethod,
                             enumClass,
-                            buttonEnumIndex),
-                    1);
+                            buttonEnumIndex));
+                } catch (Throwable ignored) {
+                    // A candidate-specific failure must not discard other resolvers.
+                }
+            }
+
+            HostAbi.MenuCapability selected = (HostAbi.MenuCapability) chooseUnique(
+                    "menuResolver", completeCandidates);
+            return new CapabilityResolution<HostAbi.MenuCapability>(
+                    selected, completeCandidates.size());
         } catch (Throwable ignored) {
             return new CapabilityResolution<HostAbi.MenuCapability>(null, 0);
         }
