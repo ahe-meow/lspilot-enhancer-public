@@ -1,0 +1,4 @@
+-keep class com.lspilot.enhancer.LSPilotEnhancerModule { *; }
+-keep class com.lspilot.enhancer.PolicyApplication { *; }
+-keep class com.lspilot.enhancer.ModuleSettingsActivity { *; }
+-keepresourcefiles META-INF/xposed/**
