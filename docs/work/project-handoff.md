@@ -56,3 +56,7 @@ The final local debug APK was installed with `pm install -r`: `app/build/outputs
 ## Completion and publication boundary
 
 The user confirmed manual runtime acceptance passed for the installed post-removal APK. Host/device/LSPosed acceptance is complete. No host APK, device, host UI, or LSPosed/LSPD state was modified by the implementation or installation workflow. Source changes remain uncommitted and unpublished; any Git publication requires separate authorization.
+
+## Adaptive menu resolver refresh — 2026-09-14
+
+The v12 `menuLabels:candidates 0` regression is fixed in the current uncommitted worktree patch on `b9fc918`: repeated DexKit caller records for one reflected button method are collapsed before uniqueness selection, while distinct ambiguous callers still fail closed. Fresh full JVM/build verification passed (14 tests, 0 failures, 0 errors; Debug and unsigned Release assembly with `-x lintVitalRelease`). Reinstalling the rebuilt Debug APK and restarting the host produced `menuLabels:candidates 1` and `menuLabels:installed`, plus both request hooks installed. No host APK was modified. Current rebuilt Debug artifact: `2718501` bytes, SHA-256 `ace1e5ccb288fa434819abbb454b1ee0d55e840b050d5aa4c6209765c6a45d34`. Normal lint remains blocked by required `targetSdk = 29`; newer-host compatibility is still unverified.

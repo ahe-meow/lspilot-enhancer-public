@@ -686,6 +686,19 @@ final class DexKitAbiScanner {
         return found;
     }
 
+    private static List<Method> uniqueMethods(List<Method> methods) {
+        List<Method> unique = new ArrayList<Method>();
+        if (methods == null) {
+            return unique;
+        }
+        for (Method method : methods) {
+            if (method != null && !unique.contains(method)) {
+                unique.add(method);
+            }
+        }
+        return unique;
+    }
+
     static MenuResolverSelection selectUniqueCompleteMenuBundle(
             List<MenuResolverBundle> candidates, Class<?> menuReturnType) {
         List<HostAbi.MenuCapability> completeCandidates =
@@ -697,8 +710,8 @@ final class DexKitAbiScanner {
                         || candidate.reasoningEnumClass == null) {
                     continue;
                 }
-                Method menuMethod = (Method) chooseUnique("menuCaller", candidate.menuCallers);
-                Method buttonMethod = (Method) chooseUnique("buttonCaller", candidate.buttonCallers);
+                Method menuMethod = (Method) chooseUnique("menuCaller", uniqueMethods(candidate.menuCallers));
+                Method buttonMethod = (Method) chooseUnique("buttonCaller", uniqueMethods(candidate.buttonCallers));
                 if (menuMethod == null || buttonMethod == null
                         || menuMethod.getReturnType() != menuReturnType
                         || buttonMethod.getReturnType() != void.class) {

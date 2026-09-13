@@ -37,3 +37,12 @@
 - [x] Run `HostV12AbiCheck` in the exact current host process with the byte-identical staged APK and record candidate counts.
 - [x] Perform separately authorized device/LSPosed runtime acceptance.
 - [ ] Obtain explicit publication authorization before any Git commit, tag, push, or release publication.
+
+# Adaptive Menu Resolver Follow-up — 2026-09-14
+
+- [x] Reproduce the v12 duplicate-caller evidence that caused the complete menu bundle to be rejected.
+- [x] Add and pass regression coverage for duplicate, zero, one, and multiple complete resolver bundles.
+- [x] Run fresh full JVM tests and Debug/unsigned Release assembly; record the required target-SDK lint limitation.
+- [x] Reinstall the rebuilt module through Termux RunCommandService and confirm `menuLabels:candidates 1` / `menuLabels:installed` plus both request hooks.
+- [ ] Obtain a newer host APK for empirical compatibility validation.
+- [ ] Obtain explicit publication authorization before committing or pushing.

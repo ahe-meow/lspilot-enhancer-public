@@ -20,6 +20,10 @@
 - Current artifact: `app/build/outputs/apk/debug/app-debug.apk`, 2751613 bytes, SHA-256 `18344adb7784f3c6ed45f2b89544d53d4f111f8c3c66876cab67c67d253d2331`.
 - Git publication remains unauthorized and untouched.
 
+## Adaptive menu resolver refresh — 2026-09-14
+
+The v12 menu discovery regression is resolved in the current uncommitted worktree patch: duplicate DexKit caller records are deduplicated before selecting the unique button caller, without accepting distinct ambiguous callers. Fresh tests/builds passed, and a fresh reinstall/restart logged `menuLabels:candidates 1` and `menuLabels:installed`; request capabilities also installed. The rebuilt Debug artifact is `2718501` bytes with SHA-256 `ace1e5ccb288fa434819abbb454b1ee0d55e840b050d5aa4c6209765c6a45d34`. No host APK was modified. The required target-SDK lint limitation and missing newer-host sample remain.
+
 # Task 9 Goal
 
 **Status:** `PASSED` for the exact-host/device/LSPosed acceptance; local documentation and source/build checks are complete. Git publication remains intentionally pending separate authorization.

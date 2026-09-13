@@ -25,3 +25,12 @@ The current APK is `app/build/outputs/apk/debug/app-debug.apk` (SHA-256 `18344ad
 5. Record the separately authorized installation and manual runtime acceptance without publishing the artifact.
 
 The final Debug APK was installed with `pm install -r`, and the user confirmed manual runtime acceptance passed. Git publication remains outside this task and requires separate authorization.
+
+## Adaptive menu resolver follow-up — 2026-09-14
+
+- [x] Reproduce the remaining v12 `menuLabels:candidates 0` result with read-only DexKit evidence.
+- [x] Add the failing duplicate-caller regression and deduplicate identical reflected `Method` records before uniqueness selection.
+- [x] Re-run the full JVM/build gate and verify fresh Debug/Release artifact hashes.
+- [x] Reinstall the rebuilt module and confirm fresh LSPosed logs install the menu and both request capabilities.
+- [ ] Validate against a newer real host APK.
+- [ ] Obtain publication authorization before committing or pushing the worktree patch.

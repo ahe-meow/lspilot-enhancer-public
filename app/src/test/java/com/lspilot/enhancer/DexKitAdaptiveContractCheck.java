@@ -256,6 +256,17 @@ public final class DexKitAdaptiveContractCheck {
             Assert.assertSame("the complete resolver bundle must win",
                     completeResolver, selected.capability.labelResolver);
 
+            DexKitAbiScanner.MenuResolverBundle duplicateCallers = newMenuBundle(
+                    completeResolver, Arrays.asList(menu, menu),
+                    Arrays.asList(button, button, button));
+            DexKitAbiScanner.MenuResolverSelection deduplicated =
+                    DexKitAbiScanner.selectUniqueCompleteMenuBundle(
+                            Collections.singletonList(duplicateCallers), kotlin.Unit.class);
+            Assert.assertEquals("duplicate caller evidence must represent one method", 1,
+                    deduplicated.completeCount);
+            Assert.assertSame("duplicate caller evidence must retain the resolver",
+                    completeResolver, deduplicated.capability.labelResolver);
+
             DexKitAbiScanner.MenuResolverSelection none =
                     DexKitAbiScanner.selectUniqueCompleteMenuBundle(
                             Arrays.asList(missingCaller, ambiguousCaller), kotlin.Unit.class);
