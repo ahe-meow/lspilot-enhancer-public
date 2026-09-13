@@ -254,6 +254,20 @@ final class DexKitAbiScanner {
         }
     }
 
+    static Method selectUniqueReasoningResourceGetter(
+            Class<?> enumClass, List<Method> methods) {
+        List<Method> structural = new ArrayList<Method>();
+        if (methods != null) {
+            for (Method method : methods) {
+                if (hasExactReasoningResourceGetter(enumClass, method)) {
+                    structural.add(method);
+                }
+            }
+        }
+        Object selected = chooseUnique("reasoningResourceGetter", structural);
+        return selected instanceof Method ? (Method) selected : null;
+    }
+
     private static boolean containsReasoningEnumName(String name) {
         for (String expectedName : REASONING_ENUM_NAMES) {
             if (expectedName.equals(name)) {
@@ -341,7 +355,7 @@ final class DexKitAbiScanner {
                     continue;
                 }
                 List<Method> getters = resourceGetterCandidates(candidate, enumClass, loader);
-                Method getter = (Method) chooseUnique("reasoningResourceGetter", getters);
+                Method getter = selectUniqueReasoningResourceGetter(enumClass, getters);
                 if (getter != null) {
                     valid.add(new EnumPrerequisite(enumClass, getter));
                 } else if (getters.size() > 1) {

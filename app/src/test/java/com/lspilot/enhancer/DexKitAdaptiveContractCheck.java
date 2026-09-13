@@ -5,10 +5,13 @@ import org.junit.Test;
 
 import java.io.File;
 import java.io.IOException;
+import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.util.Arrays;
+import java.util.Collections;
 
 public final class DexKitAdaptiveContractCheck {
     public DexKitAdaptiveContractCheck() {
@@ -22,6 +25,7 @@ public final class DexKitAdaptiveContractCheck {
     public static void main(String[] args) {
         assertStructuralEnumPredicate();
         assertResourceGetterPredicate();
+        assertAmbiguousResourceGetterSelection();
         assertReasoningCapabilityCarriesEnumClass();
         assertScannerUsesNoFixedEnumLookups();
     }
@@ -53,6 +57,22 @@ public final class DexKitAdaptiveContractCheck {
         }
     }
 
+    private static void assertAmbiguousResourceGetterSelection() {
+        try {
+            Method first = AmbiguousReasoning.class.getDeclaredMethod("firstResourceId");
+            Method second = AmbiguousReasoning.class.getDeclaredMethod("secondResourceId");
+            Assert.assertNull("ambiguous resource getters must fail closed",
+                    DexKitAbiScanner.selectUniqueReasoningResourceGetter(
+                            AmbiguousReasoning.class, Arrays.asList(first, second)));
+            Assert.assertSame("one structural resource getter must be selected",
+                    first,
+                    DexKitAbiScanner.selectUniqueReasoningResourceGetter(
+                            AmbiguousReasoning.class, Collections.singletonList(first)));
+        } catch (NoSuchMethodException exception) {
+            throw new AssertionError("resource getter selection fixture failed", exception);
+        }
+    }
+
     private static boolean invokeEnumPredicate(Class<?> candidate) {
         try {
             Method predicate = DexKitAbiScanner.class.getDeclaredMethod(
@@ -68,8 +88,31 @@ public final class DexKitAdaptiveContractCheck {
         try {
             Field field = HostAbi.ReasoningCapability.class.getField("reasoningEnumClass");
             Assert.assertEquals(Class.class, field.getType());
+            Method getter = Qx7.class.getDeclaredMethod("resourceId");
+            Constructor<?> repository = StringLiteralCarrier.class.getDeclaredConstructor();
+            HostAbi.ReasoningCapability capability = new HostAbi.ReasoningCapability(
+                    getter, repository, Qx7.class);
+            Assert.assertSame("capability must retain the discovered enum class",
+                    Qx7.class, capability.reasoningEnumClass);
+
+            String source = readSource(
+                    "app/src/main/java/com/lspilot/enhancer/DexKitAbiScanner.java");
+            Assert.assertTrue("reasoning capability must use the discovered enum class",
+                    source.contains("enumPrerequisite.capability.enumClass"));
+            Assert.assertTrue("menu resolution must use the discovered enum prerequisite",
+                    source.contains("resolveMenu(loader, enumPrerequisite.capability)"));
+            Assert.assertTrue(
+                    "generic request resolution must use the discovered enum prerequisite",
+                    source.contains(
+                            "resolveGenericRequest(bridge, loader, enumPrerequisite.capability)"));
+            Assert.assertTrue(
+                    "thinking request resolution must use the discovered enum prerequisite",
+                    source.contains(
+                            "resolveThinkingRequest(bridge, loader, enumPrerequisite.capability)"));
         } catch (NoSuchFieldException exception) {
             Assert.fail("reasoning capability must expose reasoningEnumClass");
+        } catch (Exception exception) {
+            throw new AssertionError("reasoning capability fixture failed", exception);
         }
     }
 
@@ -125,6 +168,28 @@ public final class DexKitAdaptiveContractCheck {
 
     private enum Qx8 {
         OFF, AUTO, LOW, MEDIUM, HIGH, MAX, EXTRA
+    }
+
+    private enum AmbiguousReasoning {
+        OFF(0x7f010001, 0x7f020001), AUTO(0x7f010002, 0x7f020002),
+        LOW(0x7f010003, 0x7f020003), MEDIUM(0x7f010004, 0x7f020004),
+        HIGH(0x7f010005, 0x7f020005), MAX(0x7f010006, 0x7f020006);
+
+        private final int firstResourceId;
+        private final int secondResourceId;
+
+        AmbiguousReasoning(int firstResourceId, int secondResourceId) {
+            this.firstResourceId = firstResourceId;
+            this.secondResourceId = secondResourceId;
+        }
+
+        public int firstResourceId() {
+            return firstResourceId;
+        }
+
+        public int secondResourceId() {
+            return secondResourceId;
+        }
     }
 
     private static final class StringLiteralCarrier {
