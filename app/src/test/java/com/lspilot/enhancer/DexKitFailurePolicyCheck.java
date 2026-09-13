@@ -143,8 +143,8 @@ public final class DexKitFailurePolicyCheck {
                 "valid reasoning enum must be accepted");
         require(!DexKitAbiScanner.hasExactReasoningEnumContract(ExtraReasoning.class),
                 "extra reasoning enum value must be rejected");
-        require(!DexKitAbiScanner.hasExactReasoningEnumContract(MissingMethodReasoning.class),
-                "missing reasoning enum method must be rejected");
+        require(DexKitAbiScanner.hasExactReasoningEnumContract(MissingMethodReasoning.class),
+                "enum shape must not depend on legacy helper method names");
     }
 
     private static void assertCacheKeyIdentity() {
@@ -194,9 +194,6 @@ public final class DexKitFailurePolicyCheck {
                             "private static final String TYPE_PROVIDER = \"vb\";"),
                     "scanner must use the current provider type");
             require(source.contains(
-                            "private static final String TYPE_REASONING = \"a69\";"),
-                    "scanner must use the current reasoning type");
-            require(source.contains(
                             "private static final String TYPE_MENU_RESOLVER = \"n0b\";"),
                     "scanner must use the current menu resolver type");
             require(source.contains(
@@ -214,8 +211,8 @@ public final class DexKitFailurePolicyCheck {
             require(source.contains(
                             "private static final String MENU_BUTTON_RESOURCE_FIELD = \"S1\";"),
                     "scanner must resolve the OFF button resource");
-            require(source.contains("resolveMenu(loader)"),
-                    "scanner must resolve the host menu capability");
+            require(source.contains("resolveMenu(loader,"),
+                    "scanner must pass the discovered enum prerequisite to the menu resolver");
             require(source.contains("new HostAbi(\n                reasoning.capability,"),
                     "scanner must construct the four-part ABI");
             String[] staleTypes = {"\"wb\"", "\"oi9\"", "\"q97\"", "\"lv9\"",

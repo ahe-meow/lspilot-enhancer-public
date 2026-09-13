@@ -7,8 +7,10 @@ import org.luckypray.dexkit.query.matchers.ClassMatcher;
 import org.luckypray.dexkit.query.matchers.MethodMatcher;
 import org.luckypray.dexkit.result.ClassData;
 import org.luckypray.dexkit.result.ClassDataList;
+import org.luckypray.dexkit.result.FieldData;
 import org.luckypray.dexkit.result.MethodData;
 import org.luckypray.dexkit.result.MethodDataList;
+import org.luckypray.dexkit.result.UsingFieldData;
 
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
@@ -17,11 +19,13 @@ import java.lang.reflect.Modifier;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
- * Package-local, fail-closed v12 ABI discovery.
+ * Package-local, fail-closed structural ABI discovery.
  *
  * <p>DexKit data is converted to reflection handles only after the query
  * metadata has passed the same return/static/parameter checks used by the
@@ -37,7 +41,6 @@ final class DexKitAbiScanner {
     private static final String TYPE_STRING = "java.lang.String";
     private static final String TYPE_LIST = "java.util.List";
     private static final String TYPE_PROVIDER = "vb";
-    private static final String TYPE_REASONING = "a69";
     private static final String TYPE_MENU_RESOLVER = "n0b";
     private static final String TYPE_MENU_COMPOSER = "id2";
     private static final String TYPE_MENU_OWNER = "y71";
@@ -46,7 +49,6 @@ final class DexKitAbiScanner {
     private static final String MENU_CALLER_METHOD = "Z";
     private static final String MENU_BUTTON_METHOD = "A";
     private static final String MENU_BUTTON_RESOURCE_FIELD = "S1";
-    private static final String MENU_RESOURCE_ID_METHOD = "k";
     private static final String TYPE_SHARED_PREFERENCES =
             "android.content.SharedPreferences";
 
@@ -58,6 +60,8 @@ final class DexKitAbiScanner {
     private static final String SHARED_PREFERENCES_GET_STRING_DESCRIPTOR =
             "Landroid/content/SharedPreferences;->getString(Ljava/lang/String;Ljava/lang/String;)"
                     + "Ljava/lang/String;";
+    private static final String[] REASONING_ENUM_NAMES = new String[]{
+            "OFF", "AUTO", "LOW", "MEDIUM", "HIGH", "MAX"};
 
     private DexKitAbiScanner() {
     }
@@ -197,11 +201,9 @@ final class DexKitAbiScanner {
         if (enumClass == null || !enumClass.isEnum()) {
             return false;
         }
-        String[] expectedNames = new String[]{
-                "OFF", "AUTO", "LOW", "MEDIUM", "HIGH", "MAX"};
         try {
             Object[] constants = enumClass.getEnumConstants();
-            if (constants == null || constants.length != expectedNames.length) {
+            if (constants == null || constants.length != REASONING_ENUM_NAMES.length) {
                 return false;
             }
             for (Object constant : constants) {
@@ -209,38 +211,165 @@ final class DexKitAbiScanner {
                     return false;
                 }
                 String actualName = ((Enum<?>) constant).name();
-                boolean expected = false;
-                for (String expectedName : expectedNames) {
-                    if (expectedName.equals(actualName)) {
-                        expected = true;
-                        break;
-                    }
-                }
-                if (!expected) {
+                if (!containsReasoningEnumName(actualName)) {
                     return false;
                 }
             }
-            Method d = enumClass.getDeclaredMethod("d");
-            Method m = enumClass.getDeclaredMethod("m");
-            return !Modifier.isStatic(d.getModifiers())
-                    && !Modifier.isStatic(m.getModifiers())
-                    && d.getReturnType() == Integer.class
-                    && m.getReturnType() == String.class;
+            return true;
         } catch (Throwable ignored) {
             return false;
         }
     }
 
+    /** Pure reflection check for a candidate enum resource-ID getter. */
+    static boolean hasExactReasoningResourceGetter(
+            Class<?> enumClass, Method getter) {
+        if (!hasExactReasoningEnumContract(enumClass)
+                || getter == null
+                || !enumClass.equals(getter.getDeclaringClass())
+                || Modifier.isStatic(getter.getModifiers())
+                || getter.getReturnType() != int.class
+                || getter.getParameterTypes().length != 0) {
+            return false;
+        }
+        try {
+            Object[] constants = enumClass.getEnumConstants();
+            Set<Integer> resourceIds = new HashSet<Integer>();
+            getter.setAccessible(true);
+            for (Object constant : constants) {
+                Object value = getter.invoke(constant);
+                if (!(value instanceof Integer)) {
+                    return false;
+                }
+                int resourceId = ((Integer) value).intValue();
+                if ((resourceId & 0xff000000) == 0
+                        || (resourceId & 0x00ff0000) == 0
+                        || !resourceIds.add(Integer.valueOf(resourceId))) {
+                    return false;
+                }
+            }
+            return resourceIds.size() == REASONING_ENUM_NAMES.length;
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    private static boolean containsReasoningEnumName(String name) {
+        for (String expectedName : REASONING_ENUM_NAMES) {
+            if (expectedName.equals(name)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean hasReadInstanceIntField(
+            ClassData enumData, MethodData methodData) {
+        if (enumData == null || methodData == null) {
+            return false;
+        }
+        try {
+            List<UsingFieldData> usingFields = methodData.getUsingFields();
+            if (usingFields == null) {
+                return false;
+            }
+            for (UsingFieldData usingField : usingFields) {
+                if (usingField == null || usingField.getUsingType() == null
+                        || !usingField.getUsingType().isRead()) {
+                    continue;
+                }
+                FieldData field = usingField.getField();
+                ClassData declaringClass = field == null ? null : field.getDeclaredClass();
+                if (field != null
+                        && !Modifier.isStatic(field.getModifiers())
+                        && "int".equals(field.getTypeName())
+                        && declaringClass != null
+                        && enumData.getName() != null
+                        && enumData.getName().equals(declaringClass.getName())) {
+                    return true;
+                }
+            }
+        } catch (Throwable ignored) {
+            return false;
+        }
+        return false;
+    }
+
+    private static List<Method> resourceGetterCandidates(
+            ClassData enumData, Class<?> enumClass, ClassLoader loader) {
+        List<Method> candidates = new ArrayList<Method>();
+        if (enumData == null || enumClass == null || loader == null) {
+            return candidates;
+        }
+        try {
+            MethodDataList methods = enumData.getMethods();
+            if (methods == null) {
+                return candidates;
+            }
+            for (MethodData methodData : methods) {
+                if (methodData == null
+                        || methodData.getParamCount() != 0
+                        || !"int".equals(methodData.getReturnTypeName())
+                        || Modifier.isStatic(methodData.getModifiers())
+                        || !hasReadInstanceIntField(enumData, methodData)) {
+                    continue;
+                }
+                Method method = reflectMethod(methodData, loader);
+                if (hasExactReasoningResourceGetter(enumClass, method)) {
+                    candidates.add(method);
+                }
+            }
+        } catch (Throwable ignored) {
+            return new ArrayList<Method>();
+        }
+        return candidates;
+    }
+
+    private static CapabilityResolution<EnumPrerequisite> resolveReasoningEnum(
+            DexKitBridge bridge, ClassLoader loader) {
+        ClassDataList candidates = queryClasses(
+                bridge, "OFF", "AUTO", "LOW", "MEDIUM", "HIGH", "MAX");
+        List<EnumPrerequisite> valid = new ArrayList<EnumPrerequisite>();
+        int candidateCount = sizeOf(candidates);
+        if (loader == null) {
+            return new CapabilityResolution<EnumPrerequisite>(null, candidateCount);
+        }
+        for (ClassData candidate : candidates) {
+            try {
+                Class<?> enumClass = candidate == null ? null : candidate.getInstance(loader);
+                if (!hasExactReasoningEnumContract(enumClass)) {
+                    continue;
+                }
+                List<Method> getters = resourceGetterCandidates(candidate, enumClass, loader);
+                Method getter = (Method) chooseUnique("reasoningResourceGetter", getters);
+                if (getter != null) {
+                    valid.add(new EnumPrerequisite(enumClass, getter));
+                } else if (getters.size() > 1) {
+                    candidateCount = Math.max(candidateCount, getters.size());
+                }
+            } catch (Throwable ignored) {
+                // An unreflectable candidate is not a supported prerequisite.
+            }
+        }
+        if (valid.size() != 1) {
+            candidateCount = Math.max(candidateCount, valid.size());
+            return new CapabilityResolution<EnumPrerequisite>(null, candidateCount);
+        }
+        return new CapabilityResolution<EnumPrerequisite>(valid.get(0), 1);
+    }
+
     private static ScanResult resolveWithBridge(
             DexKitBridge bridge, ClassLoader loader, String fingerprint) {
+        CapabilityResolution<EnumPrerequisite> enumPrerequisite =
+                resolveReasoningEnum(bridge, loader);
         CapabilityResolution<HostAbi.ReasoningCapability> reasoning =
-                resolveReasoning(bridge, loader);
+                resolveReasoning(bridge, loader, enumPrerequisite);
         CapabilityResolution<HostAbi.MenuCapability> menu =
-                resolveMenu(loader);
+                resolveMenu(loader, enumPrerequisite.capability);
         CapabilityResolution<HostAbi.RequestCapability> generic =
-                resolveGenericRequest(bridge, loader);
+                resolveGenericRequest(bridge, loader, enumPrerequisite.capability);
         CapabilityResolution<HostAbi.RequestCapability> thinking =
-                resolveThinkingRequest(bridge, loader);
+                resolveThinkingRequest(bridge, loader, enumPrerequisite.capability);
 
         HostAbi abi = new HostAbi(
                 reasoning.capability,
@@ -259,7 +388,13 @@ final class DexKitAbiScanner {
     }
 
     private static CapabilityResolution<HostAbi.ReasoningCapability> resolveReasoning(
-            DexKitBridge bridge, ClassLoader loader) {
+            DexKitBridge bridge,
+            ClassLoader loader,
+            CapabilityResolution<EnumPrerequisite> enumPrerequisite) {
+        if (enumPrerequisite == null || enumPrerequisite.capability == null) {
+            return new CapabilityResolution<HostAbi.ReasoningCapability>(
+                    null, enumPrerequisite == null ? 0 : enumPrerequisite.count);
+        }
         try {
             ClassDataList ownerCandidates = queryClasses(
                     bridge, SETTINGS_FILE, REASONING_KEY);
@@ -290,9 +425,6 @@ final class DexKitAbiScanner {
             Method accessor = (Method) chooseUnique("settingsAccessor", accessors);
             Method getter = (Method) chooseUnique("reasoningGetter", getters);
             int shapeCount = Math.max(accessors.size(), getters.size());
-            if (!hasUppercaseReasoningEnum(bridge, loader)) {
-                return new CapabilityResolution<HostAbi.ReasoningCapability>(null, 0);
-            }
             if (accessor == null || getter == null
                     || !accessor.getDeclaringClass().equals(getter.getDeclaringClass())) {
                 return new CapabilityResolution<HostAbi.ReasoningCapability>(null, shapeCount);
@@ -304,35 +436,26 @@ final class DexKitAbiScanner {
                 return new CapabilityResolution<HostAbi.ReasoningCapability>(null, 0);
             }
             HostAbi.ReasoningCapability capability = new HostAbi.ReasoningCapability(
-                    getter, repositoryConstructor);
+                    getter,
+                    repositoryConstructor,
+                    enumPrerequisite.capability.enumClass);
             return new CapabilityResolution<HostAbi.ReasoningCapability>(capability, 1);
         } catch (Throwable ignored) {
             return new CapabilityResolution<HostAbi.ReasoningCapability>(null, 0);
         }
     }
 
-    private static boolean hasUppercaseReasoningEnum(
-            DexKitBridge bridge, ClassLoader loader) {
-        try {
-            ClassDataList candidates = queryClasses(
-                    bridge, "OFF", "AUTO", "LOW", "MEDIUM", "HIGH", "MAX");
-            ClassData enumData = uniqueClass(candidates);
-            if (enumData == null) {
-                return false;
-            }
-            Class<?> enumClass = enumData.getInstance(loader);
-            return enumClass != null
-                    && TYPE_REASONING.equals(enumClass.getName())
-                    && hasExactReasoningEnumContract(enumClass);
-        } catch (Throwable ignored) {
-            return false;
-        }
-    }
 
     private static CapabilityResolution<HostAbi.MenuCapability> resolveMenu(
-            ClassLoader loader) {
+            ClassLoader loader, EnumPrerequisite prerequisite) {
         try {
-            Class<?> enumClass = loadHostClass(loader, TYPE_REASONING);
+            if (prerequisite == null
+                    || prerequisite.enumClass == null
+                    || prerequisite.resourceIdGetter == null) {
+                return new CapabilityResolution<HostAbi.MenuCapability>(null, 0);
+            }
+            Class<?> enumClass = prerequisite.enumClass;
+            Method resourceId = prerequisite.resourceIdGetter;
             Class<?> resolverOwner = loadHostClass(loader, TYPE_MENU_RESOLVER);
             Class<?> composerClass = loadHostClass(loader, TYPE_MENU_COMPOSER);
             Class<?> menuOwner = loadHostClass(loader, TYPE_MENU_OWNER);
@@ -345,17 +468,14 @@ final class DexKitAbiScanner {
             Class<?> menuModifierClass = loadHostClass(loader, "lz5");
             Class<?> menuScopeClass = loadHostClass(loader, "x87");
             Class<?> unitClass = loadHostClass(loader, "kotlin.Unit");
-            if (enumClass == null || resolverOwner == null || composerClass == null
+            if (resolverOwner == null || composerClass == null
                     || menuOwner == null || resourcesClass == null
                     || function0Class == null || function1Class == null
                     || menuStateClass == null || menuModifierClass == null
-                    || menuScopeClass == null || unitClass == null
-                    || !hasExactReasoningEnumContract(enumClass)) {
+                    || menuScopeClass == null || unitClass == null) {
                 return new CapabilityResolution<HostAbi.MenuCapability>(null, 0);
             }
 
-            Method resourceId = enumClass.getDeclaredMethod(
-                    MENU_RESOURCE_ID_METHOD);
             Method labelResolver = resolverOwner.getDeclaredMethod(
                     MENU_RESOLVER_METHOD, int.class, composerClass, int.class);
             Method menuMethod = menuOwner.getDeclaredMethod(
@@ -443,15 +563,19 @@ final class DexKitAbiScanner {
     }
 
     private static CapabilityResolution<HostAbi.RequestCapability> resolveGenericRequest(
-            DexKitBridge bridge, ClassLoader loader) {
+            DexKitBridge bridge, ClassLoader loader, EnumPrerequisite prerequisite) {
         try {
+            if (prerequisite == null || prerequisite.enumClass == null) {
+                return new CapabilityResolution<HostAbi.RequestCapability>(null, 0);
+            }
             Class<?> providerClass = loadHostClass(loader, TYPE_PROVIDER);
-            Class<?> reasoningClass = loadHostClass(loader, TYPE_REASONING);
+            Class<?> reasoningClass = prerequisite.enumClass;
             if (providerClass == null || reasoningClass == null) {
                 return new CapabilityResolution<HostAbi.RequestCapability>(null, 0);
             }
             String[] parameterNames = new String[]{
-                    TYPE_PROVIDER, TYPE_LIST, TYPE_STRING, "boolean", TYPE_STRING, TYPE_REASONING};
+                    TYPE_PROVIDER, TYPE_LIST, TYPE_STRING, "boolean", TYPE_STRING,
+                    reasoningClass.getName()};
             Class<?>[] parameterTypes = new Class<?>[]{
                     providerClass, List.class, String.class, boolean.class,
                     String.class, reasoningClass};
@@ -480,15 +604,18 @@ final class DexKitAbiScanner {
     }
 
     private static CapabilityResolution<HostAbi.RequestCapability> resolveThinkingRequest(
-            DexKitBridge bridge, ClassLoader loader) {
+            DexKitBridge bridge, ClassLoader loader, EnumPrerequisite prerequisite) {
         try {
+            if (prerequisite == null || prerequisite.enumClass == null) {
+                return new CapabilityResolution<HostAbi.RequestCapability>(null, 0);
+            }
             Class<?> providerClass = loadHostClass(loader, TYPE_PROVIDER);
-            Class<?> reasoningClass = loadHostClass(loader, TYPE_REASONING);
+            Class<?> reasoningClass = prerequisite.enumClass;
             if (providerClass == null || reasoningClass == null) {
                 return new CapabilityResolution<HostAbi.RequestCapability>(null, 0);
             }
             String[] parameterNames = new String[]{
-                    TYPE_PROVIDER, TYPE_LIST, TYPE_STRING, TYPE_REASONING};
+                    TYPE_PROVIDER, TYPE_LIST, TYPE_STRING, reasoningClass.getName()};
             Class<?>[] parameterTypes = new Class<?>[]{
                     providerClass, List.class, String.class, reasoningClass};
             List<Method> candidates = queryExactMethods(
@@ -915,6 +1042,16 @@ final class DexKitAbiScanner {
             this.loader = loader;
             this.fingerprint = fingerprint;
             this.result = result;
+        }
+    }
+
+    private static final class EnumPrerequisite {
+        final Class<?> enumClass;
+        final Method resourceIdGetter;
+
+        EnumPrerequisite(Class<?> enumClass, Method resourceIdGetter) {
+            this.enumClass = enumClass;
+            this.resourceIdGetter = resourceIdGetter;
         }
     }
 

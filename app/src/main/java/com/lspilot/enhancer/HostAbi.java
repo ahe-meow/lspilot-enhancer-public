@@ -40,13 +40,26 @@ public final class HostAbi {
     public static final class ReasoningCapability {
         public final Method getter;
         public final Constructor<?> repositoryConstructor;
+        public final Class<?> reasoningEnumClass;
 
+        /**
+         * Legacy test/runtime constructor retained for callers that do not
+         * participate in adaptive enum discovery yet.
+         */
         public ReasoningCapability(Method getter, Constructor<?> repositoryConstructor) {
+            this(getter, repositoryConstructor, null);
+        }
+
+        public ReasoningCapability(
+                Method getter,
+                Constructor<?> repositoryConstructor,
+                Class<?> reasoningEnumClass) {
             this.getter = requireMethod(getter, "getter");
             if (repositoryConstructor == null) {
                 throw new IllegalArgumentException("repositoryConstructor");
             }
             this.repositoryConstructor = repositoryConstructor;
+            this.reasoningEnumClass = reasoningEnumClass;
         }
     }
 
