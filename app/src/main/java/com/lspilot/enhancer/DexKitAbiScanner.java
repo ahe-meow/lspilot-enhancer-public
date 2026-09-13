@@ -10,7 +10,6 @@ import org.luckypray.dexkit.result.ClassDataList;
 import org.luckypray.dexkit.result.MethodData;
 import org.luckypray.dexkit.result.MethodDataList;
 
-import java.io.File;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
@@ -32,6 +31,8 @@ import java.util.Map;
 final class DexKitAbiScanner {
     private static volatile boolean nativeLoaded;
     private static volatile boolean nativeLoadAttempted;
+    private static final Object CACHE_LOCK = new Object();
+    private static CacheEntry cached;
 
     private static final String TYPE_STRING = "java.lang.String";
     private static final String TYPE_LIST = "java.util.List";
@@ -88,22 +89,57 @@ final class DexKitAbiScanner {
     }
 
     static ScanResult resolveDetailed(ClassLoader loader, String apkPath) {
-        boolean apkPathValidated = isReadableApkPath(apkPath);
-        if (loader == null || !ensureNativeLoaded()) {
-            return emptyResult(apkPathValidated);
-        }
+        List<String> sourcePaths = apkPath == null
+                ? null : Collections.singletonList(apkPath);
+        return resolveDetailed(loader, sourcePaths);
+    }
 
+    static ScanResult resolveDetailed(ClassLoader loader, List<String> sourcePaths) {
+        String fingerprint = HostApkFingerprint.compute(sourcePaths);
+        if (loader == null || fingerprint == null || !ensureNativeLoaded()) {
+            return emptyResult(fingerprint, false);
+        }
+        synchronized (CACHE_LOCK) {
+            if (cached != null && cacheKeyMatches(
+                    cached.loader, cached.fingerprint, loader, fingerprint)) {
+                return cached.result.withCacheHit(true);
+            }
+            ScanResult result = scanFresh(loader, fingerprint);
+            cached = new CacheEntry(loader, fingerprint, result);
+            return result;
+        }
+    }
+
+    static void clearCache() {
+        synchronized (CACHE_LOCK) {
+            cached = null;
+        }
+    }
+
+    static boolean cacheKeyMatches(
+            ClassLoader cachedLoader,
+            String cachedFingerprint,
+            ClassLoader loader,
+            String fingerprint) {
+        return cachedLoader != null
+                && loader != null
+                && cachedLoader == loader
+                && cachedFingerprint != null
+                && cachedFingerprint.equals(fingerprint);
+    }
+
+    private static ScanResult scanFresh(ClassLoader loader, String fingerprint) {
         DexKitBridge bridge = null;
         try {
             // DexKitBridge 2.2 exposes native-backed create methods without
             // loading libdexkit from its class initializer.
             bridge = DexKitBridge.create(loader, true);
             if (bridge == null || !bridge.isValid()) {
-                return emptyResult(apkPathValidated);
+                return emptyResult(fingerprint, false);
             }
-            return resolveWithBridge(bridge, loader, apkPathValidated);
+            return resolveWithBridge(bridge, loader, fingerprint);
         } catch (Throwable ignored) {
-            return emptyResult(apkPathValidated);
+            return emptyResult(fingerprint, false);
         } finally {
             if (bridge != null) {
                 try {
@@ -196,7 +232,7 @@ final class DexKitAbiScanner {
     }
 
     private static ScanResult resolveWithBridge(
-            DexKitBridge bridge, ClassLoader loader, boolean apkPathValidated) {
+            DexKitBridge bridge, ClassLoader loader, String fingerprint) {
         CapabilityResolution<HostAbi.ReasoningCapability> reasoning =
                 resolveReasoning(bridge, loader);
         CapabilityResolution<HostAbi.MenuCapability> menu =
@@ -217,7 +253,9 @@ final class DexKitAbiScanner {
                 menu.count,
                 generic.count,
                 thinking.count,
-                apkPathValidated);
+                fingerprint != null,
+                fingerprint,
+                false);
     }
 
     private static CapabilityResolution<HostAbi.ReasoningCapability> resolveReasoning(
@@ -795,26 +833,17 @@ final class DexKitAbiScanner {
         return type == null ? null : type.getName();
     }
 
-    private static boolean isReadableApkPath(String apkPath) {
-        if (apkPath == null || apkPath.trim().isEmpty()) {
-            return false;
-        }
-        try {
-            File file = new File(apkPath);
-            return file.isFile() && file.canRead();
-        } catch (Throwable ignored) {
-            return false;
-        }
-    }
-
     private static int sizeOf(List<?> values) {
         return values == null ? 0 : values.size();
     }
 
-    private static ScanResult emptyResult(boolean apkPathValidated) {
+    private static ScanResult emptyResult(String fingerprint, boolean cacheHit) {
         return new ScanResult(
                 new HostAbi(null, null, null, null),
-                0, 0, 0, 0, apkPathValidated);
+                0, 0, 0, 0,
+                fingerprint != null,
+                fingerprint,
+                cacheHit);
     }
 
     static final class ScanResult {
@@ -824,6 +853,8 @@ final class DexKitAbiScanner {
         final int genericRequestCount;
         final int thinkingRequestCount;
         final boolean apkPathValidated;
+        final String contentFingerprint;
+        final boolean cacheHit;
 
         ScanResult(
                 HostAbi abi,
@@ -832,12 +863,58 @@ final class DexKitAbiScanner {
                 int genericRequestCount,
                 int thinkingRequestCount,
                 boolean apkPathValidated) {
+            this(
+                    abi,
+                    reasoningSourceCount,
+                    menuLabelsCount,
+                    genericRequestCount,
+                    thinkingRequestCount,
+                    apkPathValidated,
+                    null,
+                    false);
+        }
+
+        ScanResult(
+                HostAbi abi,
+                int reasoningSourceCount,
+                int menuLabelsCount,
+                int genericRequestCount,
+                int thinkingRequestCount,
+                boolean apkPathValidated,
+                String contentFingerprint,
+                boolean cacheHit) {
             this.abi = abi;
             this.reasoningSourceCount = reasoningSourceCount;
             this.menuLabelsCount = menuLabelsCount;
             this.genericRequestCount = genericRequestCount;
             this.thinkingRequestCount = thinkingRequestCount;
             this.apkPathValidated = apkPathValidated;
+            this.contentFingerprint = contentFingerprint;
+            this.cacheHit = cacheHit;
+        }
+
+        ScanResult withCacheHit(boolean cacheHit) {
+            return new ScanResult(
+                    abi,
+                    reasoningSourceCount,
+                    menuLabelsCount,
+                    genericRequestCount,
+                    thinkingRequestCount,
+                    apkPathValidated,
+                    contentFingerprint,
+                    cacheHit);
+        }
+    }
+
+    private static final class CacheEntry {
+        final ClassLoader loader;
+        final String fingerprint;
+        final ScanResult result;
+
+        CacheEntry(ClassLoader loader, String fingerprint, ScanResult result) {
+            this.loader = loader;
+            this.fingerprint = fingerprint;
+            this.result = result;
         }
     }
 

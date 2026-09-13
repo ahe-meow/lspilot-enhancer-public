@@ -25,6 +25,8 @@ public final class DexKitFailurePolicyCheck {
         assertHookRegistryResourceCount();
         assertFilteringRejectsWrongReturnType();
         assertExactReasoningEnumContract();
+        assertCacheKeyIdentity();
+        assertCacheSourceContract();
         assertCurrentV12AbiContracts();
         assertLifecycleSourceContract();
         assertDebugLoggerSourceContract();
@@ -143,6 +145,45 @@ public final class DexKitFailurePolicyCheck {
                 "extra reasoning enum value must be rejected");
         require(!DexKitAbiScanner.hasExactReasoningEnumContract(MissingMethodReasoning.class),
                 "missing reasoning enum method must be rejected");
+    }
+
+    private static void assertCacheKeyIdentity() {
+        ClassLoader firstLoader = new ClassLoader() {
+        };
+        ClassLoader secondLoader = new ClassLoader() {
+        };
+
+        require(DexKitAbiScanner.cacheKeyMatches(
+                        firstLoader, "abc", firstLoader, "abc"),
+                "matching loader identity and fingerprint must hit the cache");
+        require(!DexKitAbiScanner.cacheKeyMatches(
+                        firstLoader, "abc", firstLoader, "def"),
+                "different fingerprints must miss the cache");
+        require(!DexKitAbiScanner.cacheKeyMatches(
+                        firstLoader, "abc", secondLoader, "abc"),
+                "different loader identities must miss the cache");
+        require(!DexKitAbiScanner.cacheKeyMatches(
+                        null, "abc", firstLoader, "abc"),
+                "a missing cached loader must miss the cache");
+    }
+
+    private static void assertCacheSourceContract() {
+        try {
+            String source = readSource(
+                    "app/src/main/java/com/lspilot/enhancer/DexKitAbiScanner.java");
+            require(source.contains(
+                            "static ScanResult resolveDetailed(ClassLoader loader, "
+                                    + "List<String> sourcePaths)"),
+                    "scanner must expose the list-based resolver entry point");
+            require(source.contains("HostApkFingerprint.compute(sourcePaths)"),
+                    "scanner must compute the host content fingerprint");
+            require(source.contains("static void clearCache()"),
+                    "scanner must expose cache lifecycle clearing");
+            require(source.contains("contentFingerprint") && source.contains("cacheHit"),
+                    "scan results must expose cache diagnostics");
+        } catch (Exception exception) {
+            throw new AssertionError("cache scanner contract failed", exception);
+        }
     }
 
     private static void assertCurrentV12AbiContracts() {
