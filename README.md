@@ -48,7 +48,7 @@ The removed context-length feature, module settings UI, Remote Preferences polic
 
 Compatibility discovery uses SHA-256 content fingerprinting across the primary APK (`sourceDir`) and every non-null split APK (`splitSourceDirs`). The in-process cache key is the exact `ClassLoader` identity plus the combined content fingerprint, and hot reload clears that cache. A content change triggers a fresh scan even when `versionCode` and `versionName` stay the same; neither version field is a production compatibility gate.
 
-The module uses structural DexKit discovery for enum, request, and menu capabilities. Candidate metadata, reflected signatures, required JSON literals, invoke relationships, caller relationships, and uniqueness are validated before hooks are installed. Missing, ambiguous, malformed, or unsupported evidence produces a fail closed result for the affected capability; dependent request capabilities remain disabled when their reasoning prerequisite is unavailable, while unrelated capability attempts remain independent.
+The module uses structural DexKit discovery for enum, request, and menu capabilities. Candidate metadata, reflected signatures, required JSON literals, invoke relationships, caller relationships, and uniqueness are validated before hooks are installed. Repeated caller records for the same reflected method are treated as duplicate evidence, while distinct ambiguous callers remain rejected. Missing, ambiguous, malformed, or unsupported evidence produces a fail closed result for the affected capability; dependent request capabilities remain disabled when their reasoning prerequisite is unavailable, while unrelated capability attempts remain independent.
 
 Diagnostics are privacy-safe and allowlisted: capability and candidate events, cache state, a validated SHA-256 fingerprint, and exception class names only. APK paths and bytes, request bodies, message contents, credentials, and persistent ABI or policy state are not logged or stored.
 
@@ -89,11 +89,11 @@ The release build currently produces `app-release-unsigned.apk`. Sign it with a 
 5. Fully restart the host process.
 6. Open the host reasoning menu and verify the six lowercase labels.
 
-The `v1.9.0` GitHub Release is available at:
+The current `v1.10.0` GitHub Release is available at:
 
-<https://github.com/ahe-meow/lspilot-enhancer-public/releases/tag/v1.9.0>
+<https://github.com/ahe-meow/lspilot-enhancer-public/releases/tag/v1.10.0>
 
-Its uploaded APK is intentionally unsigned because no public signing key is stored in this repository.
+Its uploaded `app-release-unsigned.apk` is 2,386,612 bytes with SHA-256 `d5cce4f5ed2106c99e1d5f8f3cef50e7f085c99b08eb31d8bb7a7b414932d86e`. It is intentionally unsigned because no public signing key is stored in this repository.
 
 ## Safety boundaries
 
