@@ -28,8 +28,34 @@ public final class DexKitAdaptiveContractCheck {
         assertAmbiguousResourceGetterSelection();
         assertReasoningCapabilityCarriesEnumClass();
         assertScannerUsesNoFixedEnumLookups();
+        assertMenuCallerRequiresBothInvokes();
         assertRequestDiscoveryUsesStructuralMatchers();
         assertMenuDiscoveryUsesStructuralCallers();
+    }
+
+    private static void assertMenuCallerRequiresBothInvokes() {
+        Assert.assertTrue("menu callers need both invoke anchors",
+                DexKitAbiScanner.hasRequiredMenuCallerInvokes(true, true));
+        Assert.assertFalse("resolver-only callers must be rejected",
+                DexKitAbiScanner.hasRequiredMenuCallerInvokes(true, false));
+        Assert.assertFalse("getter-only callers must be rejected",
+                DexKitAbiScanner.hasRequiredMenuCallerInvokes(false, true));
+        Assert.assertFalse("callers with neither anchor must be rejected",
+                DexKitAbiScanner.hasRequiredMenuCallerInvokes(false, false));
+        try {
+            String scannerSource = readSource(
+                    "app/src/main/java/com/lspilot/enhancer/DexKitAbiScanner.java");
+            Assert.assertTrue("caller filtering must use the combined evidence gate",
+                    scannerSource.contains("hasRequiredMenuCallerInvokes("));
+            Assert.assertTrue("caller filtering must pass the getter descriptor",
+                    scannerSource.contains("resolverDescriptor, resourceDescriptor"));
+            Assert.assertTrue("menu caller selection must remain unique",
+                    scannerSource.contains("chooseUnique(\"menuCaller\""));
+            Assert.assertTrue("button caller selection must remain unique",
+                    scannerSource.contains("chooseUnique(\"buttonCaller\""));
+        } catch (Exception exception) {
+            throw new AssertionError("menu caller evidence fixture failed", exception);
+        }
     }
 
     private static void assertStructuralEnumPredicate() {

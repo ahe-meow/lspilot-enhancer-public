@@ -517,15 +517,14 @@ final class DexKitAbiScanner {
             List<Method> buttonMethods = new ArrayList<Method>();
             for (MethodData data : callerData) {
                 if (!matchesMenuCallerMetadata(
-                        data, loader, enumClass, resolverDescriptor)) {
+                        data, loader, enumClass, resolverDescriptor, resourceDescriptor)) {
                     continue;
                 }
                 Method method = reflectMethod(data, loader);
                 if (!matchesMenuCallerReflection(method, enumClass)) {
                     continue;
                 }
-                if (method.getReturnType() == unitClass
-                        && hasInvokeDescriptor(data, resourceDescriptor)) {
+                if (method.getReturnType() == unitClass) {
                     menuMethods.add(method);
                 } else if (method.getReturnType() == void.class) {
                     buttonMethods.add(method);
@@ -617,17 +616,25 @@ final class DexKitAbiScanner {
                 && !parameters[1].isPrimitive();
     }
 
+    static boolean hasRequiredMenuCallerInvokes(
+            boolean resolverInvoke, boolean resourceGetterInvoke) {
+        return resolverInvoke && resourceGetterInvoke;
+    }
+
     private static boolean matchesMenuCallerMetadata(
             MethodData methodData,
             ClassLoader loader,
             Class<?> enumClass,
-            String resolverDescriptor) {
+            String resolverDescriptor,
+            String resourceDescriptor) {
         return methodData != null
                 && loader != null
                 && enumClass != null
                 && Modifier.isStatic(methodData.getModifiers())
                 && hasExactlyOneEnumParameter(methodData, loader, enumClass)
-                && hasInvokeDescriptor(methodData, resolverDescriptor);
+                && hasRequiredMenuCallerInvokes(
+                hasInvokeDescriptor(methodData, resolverDescriptor),
+                hasInvokeDescriptor(methodData, resourceDescriptor));
     }
 
     private static boolean hasExactlyOneEnumParameter(

@@ -9,6 +9,7 @@ import java.util.Map;
 public final class ReasoningMenuHook {
     private static final int UNKNOWN_LABEL_ORDINAL = -1;
     private static final int AMBIGUOUS_LABEL_ORDINAL = -2;
+    private static final String TYPE_KOTLIN_UNIT = "kotlin.Unit";
 
     private ReasoningMenuHook() {
     }
@@ -46,6 +47,7 @@ public final class ReasoningMenuHook {
         Method button = capability.buttonMethod;
         if (!Modifier.isStatic(menu.getModifiers())
                 || !Modifier.isStatic(button.getModifiers())
+                || !isKotlinUnitReturn(menu)
                 || button.getReturnType() != void.class
                 || !hasExactlyOneEnumParameter(
                 menu.getParameterTypes(), capability.reasoningEnumClass)
@@ -58,6 +60,23 @@ public final class ReasoningMenuHook {
                 && capability.buttonEnumIndex < buttonParameters.length
                 && buttonParameters[capability.buttonEnumIndex]
                 == capability.reasoningEnumClass;
+    }
+
+    private static boolean isKotlinUnitReturn(Method method) {
+        if (method == null || method.getReturnType() == null
+                || !TYPE_KOTLIN_UNIT.equals(method.getReturnType().getName())
+                || method.getDeclaringClass() == null) {
+            return false;
+        }
+        try {
+            return Class.forName(
+                    TYPE_KOTLIN_UNIT,
+                    false,
+                    method.getDeclaringClass().getClassLoader())
+                    == method.getReturnType();
+        } catch (Throwable ignored) {
+            return false;
+        }
     }
 
     private static boolean hasSixLabels(Map<Integer, String> labels) {
@@ -161,6 +180,63 @@ public final class ReasoningMenuHook {
             this.replacement = replacement;
         }
     }
+
+    static final class CalibrationState {
+        private volatile int labelCallOrdinal = UNKNOWN_LABEL_ORDINAL;
+        final ThreadLocal<ButtonInvocationContext> buttonContext =
+                new ThreadLocal<ButtonInvocationContext>();
+
+        synchronized CalibrationResult calibrate(
+                String hostEnumName,
+                int resourceId,
+                String original,
+                int ordinal,
+                Map<Integer, String> labels) {
+            CalibrationResult result = ReasoningMenuHook.calibrate(
+                    hostEnumName,
+                    resourceId,
+                    original,
+                    ordinal,
+                    labelCallOrdinal,
+                    labels);
+            labelCallOrdinal = result.labelOrdinal;
+            return result;
+        }
+
+        synchronized int labelCallOrdinal() {
+            return labelCallOrdinal;
+        }
+    }
+
+    static final class ButtonInvocationContext {
+        final String enumName;
+        private int resolverOrdinal = UNKNOWN_LABEL_ORDINAL;
+
+        ButtonInvocationContext(String enumName) {
+            this.enumName = enumName;
+        }
+
+        int nextResolverOrdinal() {
+            return ++resolverOrdinal;
+        }
+    }
+
+    static Object adaptResolverResult(
+            CalibrationState state,
+            ButtonInvocationContext context,
+            Object original,
+            int resourceId,
+            Map<Integer, String> labels) {
+        if (state == null || context == null) {
+            return original;
+        }
+        int ordinal = context.nextResolverOrdinal();
+        if (!(original instanceof String)) {
+            return original;
+        }
+        return state.calibrate(
+                context.enumName, resourceId, (String) original, ordinal, labels).replacement;
+    }
 }
 
 /** API 102 linkage is kept behind the pure menu/button-label test seam. */
@@ -174,7 +250,8 @@ final class ReasoningMenuHookApi {
         if (capability == null || registry == null) {
             return;
         }
-        final CalibrationState state = new CalibrationState();
+        final ReasoningMenuHook.CalibrationState state =
+                new ReasoningMenuHook.CalibrationState();
         io.github.libxposed.api.XposedInterface.HookHandle resolverHandle =
                 registry.installHook(capability.labelResolver, "reasoning-menu-labels",
                         new io.github.libxposed.api.XposedInterface.Hooker() {
@@ -191,30 +268,25 @@ final class ReasoningMenuHookApi {
                                             capability.menuMethod, capability.buttonMethod)) {
                                         return original;
                                     }
-                                    if (!(original instanceof String)) {
-                                        return original;
-                                    }
-                                    String knownReplacement =
-                                            ReasoningMenuHook.replacementFor(
-                                                    ((Integer) resourceId).intValue(),
-                                                    capability.labels);
-                                    ButtonInvocationContext context =
+                                    ReasoningMenuHook.ButtonInvocationContext context =
                                             state.buttonContext.get();
                                     if (context == null) {
+                                        if (!(original instanceof String)) {
+                                            return original;
+                                        }
+                                        String knownReplacement =
+                                                ReasoningMenuHook.replacementFor(
+                                                        ((Integer) resourceId).intValue(),
+                                                        capability.labels);
                                         return knownReplacement == null
                                                 ? original : knownReplacement;
                                     }
-                                    int ordinal = context.nextResolverOrdinal();
-                                    ReasoningMenuHook.CalibrationResult result =
-                                            ReasoningMenuHook.calibrate(
-                                                    context.enumName,
-                                                    ((Integer) resourceId).intValue(),
-                                                    (String) original,
-                                                    ordinal,
-                                                    state.labelCallOrdinal,
-                                                    capability.labels);
-                                    state.labelCallOrdinal = result.labelOrdinal;
-                                    return result.replacement;
+                                    return ReasoningMenuHook.adaptResolverResult(
+                                            state,
+                                            context,
+                                            original,
+                                            ((Integer) resourceId).intValue(),
+                                            capability.labels);
                                 } catch (Throwable ignored) {
                                     return original;
                                 }
@@ -247,9 +319,10 @@ final class ReasoningMenuHookApi {
                                     return chain.proceed();
                                 }
 
-                                ButtonInvocationContext previous = state.buttonContext.get();
-                                ButtonInvocationContext current =
-                                        new ButtonInvocationContext(
+                                ReasoningMenuHook.ButtonInvocationContext previous =
+                                        state.buttonContext.get();
+                                ReasoningMenuHook.ButtonInvocationContext current =
+                                        new ReasoningMenuHook.ButtonInvocationContext(
                                                 ((Enum<?>) buttonEnum).name());
                                 state.buttonContext.set(current);
                                 try {
@@ -265,25 +338,6 @@ final class ReasoningMenuHookApi {
                         });
         if (buttonHandle == null) {
             registry.removeHook(resolverHandle);
-        }
-    }
-
-    private static final class CalibrationState {
-        volatile int labelCallOrdinal = -1;
-        final ThreadLocal<ButtonInvocationContext> buttonContext =
-                new ThreadLocal<ButtonInvocationContext>();
-    }
-
-    private static final class ButtonInvocationContext {
-        final String enumName;
-        private int resolverOrdinal = -1;
-
-        ButtonInvocationContext(String enumName) {
-            this.enumName = enumName;
-        }
-
-        int nextResolverOrdinal() {
-            return ++resolverOrdinal;
         }
     }
 }
