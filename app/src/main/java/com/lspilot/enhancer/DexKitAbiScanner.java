@@ -506,8 +506,8 @@ final class DexKitAbiScanner {
                 return new CapabilityResolution<HostAbi.MenuCapability>(null, 0);
             }
 
-            List<HostAbi.MenuCapability> completeCandidates =
-                    new ArrayList<HostAbi.MenuCapability>();
+            List<MenuResolverBundle> resolverBundles =
+                    new ArrayList<MenuResolverBundle>();
             for (MenuResolverCandidate resolver : resolverCandidates) {
                 try {
                     String resolverDescriptor = resolver.data.getDescriptor();
@@ -536,15 +536,6 @@ final class DexKitAbiScanner {
                             buttonMethods.add(method);
                         }
                     }
-                    Method menuMethod = (Method) chooseUnique("menuCaller", menuMethods);
-                    Method buttonMethod = (Method) chooseUnique("buttonCaller", buttonMethods);
-                    if (menuMethod == null || buttonMethod == null) {
-                        continue;
-                    }
-                    int buttonEnumIndex = enumParameterIndex(buttonMethod, enumClass);
-                    if (buttonEnumIndex < 0) {
-                        continue;
-                    }
 
                     Method resourceId = prerequisite.resourceIdGetter;
                     resourceId.setAccessible(true);
@@ -572,25 +563,22 @@ final class DexKitAbiScanner {
                         continue;
                     }
 
-                    resolver.method.setAccessible(true);
-                    menuMethod.setAccessible(true);
-                    buttonMethod.setAccessible(true);
-                    completeCandidates.add(new HostAbi.MenuCapability(
-                            resolver.method,
-                            labels,
-                            menuMethod,
-                            buttonMethod,
-                            enumClass,
-                            buttonEnumIndex));
+                    resolverBundles.add(new MenuResolverBundle(
+                            resolver.method, menuMethods, buttonMethods, labels, enumClass));
                 } catch (Throwable ignored) {
                     // A candidate-specific failure must not discard other resolvers.
                 }
             }
 
-            HostAbi.MenuCapability selected = (HostAbi.MenuCapability) chooseUnique(
-                    "menuResolver", completeCandidates);
+            MenuResolverSelection selection = selectUniqueCompleteMenuBundle(
+                    resolverBundles, unitClass);
+            if (selection.capability != null) {
+                selection.capability.labelResolver.setAccessible(true);
+                selection.capability.menuMethod.setAccessible(true);
+                selection.capability.buttonMethod.setAccessible(true);
+            }
             return new CapabilityResolution<HostAbi.MenuCapability>(
-                    selected, completeCandidates.size());
+                    selection.capability, selection.completeCount);
         } catch (Throwable ignored) {
             return new CapabilityResolution<HostAbi.MenuCapability>(null, 0);
         }
@@ -698,6 +686,47 @@ final class DexKitAbiScanner {
         return found;
     }
 
+    static MenuResolverSelection selectUniqueCompleteMenuBundle(
+            List<MenuResolverBundle> candidates, Class<?> menuReturnType) {
+        List<HostAbi.MenuCapability> completeCandidates =
+                new ArrayList<HostAbi.MenuCapability>();
+        if (candidates != null && menuReturnType != null) {
+            for (MenuResolverBundle candidate : candidates) {
+                if (candidate == null
+                        || candidate.labelResolver == null
+                        || candidate.reasoningEnumClass == null) {
+                    continue;
+                }
+                Method menuMethod = (Method) chooseUnique("menuCaller", candidate.menuCallers);
+                Method buttonMethod = (Method) chooseUnique("buttonCaller", candidate.buttonCallers);
+                if (menuMethod == null || buttonMethod == null
+                        || menuMethod.getReturnType() != menuReturnType
+                        || buttonMethod.getReturnType() != void.class) {
+                    continue;
+                }
+                int buttonEnumIndex = enumParameterIndex(
+                        buttonMethod, candidate.reasoningEnumClass);
+                if (buttonEnumIndex < 0) {
+                    continue;
+                }
+                try {
+                    completeCandidates.add(new HostAbi.MenuCapability(
+                            candidate.labelResolver,
+                            candidate.labels,
+                            menuMethod,
+                            buttonMethod,
+                            candidate.reasoningEnumClass,
+                            buttonEnumIndex));
+                } catch (Throwable ignored) {
+                    // A malformed bundle is not a supported menu capability.
+                }
+            }
+        }
+        HostAbi.MenuCapability selected = (HostAbi.MenuCapability) chooseUnique(
+                "menuResolver", completeCandidates);
+        return new MenuResolverSelection(selected, completeCandidates.size());
+    }
+
     private static String methodDescriptor(Method method) {
         if (method == null || method.getDeclaringClass() == null) {
             return null;
@@ -749,6 +778,37 @@ final class DexKitAbiScanner {
             return type.getName().replace('.', '/');
         }
         return "L" + type.getName().replace('.', '/') + ";";
+    }
+
+    static final class MenuResolverBundle {
+        final Method labelResolver;
+        final List<Method> menuCallers;
+        final List<Method> buttonCallers;
+        final Map<Integer, String> labels;
+        final Class<?> reasoningEnumClass;
+
+        MenuResolverBundle(
+                Method labelResolver,
+                List<Method> menuCallers,
+                List<Method> buttonCallers,
+                Map<Integer, String> labels,
+                Class<?> reasoningEnumClass) {
+            this.labelResolver = labelResolver;
+            this.menuCallers = menuCallers;
+            this.buttonCallers = buttonCallers;
+            this.labels = labels;
+            this.reasoningEnumClass = reasoningEnumClass;
+        }
+    }
+
+    static final class MenuResolverSelection {
+        final HostAbi.MenuCapability capability;
+        final int completeCount;
+
+        MenuResolverSelection(HostAbi.MenuCapability capability, int completeCount) {
+            this.capability = capability;
+            this.completeCount = completeCount;
+        }
     }
 
     private static final class MenuResolverCandidate {

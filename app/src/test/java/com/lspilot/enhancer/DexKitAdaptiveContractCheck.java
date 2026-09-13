@@ -30,6 +30,7 @@ public final class DexKitAdaptiveContractCheck {
         assertScannerUsesNoFixedEnumLookups();
         assertMenuCallerRequiresBothInvokes();
         assertMenuResolverSelectionUsesCallerEvidence();
+        assertMenuResolverBundleSelection();
         assertRequestDiscoveryUsesStructuralMatchers();
         assertMenuDiscoveryUsesStructuralCallers();
     }
@@ -218,6 +219,80 @@ public final class DexKitAdaptiveContractCheck {
         }
     }
 
+    private static void assertMenuResolverBundleSelection() {
+        try {
+            Method completeResolver = MenuResolverFixtures.class.getDeclaredMethod(
+                    "resolveComplete", int.class, MenuResolverFixtures.ComposerQ.class, int.class);
+            Method missingResolver = MenuResolverFixtures.class.getDeclaredMethod(
+                    "resolveMissing", int.class, MenuResolverFixtures.ComposerQ.class, int.class);
+            Method ambiguousResolver = MenuResolverFixtures.class.getDeclaredMethod(
+                    "resolveAmbiguous", int.class, MenuResolverFixtures.ComposerQ.class, int.class);
+            Method secondCompleteResolver = MenuResolverFixtures.class.getDeclaredMethod(
+                    "resolveSecondComplete", int.class,
+                    MenuResolverFixtures.ComposerQ.class, int.class);
+            Method menu = MenuResolverFixtures.class.getDeclaredMethod(
+                    "renderChoices", Qx7.class);
+            Method alternateMenu = MenuResolverFixtures.class.getDeclaredMethod(
+                    "renderAlternateChoices", Qx7.class);
+            Method button = MenuResolverFixtures.class.getDeclaredMethod(
+                    "renderCurrent", Qx7.class);
+
+            DexKitAbiScanner.MenuResolverBundle complete = newMenuBundle(
+                    completeResolver, Collections.singletonList(menu),
+                    Collections.singletonList(button));
+            DexKitAbiScanner.MenuResolverBundle missingCaller = newMenuBundle(
+                    missingResolver, Collections.<Method>emptyList(),
+                    Collections.singletonList(button));
+            DexKitAbiScanner.MenuResolverBundle ambiguousCaller = newMenuBundle(
+                    ambiguousResolver, Arrays.asList(menu, alternateMenu),
+                    Collections.singletonList(button));
+
+            DexKitAbiScanner.MenuResolverSelection selected =
+                    DexKitAbiScanner.selectUniqueCompleteMenuBundle(
+                            Arrays.asList(complete, missingCaller, ambiguousCaller),
+                            kotlin.Unit.class);
+            Assert.assertEquals("one complete raw bundle must be selected", 1,
+                    selected.completeCount);
+            Assert.assertSame("the complete resolver bundle must win",
+                    completeResolver, selected.capability.labelResolver);
+
+            DexKitAbiScanner.MenuResolverSelection none =
+                    DexKitAbiScanner.selectUniqueCompleteMenuBundle(
+                            Arrays.asList(missingCaller, ambiguousCaller), kotlin.Unit.class);
+            Assert.assertEquals("zero complete bundles must fail closed", 0,
+                    none.completeCount);
+            Assert.assertNull("zero complete bundles must not produce a capability",
+                    none.capability);
+
+            DexKitAbiScanner.MenuResolverBundle secondComplete = newMenuBundle(
+                    secondCompleteResolver, Collections.singletonList(menu),
+                    Collections.singletonList(button));
+            DexKitAbiScanner.MenuResolverSelection ambiguous =
+                    DexKitAbiScanner.selectUniqueCompleteMenuBundle(
+                            Arrays.asList(complete, secondComplete), kotlin.Unit.class);
+            Assert.assertEquals("two complete bundles must remain ambiguous", 2,
+                    ambiguous.completeCount);
+            Assert.assertNull("two complete bundles must fail closed",
+                    ambiguous.capability);
+        } catch (NoSuchMethodException exception) {
+            throw new AssertionError("menu resolver bundle fixture method missing", exception);
+        }
+    }
+
+    private static DexKitAbiScanner.MenuResolverBundle newMenuBundle(
+            Method resolver, java.util.List<Method> menuCallers,
+            java.util.List<Method> buttonCallers) {
+        java.util.Map<Integer, String> labels = new java.util.HashMap<Integer, String>();
+        labels.put(Integer.valueOf(0x7f010001), "off");
+        labels.put(Integer.valueOf(0x7f010002), "low");
+        labels.put(Integer.valueOf(0x7f010003), "medium");
+        labels.put(Integer.valueOf(0x7f010004), "high");
+        labels.put(Integer.valueOf(0x7f010005), "xhigh");
+        labels.put(Integer.valueOf(0x7f010006), "max");
+        return new DexKitAbiScanner.MenuResolverBundle(
+                resolver, menuCallers, buttonCallers, labels, Qx7.class);
+    }
+
     private static void assertMenuDiscoveryUsesStructuralCallers() {
         try {
             String scannerSource = readSource(
@@ -330,6 +405,41 @@ public final class DexKitAdaptiveContractCheck {
 
         public int secondResourceId() {
             return secondResourceId;
+        }
+    }
+
+    private static final class MenuResolverFixtures {
+        private MenuResolverFixtures() {
+        }
+
+        static String resolveComplete(int resourceId, ComposerQ composer, int flags) {
+            return composer == null ? null : String.valueOf(resourceId + flags);
+        }
+
+        static String resolveMissing(int resourceId, ComposerQ composer, int flags) {
+            return composer == null ? null : String.valueOf(resourceId + flags);
+        }
+
+        static String resolveAmbiguous(int resourceId, ComposerQ composer, int flags) {
+            return composer == null ? null : String.valueOf(resourceId + flags);
+        }
+
+        static String resolveSecondComplete(int resourceId, ComposerQ composer, int flags) {
+            return composer == null ? null : String.valueOf(resourceId + flags);
+        }
+
+        static kotlin.Unit renderChoices(Qx7 mode) {
+            return kotlin.Unit.INSTANCE;
+        }
+
+        static kotlin.Unit renderAlternateChoices(Qx7 mode) {
+            return kotlin.Unit.INSTANCE;
+        }
+
+        static void renderCurrent(Qx7 mode) {
+        }
+
+        private static final class ComposerQ {
         }
     }
 
