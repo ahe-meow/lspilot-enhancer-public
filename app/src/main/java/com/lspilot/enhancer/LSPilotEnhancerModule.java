@@ -74,8 +74,8 @@ public final class LSPilotEnhancerModule extends XposedModule {
 
     @Override
     public boolean onHotReloading(XposedModuleInterface.HotReloadingParam param) {
-        DexKitAbiScanner.clearCache();
         synchronized (lifecycleLock) {
+            DexKitAbiScanner.clearCache();
             if (registry != null) {
                 try {
                     registry.close();

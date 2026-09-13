@@ -280,6 +280,11 @@ public final class DexKitFailurePolicyCheck {
                     "lifecycle must pass all primary and split APK paths");
             require(source.contains("DexKitAbiScanner.clearCache()"),
                     "hot reload must invalidate scanner state");
+            require(source.contains(
+                            "synchronized (lifecycleLock) {\n"
+                                    + "            DexKitAbiScanner.clearCache();\n"
+                                    + "            if (registry != null)"),
+                    "hot reload must clear scanner cache inside lifecycle lock before registry cleanup");
             require(source.contains("DebugLogger.capability(\"lifecycle\", \"fingerprint\""),
                     "lifecycle must report the scanned content fingerprint");
             require(source.contains("DebugLogger.capability(\"lifecycle\", \"cache_hit\""),
