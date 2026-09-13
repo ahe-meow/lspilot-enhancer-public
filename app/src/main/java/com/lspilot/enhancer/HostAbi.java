@@ -66,35 +66,63 @@ public final class HostAbi {
     public static final class MenuCapability {
         public final Method labelResolver;
         public final Map<Integer, String> labels;
-        public final String menuOwner;
-        public final String menuMethod;
-        public final String buttonMethod;
+        public final Method menuMethod;
+        public final Method buttonMethod;
+        public final Class<?> reasoningEnumClass;
+        public final int buttonEnumIndex;
 
         public MenuCapability(
                 Method labelResolver,
                 Map<Integer, String> labels,
-                String menuOwner,
-                String menuMethod,
-                String buttonMethod) {
+                Method menuMethod,
+                Method buttonMethod,
+                Class<?> reasoningEnumClass,
+                int buttonEnumIndex) {
             this.labelResolver = requireMethod(labelResolver, "labelResolver");
+            this.menuMethod = requireMethod(menuMethod, "menuMethod");
+            this.buttonMethod = requireMethod(buttonMethod, "buttonMethod");
             if (labels == null
-                    || labels.size() != ReasoningPolicy.SUPPORTED.length + 1) {
+                    || labels.size() != ReasoningPolicy.SUPPORTED.length) {
                 throw new IllegalArgumentException("labels");
             }
-            if (menuOwner == null || menuOwner.isEmpty()) {
-                throw new IllegalArgumentException("menuOwner");
+            for (Map.Entry<Integer, String> entry : labels.entrySet()) {
+                if (entry.getKey() == null || !ReasoningPolicy.isSupported(entry.getValue())) {
+                    throw new IllegalArgumentException("labels");
+                }
             }
-            if (menuMethod == null || menuMethod.isEmpty()) {
+            for (String supported : ReasoningPolicy.SUPPORTED) {
+                if (!labels.containsValue(supported)) {
+                    throw new IllegalArgumentException("labels");
+                }
+            }
+            if (reasoningEnumClass == null || !reasoningEnumClass.isEnum()) {
+                throw new IllegalArgumentException("reasoningEnumClass");
+            }
+            Class<?>[] buttonParameters = buttonMethod.getParameterTypes();
+            int buttonEnumMatches = 0;
+            for (Class<?> parameter : buttonParameters) {
+                if (parameter == reasoningEnumClass) {
+                    buttonEnumMatches++;
+                }
+            }
+            if (buttonEnumMatches != 1
+                    || buttonEnumIndex < 0 || buttonEnumIndex >= buttonParameters.length
+                    || buttonParameters[buttonEnumIndex] != reasoningEnumClass) {
+                throw new IllegalArgumentException("buttonEnumIndex");
+            }
+            int menuEnumMatches = 0;
+            for (Class<?> parameter : menuMethod.getParameterTypes()) {
+                if (parameter == reasoningEnumClass) {
+                    menuEnumMatches++;
+                }
+            }
+            if (menuEnumMatches != 1) {
                 throw new IllegalArgumentException("menuMethod");
-            }
-            if (buttonMethod == null || buttonMethod.isEmpty()) {
-                throw new IllegalArgumentException("buttonMethod");
             }
             this.labels = Collections.unmodifiableMap(
                     new HashMap<Integer, String>(labels));
-            this.menuOwner = menuOwner;
-            this.menuMethod = menuMethod;
-            this.buttonMethod = buttonMethod;
+            this.reasoningEnumClass = reasoningEnumClass;
+            this.buttonEnumIndex = buttonEnumIndex;
         }
     }
 

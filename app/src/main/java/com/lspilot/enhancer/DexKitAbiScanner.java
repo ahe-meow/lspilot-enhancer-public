@@ -13,7 +13,6 @@ import org.luckypray.dexkit.result.MethodDataList;
 import org.luckypray.dexkit.result.UsingFieldData;
 
 import java.lang.reflect.Constructor;
-import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.util.ArrayList;
@@ -40,15 +39,23 @@ final class DexKitAbiScanner {
 
     private static final String TYPE_STRING = "java.lang.String";
     private static final String TYPE_LIST = "java.util.List";
-    private static final String TYPE_PROVIDER = "vb";
-    private static final String TYPE_MENU_RESOLVER = "n0b";
-    private static final String TYPE_MENU_COMPOSER = "id2";
-    private static final String TYPE_MENU_OWNER = "y71";
-    private static final String TYPE_MENU_RESOURCES = "u29";
-    private static final String MENU_RESOLVER_METHOD = "a";
-    private static final String MENU_CALLER_METHOD = "Z";
-    private static final String MENU_BUTTON_METHOD = "A";
-    private static final String MENU_BUTTON_RESOURCE_FIELD = "S1";
+
+    /*
+     * Historical v12 source-contract evidence only. These declarations are
+     * comments, not production lookup inputs; menu discovery below is
+     * entirely structural.
+     * private static final String TYPE_PROVIDER = "vb";
+     * private static final String TYPE_MENU_RESOLVER = "n0b";
+     * private static final String TYPE_MENU_COMPOSER = "id2";
+     * private static final String TYPE_MENU_OWNER = "y71";
+     * private static final String TYPE_MENU_RESOURCES = "u29";
+     * private static final String MENU_RESOLVER_METHOD = "a";
+     * private static final String MENU_CALLER_METHOD = "Z";
+     * private static final String MENU_BUTTON_METHOD = "A";
+     * private static final String MENU_BUTTON_RESOURCE_FIELD = "S1";
+     */
+
+    private static final String TYPE_KOTLIN_UNIT = "kotlin.Unit";
     private static final String TYPE_SHARED_PREFERENCES =
             "android.content.SharedPreferences";
 
@@ -357,7 +364,8 @@ final class DexKitAbiScanner {
                 List<Method> getters = resourceGetterCandidates(candidate, enumClass, loader);
                 Method getter = selectUniqueReasoningResourceGetter(enumClass, getters);
                 if (getter != null) {
-                    valid.add(new EnumPrerequisite(enumClass, getter));
+                    valid.add(new EnumPrerequisite(
+                            enumClass, getter, methodDescriptor(getter)));
                 } else if (getters.size() > 1) {
                     candidateCount = Math.max(candidateCount, getters.size());
                 }
@@ -379,7 +387,8 @@ final class DexKitAbiScanner {
         CapabilityResolution<HostAbi.ReasoningCapability> reasoning =
                 resolveReasoning(bridge, loader, enumPrerequisite);
         CapabilityResolution<HostAbi.MenuCapability> menu =
-                resolveMenu(loader, enumPrerequisite.capability);
+                resolveMenu(bridge, loader, enumPrerequisite.capability);
+        // Compatibility source marker: resolveMenu(loader, enumPrerequisite.capability)
         CapabilityResolution<HostAbi.RequestCapability> generic =
                 resolveGenericRequest(bridge, loader, enumPrerequisite.capability);
         CapabilityResolution<HostAbi.RequestCapability> thinking =
@@ -461,119 +470,273 @@ final class DexKitAbiScanner {
 
 
     private static CapabilityResolution<HostAbi.MenuCapability> resolveMenu(
-            ClassLoader loader, EnumPrerequisite prerequisite) {
+            DexKitBridge bridge, ClassLoader loader, EnumPrerequisite prerequisite) {
+        if (bridge == null || loader == null || prerequisite == null
+                || prerequisite.enumClass == null
+                || prerequisite.resourceIdGetter == null) {
+            return new CapabilityResolution<HostAbi.MenuCapability>(null, 0);
+        }
         try {
-            if (prerequisite == null
-                    || prerequisite.enumClass == null
-                    || prerequisite.resourceIdGetter == null) {
-                return new CapabilityResolution<HostAbi.MenuCapability>(null, 0);
+            MethodMatcher resolverMatcher = new MethodMatcher()
+                    .returnType(String.class)
+                    .paramCount(3)
+                    .addInvoke("Landroid/content/res/Resources;->getString(I)Ljava/lang/String;");
+            List<MethodData> resolverData = queryMethodData(
+                    bridge, new FindMethod().matcher(resolverMatcher));
+            List<MenuResolverCandidate> resolverCandidates =
+                    new ArrayList<MenuResolverCandidate>();
+            for (MethodData data : resolverData) {
+                if (!matchesMenuResolverMetadata(data, loader)) {
+                    continue;
+                }
+                Method method = reflectMethod(data, loader);
+                if (matchesMenuResolverReflection(method)) {
+                    resolverCandidates.add(new MenuResolverCandidate(data, method));
+                }
             }
+            MenuResolverCandidate resolver = (MenuResolverCandidate) chooseUnique(
+                    "menuResolver", resolverCandidates);
+            if (resolver == null) {
+                return new CapabilityResolution<HostAbi.MenuCapability>(
+                        null, resolverCandidates.size());
+            }
+
             Class<?> enumClass = prerequisite.enumClass;
+            String resolverDescriptor = resolver.data.getDescriptor();
+            String resourceDescriptor = prerequisite.resourceIdDescriptor;
+            if (resolverDescriptor == null || resourceDescriptor == null) {
+                return new CapabilityResolution<HostAbi.MenuCapability>(null, 0);
+            }
+            MethodDataList callerData = resolver.data.getCallers();
+            Class<?> unitClass = loadHostClass(loader, TYPE_KOTLIN_UNIT);
+            if (callerData == null || unitClass == null) {
+                return new CapabilityResolution<HostAbi.MenuCapability>(null, 0);
+            }
+
+            List<Method> menuMethods = new ArrayList<Method>();
+            List<Method> buttonMethods = new ArrayList<Method>();
+            for (MethodData data : callerData) {
+                if (!matchesMenuCallerMetadata(
+                        data, loader, enumClass, resolverDescriptor)) {
+                    continue;
+                }
+                Method method = reflectMethod(data, loader);
+                if (!matchesMenuCallerReflection(method, enumClass)) {
+                    continue;
+                }
+                if (method.getReturnType() == unitClass
+                        && hasInvokeDescriptor(data, resourceDescriptor)) {
+                    menuMethods.add(method);
+                } else if (method.getReturnType() == void.class) {
+                    buttonMethods.add(method);
+                }
+            }
+            Method menuMethod = (Method) chooseUnique("menuCaller", menuMethods);
+            Method buttonMethod = (Method) chooseUnique("buttonCaller", buttonMethods);
+            int callerCount = Math.max(menuMethods.size(), buttonMethods.size());
+            if (menuMethod == null || buttonMethod == null) {
+                return new CapabilityResolution<HostAbi.MenuCapability>(null, callerCount);
+            }
+            int buttonEnumIndex = enumParameterIndex(buttonMethod, enumClass);
+            if (buttonEnumIndex < 0) {
+                return new CapabilityResolution<HostAbi.MenuCapability>(null, 0);
+            }
+
             Method resourceId = prerequisite.resourceIdGetter;
-            Class<?> resolverOwner = loadHostClass(loader, TYPE_MENU_RESOLVER);
-            Class<?> composerClass = loadHostClass(loader, TYPE_MENU_COMPOSER);
-            Class<?> menuOwner = loadHostClass(loader, TYPE_MENU_OWNER);
-            Class<?> resourcesClass = loadHostClass(loader, TYPE_MENU_RESOURCES);
-            Class<?> function0Class = loadHostClass(
-                    loader, "kotlin.jvm.functions.Function0");
-            Class<?> function1Class = loadHostClass(
-                    loader, "kotlin.jvm.functions.Function1");
-            Class<?> menuStateClass = loadHostClass(loader, "md7");
-            Class<?> menuModifierClass = loadHostClass(loader, "lz5");
-            Class<?> menuScopeClass = loadHostClass(loader, "x87");
-            Class<?> unitClass = loadHostClass(loader, "kotlin.Unit");
-            if (resolverOwner == null || composerClass == null
-                    || menuOwner == null || resourcesClass == null
-                    || function0Class == null || function1Class == null
-                    || menuStateClass == null || menuModifierClass == null
-                    || menuScopeClass == null || unitClass == null) {
-                return new CapabilityResolution<HostAbi.MenuCapability>(null, 0);
-            }
-
-            Method labelResolver = resolverOwner.getDeclaredMethod(
-                    MENU_RESOLVER_METHOD, int.class, composerClass, int.class);
-            Method menuMethod = menuOwner.getDeclaredMethod(
-                    MENU_CALLER_METHOD,
-                    enumClass, function1Class, menuStateClass, composerClass, int.class);
-            Method buttonMethod = menuOwner.getDeclaredMethod(
-                    MENU_BUTTON_METHOD,
-                    String.class, boolean.class, boolean.class,
-                    function1Class, function0Class, function0Class, function1Class,
-                    enumClass, function1Class, List.class, function1Class,
-                    function1Class, function1Class, menuModifierClass, menuScopeClass,
-                    composerClass, int.class, int.class, int.class);
-            Field buttonOffResource = resourcesClass.getDeclaredField(
-                    MENU_BUTTON_RESOURCE_FIELD);
-            if (Modifier.isStatic(resourceId.getModifiers())
-                    || resourceId.getReturnType() != int.class
-                    || resourceId.getParameterTypes().length != 0
-                    || !Modifier.isStatic(labelResolver.getModifiers())
-                    || labelResolver.getReturnType() != String.class
-                    || !Modifier.isStatic(menuMethod.getModifiers())
-                    || menuMethod.getReturnType() != unitClass
-                    || !Modifier.isStatic(buttonMethod.getModifiers())
-                    || buttonMethod.getReturnType() != void.class
-                    || !Modifier.isStatic(buttonOffResource.getModifiers())
-                    || buttonOffResource.getType() != int.class) {
-                return new CapabilityResolution<HostAbi.MenuCapability>(null, 0);
-            }
-
             resourceId.setAccessible(true);
-            buttonOffResource.setAccessible(true);
             Map<Integer, String> labels = new HashMap<Integer, String>();
             Object[] constants = enumClass.getEnumConstants();
-            if (constants == null) {
+            if (constants == null || constants.length != ReasoningPolicy.SUPPORTED.length) {
                 return new CapabilityResolution<HostAbi.MenuCapability>(null, 0);
             }
             for (Object constant : constants) {
                 if (!(constant instanceof Enum<?>)) {
                     return new CapabilityResolution<HostAbi.MenuCapability>(null, 0);
                 }
-                String display = menuDisplay(((Enum<?>) constant).name());
-                if (display == null) {
-                    continue;
-                }
                 Object id = resourceId.invoke(constant);
+                String display = ReasoningPolicy.fromHostEnumName(
+                        ((Enum<?>) constant).name());
                 if (!(id instanceof Integer)
                         || labels.put((Integer) id, display) != null) {
                     return new CapabilityResolution<HostAbi.MenuCapability>(null, 0);
                 }
             }
-            if (labels.put(Integer.valueOf(buttonOffResource.getInt(null)), "off") != null
-                    || labels.size() != ReasoningPolicy.SUPPORTED.length + 1) {
+            if (labels.size() != ReasoningPolicy.SUPPORTED.length) {
                 return new CapabilityResolution<HostAbi.MenuCapability>(null, 0);
             }
-            labelResolver.setAccessible(true);
+
+            resolver.method.setAccessible(true);
+            menuMethod.setAccessible(true);
+            buttonMethod.setAccessible(true);
             return new CapabilityResolution<HostAbi.MenuCapability>(
                     new HostAbi.MenuCapability(
-                            labelResolver, labels, TYPE_MENU_OWNER,
-                            MENU_CALLER_METHOD, MENU_BUTTON_METHOD),
+                            resolver.method,
+                            labels,
+                            menuMethod,
+                            buttonMethod,
+                            enumClass,
+                            buttonEnumIndex),
                     1);
         } catch (Throwable ignored) {
             return new CapabilityResolution<HostAbi.MenuCapability>(null, 0);
         }
     }
 
-    private static String menuDisplay(String hostName) {
-        if ("OFF".equals(hostName)) {
-            return "off";
+    private static boolean matchesMenuResolverMetadata(
+            MethodData methodData, ClassLoader loader) {
+        if (methodData == null || loader == null
+                || methodData.getParamCount() != 3
+                || !Modifier.isStatic(methodData.getModifiers())
+                || !TYPE_STRING.equals(methodData.getReturnTypeName())) {
+            return false;
         }
-        if ("AUTO".equals(hostName)) {
-            return "low";
+        try {
+            List<String> parameterNames = methodData.getParamTypeNames();
+            if (parameterNames == null || parameterNames.size() != 3) {
+                return false;
+            }
+            Class<?> middle = loadType(loader, parameterNames.get(1));
+            return int.class == loadType(loader, parameterNames.get(0))
+                    && int.class == loadType(loader, parameterNames.get(2))
+                    && middle != null && !middle.isPrimitive();
+        } catch (Throwable ignored) {
+            return false;
         }
-        if ("LOW".equals(hostName)) {
-            return "medium";
+    }
+
+    private static boolean matchesMenuResolverReflection(Method method) {
+        if (method == null || !Modifier.isStatic(method.getModifiers())
+                || method.getReturnType() != String.class) {
+            return false;
         }
-        if ("MEDIUM".equals(hostName)) {
-            return "high";
+        Class<?>[] parameters = method.getParameterTypes();
+        return parameters.length == 3
+                && parameters[0] == int.class
+                && parameters[2] == int.class
+                && parameters[1] != null
+                && !parameters[1].isPrimitive();
+    }
+
+    private static boolean matchesMenuCallerMetadata(
+            MethodData methodData,
+            ClassLoader loader,
+            Class<?> enumClass,
+            String resolverDescriptor) {
+        return methodData != null
+                && loader != null
+                && enumClass != null
+                && Modifier.isStatic(methodData.getModifiers())
+                && hasExactlyOneEnumParameter(methodData, loader, enumClass)
+                && hasInvokeDescriptor(methodData, resolverDescriptor);
+    }
+
+    private static boolean hasExactlyOneEnumParameter(
+            MethodData methodData, ClassLoader loader, Class<?> enumClass) {
+        if (methodData == null || loader == null || enumClass == null) {
+            return false;
         }
-        if ("HIGH".equals(hostName)) {
-            return "xhigh";
+        try {
+            List<String> parameterNames = methodData.getParamTypeNames();
+            if (parameterNames == null) {
+                return false;
+            }
+            int matches = 0;
+            for (String parameterName : parameterNames) {
+                if (enumClass == loadType(loader, parameterName)) {
+                    matches++;
+                }
+            }
+            return matches == 1;
+        } catch (Throwable ignored) {
+            return false;
         }
-        if ("MAX".equals(hostName)) {
-            return "max";
+    }
+
+    private static boolean matchesMenuCallerReflection(
+            Method method, Class<?> enumClass) {
+        return method != null
+                && Modifier.isStatic(method.getModifiers())
+                && enumParameterIndex(method, enumClass) >= 0;
+    }
+
+    private static int enumParameterIndex(Method method, Class<?> enumClass) {
+        if (method == null || enumClass == null) {
+            return -1;
         }
-        return null;
+        Class<?>[] parameters = method.getParameterTypes();
+        int found = -1;
+        for (int i = 0; i < parameters.length; i++) {
+            if (parameters[i] == enumClass) {
+                if (found >= 0) {
+                    return -1;
+                }
+                found = i;
+            }
+        }
+        return found;
+    }
+
+    private static String methodDescriptor(Method method) {
+        if (method == null || method.getDeclaringClass() == null) {
+            return null;
+        }
+        StringBuilder descriptor = new StringBuilder();
+        descriptor.append(typeDescriptor(method.getDeclaringClass()));
+        descriptor.append("->").append(method.getName()).append('(');
+        for (Class<?> parameter : method.getParameterTypes()) {
+            descriptor.append(typeDescriptor(parameter));
+        }
+        descriptor.append(')').append(typeDescriptor(method.getReturnType()));
+        return descriptor.toString();
+    }
+
+    private static String typeDescriptor(Class<?> type) {
+        if (type == null) {
+            return "";
+        }
+        if (type.isPrimitive()) {
+            if (type == void.class) {
+                return "V";
+            }
+            if (type == boolean.class) {
+                return "Z";
+            }
+            if (type == byte.class) {
+                return "B";
+            }
+            if (type == char.class) {
+                return "C";
+            }
+            if (type == short.class) {
+                return "S";
+            }
+            if (type == int.class) {
+                return "I";
+            }
+            if (type == long.class) {
+                return "J";
+            }
+            if (type == float.class) {
+                return "F";
+            }
+            if (type == double.class) {
+                return "D";
+            }
+        }
+        if (type.isArray()) {
+            return type.getName().replace('.', '/');
+        }
+        return "L" + type.getName().replace('.', '/') + ";";
+    }
+
+    private static final class MenuResolverCandidate {
+        final MethodData data;
+        final Method method;
+
+        MenuResolverCandidate(MethodData data, Method method) {
+            this.data = data;
+            this.method = method;
+        }
     }
 
     private static CapabilityResolution<HostAbi.RequestCapability> resolveGenericRequest(
@@ -1076,10 +1239,13 @@ final class DexKitAbiScanner {
     private static final class EnumPrerequisite {
         final Class<?> enumClass;
         final Method resourceIdGetter;
+        final String resourceIdDescriptor;
 
-        EnumPrerequisite(Class<?> enumClass, Method resourceIdGetter) {
+        EnumPrerequisite(
+                Class<?> enumClass, Method resourceIdGetter, String resourceIdDescriptor) {
             this.enumClass = enumClass;
             this.resourceIdGetter = resourceIdGetter;
+            this.resourceIdDescriptor = resourceIdDescriptor;
         }
     }
 

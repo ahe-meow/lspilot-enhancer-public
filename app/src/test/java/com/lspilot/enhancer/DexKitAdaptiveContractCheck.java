@@ -29,6 +29,7 @@ public final class DexKitAdaptiveContractCheck {
         assertReasoningCapabilityCarriesEnumClass();
         assertScannerUsesNoFixedEnumLookups();
         assertRequestDiscoveryUsesStructuralMatchers();
+        assertMenuDiscoveryUsesStructuralCallers();
     }
 
     private static void assertStructuralEnumPredicate() {
@@ -173,6 +174,62 @@ public final class DexKitAdaptiveContractCheck {
                     hookSource.contains("\"a69\""));
         } catch (Exception exception) {
             throw new AssertionError("type-driven request discovery contract failed", exception);
+        }
+    }
+
+    private static void assertMenuDiscoveryUsesStructuralCallers() {
+        try {
+            String scannerSource = readSource(
+                    "app/src/main/java/com/lspilot/enhancer/DexKitAbiScanner.java");
+            Assert.assertTrue("menu query must search three-parameter String methods",
+                    scannerSource.contains(".paramCount(3)"));
+            Assert.assertTrue("menu query must require the Resources string invoke",
+                    scannerSource.contains(
+                            ".addInvoke(\"Landroid/content/res/Resources;->getString(I)Ljava/lang/String;\")"));
+            Assert.assertTrue("menu discovery must inspect direct resolver callers",
+                    scannerSource.contains("getCallers()"));
+            Assert.assertTrue("menu discovery must retain reflected menu methods",
+                    scannerSource.contains("buttonEnumIndex"));
+            Assert.assertTrue("menu installation must support atomic rollback",
+                    readSource("app/src/main/java/com/lspilot/enhancer/ReasoningMenuHook.java")
+                            .contains("registry.removeHook"));
+
+            String[] fixedLookupExpressions = {
+                    "loadHostClass(loader, TYPE_MENU_RESOLVER)",
+                    "loadHostClass(loader, TYPE_MENU_COMPOSER)",
+                    "loadHostClass(loader, TYPE_MENU_OWNER)",
+                    "loadHostClass(loader, TYPE_MENU_RESOURCES)",
+                    "getDeclaredMethod(\n                    MENU_RESOLVER_METHOD",
+                    "getDeclaredMethod(\n                    MENU_CALLER_METHOD",
+                    "getDeclaredMethod(\n                    MENU_BUTTON_METHOD",
+                    "getDeclaredField(\n                    MENU_BUTTON_RESOURCE_FIELD"
+            };
+            for (String expression : fixedLookupExpressions) {
+                Assert.assertFalse("menu discovery must not use fixed lookup: " + expression,
+                        scannerSource.contains(expression));
+            }
+
+            String hostAbiSource = readSource(
+                    "app/src/main/java/com/lspilot/enhancer/HostAbi.java");
+            Assert.assertTrue("menu capability must store the discovered menu method",
+                    hostAbiSource.contains("public final Method menuMethod"));
+            Assert.assertTrue("menu capability must store the discovered button method",
+                    hostAbiSource.contains("public final Method buttonMethod"));
+            Assert.assertTrue("menu capability must store the discovered enum class",
+                    hostAbiSource.contains("public final Class<?> reasoningEnumClass"));
+            Assert.assertTrue("menu capability must store the enum parameter index",
+                    hostAbiSource.contains("public final int buttonEnumIndex"));
+            Assert.assertFalse("menu capability must not store a fixed owner name",
+                    hostAbiSource.contains("menuOwner"));
+
+            String menuHookSource = readSource(
+                    "app/src/main/java/com/lspilot/enhancer/ReasoningMenuHook.java");
+            Assert.assertTrue("stack guard must compare reflected method targets",
+                    menuHookSource.contains("Method... targets"));
+            Assert.assertFalse("menu guard must not inspect the old composer name",
+                    menuHookSource.contains("\"id2\""));
+        } catch (Exception exception) {
+            throw new AssertionError("structural menu discovery contract failed", exception);
         }
     }
 

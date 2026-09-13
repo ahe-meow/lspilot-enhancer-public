@@ -18,6 +18,8 @@ public final class HookRegistry {
     private final List<HookResource> hookResources = new ArrayList<HookResource>();
     private final IdentityHashMap<Object, Boolean> hookIdentities =
             new IdentityHashMap<Object, Boolean>();
+    private final IdentityHashMap<Object, HookResource> hookResourcesByIdentity =
+            new IdentityHashMap<Object, HookResource>();
     private boolean closed;
 
     public HookRegistry() {
@@ -107,6 +109,31 @@ public final class HookRegistry {
         });
     }
 
+    /** Package-visible seam for rolling back one capability installation. */
+    boolean removeHook(Object identity) {
+        if (identity == null) {
+            return false;
+        }
+        HookResource resource;
+        synchronized (lock) {
+            if (closed) {
+                return false;
+            }
+            resource = hookResourcesByIdentity.remove(identity);
+            if (resource == null) {
+                return false;
+            }
+            hookIdentities.remove(identity);
+            hookResources.remove(resource);
+        }
+        try {
+            resource.unhook();
+        } catch (Throwable exception) {
+            logCleanupFailure("hook-unhook", exception);
+        }
+        return true;
+    }
+
     /** Releases every owned hook exactly once. */
     public void close() {
         List<HookResource> hooks;
@@ -128,6 +155,7 @@ public final class HookRegistry {
         synchronized (lock) {
             hookResources.clear();
             hookIdentities.clear();
+            hookResourcesByIdentity.clear();
         }
     }
 
@@ -153,6 +181,7 @@ public final class HookRegistry {
                 releaseImmediately = true;
             } else {
                 hookIdentities.put(identity, Boolean.TRUE);
+                hookResourcesByIdentity.put(identity, resource);
                 hookResources.add(resource);
             }
         }
