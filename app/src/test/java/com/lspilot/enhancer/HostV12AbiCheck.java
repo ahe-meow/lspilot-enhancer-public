@@ -5,6 +5,7 @@ import java.io.FileInputStream;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.security.MessageDigest;
+import java.util.Collections;
 
 /**
  * Read-only exact-host ABI check. This entry point is intended for an Android
@@ -37,7 +38,7 @@ public final class HostV12AbiCheck {
             throw new IllegalStateException("host class loader unavailable");
         }
         DexKitAbiScanner.ScanResult result =
-                DexKitAbiScanner.resolveDetailed(loader, apkPath);
+                DexKitAbiScanner.resolveDetailed(loader, Collections.singletonList(apkPath));
         printCount("reasoningSource", result.reasoningSourceCount);
         printCount("menuLabels", result.menuLabelsCount);
         printCount("genericRequest", result.genericRequestCount);

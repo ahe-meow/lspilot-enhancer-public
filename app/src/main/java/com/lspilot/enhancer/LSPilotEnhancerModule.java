@@ -74,6 +74,7 @@ public final class LSPilotEnhancerModule extends XposedModule {
 
     @Override
     public boolean onHotReloading(XposedModuleInterface.HotReloadingParam param) {
+        DexKitAbiScanner.clearCache();
         synchronized (lifecycleLock) {
             if (registry != null) {
                 try {
@@ -154,18 +155,24 @@ public final class LSPilotEnhancerModule extends XposedModule {
 
         DexKitAbiScanner.ScanResult scanResult;
         try {
-            scanResult = DexKitAbiScanner.resolveDetailed(loader, sourceDir);
+            scanResult = DexKitAbiScanner.resolveDetailed(loader, sourcePaths);
         } catch (Throwable exception) {
             scanResult = null;
             DebugLogger.capability("lifecycle", "disabled", exception);
         }
-        if (scanResult == null || !hasAnyCapability(scanResult.abi)) {
+        if (scanResult == null) {
             closeRegistryLocked();
             disableCapabilities();
             return;
         }
 
         logResolutionCounts(scanResult);
+        if (!hasAnyCapability(scanResult.abi)) {
+            closeRegistryLocked();
+            disableCapabilities();
+            return;
+        }
+
         installCapabilities(scanResult, currentRegistry);
         if (currentRegistry.resourceCount() == 0) {
             closeRegistryLocked();
@@ -268,6 +275,11 @@ public final class LSPilotEnhancerModule extends XposedModule {
     }
 
     private static void logResolutionCounts(DexKitAbiScanner.ScanResult scanResult) {
+        DebugLogger.capability("lifecycle", "fingerprint", scanResult.contentFingerprint);
+        DebugLogger.capability("lifecycle", "cache_hit",
+                Boolean.valueOf(scanResult.cacheHit));
+        DebugLogger.capability("lifecycle", "scan_fresh",
+                Boolean.valueOf(scanResult.contentFingerprint != null && !scanResult.cacheHit));
         DebugLogger.capability("reasoningSource", "candidates",
                 Integer.valueOf(scanResult.reasoningSourceCount));
         DebugLogger.capability("menuLabels", "candidates",

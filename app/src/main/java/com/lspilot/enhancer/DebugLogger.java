@@ -10,10 +10,11 @@ public final class DebugLogger {
     }
 
     public static void capability(String capability, String event, Object... values) {
-        String line = safeCapability(capability) + ":" + safeEvent(event);
+        String eventName = safeEvent(event);
+        String line = safeCapability(capability) + ":" + eventName;
         if (values != null) {
             for (Object value : values) {
-                line = line + " " + safeValue(value);
+                line = line + " " + safeValue(value, eventName);
             }
         }
         try {
@@ -42,6 +43,9 @@ public final class DebugLogger {
                 || "process_rejected".equals(value)
                 || "process_accepted".equals(value)
                 || "source_paths".equals(value)
+                || "fingerprint".equals(value)
+                || "cache_hit".equals(value)
+                || "scan_fresh".equals(value)
                 || "candidates".equals(value)
                 || "ready".equals(value)
                 || "installed".equals(value)
@@ -53,9 +57,14 @@ public final class DebugLogger {
         return "unknown";
     }
 
-    private static String safeValue(Object value) {
+    private static String safeValue(Object value, String event) {
         if (value == null) {
             return "null";
+        }
+        if ("fingerprint".equals(event)
+                && value instanceof String
+                && isSha256Fingerprint((String) value)) {
+            return (String) value;
         }
         if (value instanceof Boolean) {
             return ((Boolean) value).booleanValue() ? "true" : "false";
@@ -82,6 +91,20 @@ public final class DebugLogger {
             return "exception=" + safeExceptionName((Throwable) value);
         }
         return "redacted";
+    }
+
+    private static boolean isSha256Fingerprint(String value) {
+        if (value == null || value.length() != 64) {
+            return false;
+        }
+        for (int i = 0; i < value.length(); i++) {
+            char character = value.charAt(i);
+            if (!((character >= '0' && character <= '9')
+                    || (character >= 'a' && character <= 'f'))) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static String safeExceptionName(Throwable exception) {

@@ -276,6 +276,40 @@ public final class DexKitFailurePolicyCheck {
                             && source.contains("path.isFile()")
                             && source.contains("path.canRead()"),
                     "all host APK paths must be validated");
+            require(source.contains("DexKitAbiScanner.resolveDetailed(loader, sourcePaths)"),
+                    "lifecycle must pass all primary and split APK paths");
+            require(source.contains("DexKitAbiScanner.clearCache()"),
+                    "hot reload must invalidate scanner state");
+            require(source.contains("DebugLogger.capability(\"lifecycle\", \"fingerprint\""),
+                    "lifecycle must report the scanned content fingerprint");
+            require(source.contains("DebugLogger.capability(\"lifecycle\", \"cache_hit\""),
+                    "lifecycle must report cache reuse");
+            require(source.contains("DebugLogger.capability(\"lifecycle\", \"scan_fresh\""),
+                    "lifecycle must report fresh scans");
+            require(source.contains("scanResult.contentFingerprint")
+                            && source.contains("scanResult.cacheHit"),
+                    "lifecycle diagnostics must use scan fingerprint and cache state");
+            require(!source.contains("versionCode") && !source.contains("versionName"),
+                    "production lifecycle must not gate ABI discovery by version metadata");
+            int primaryPath = source.indexOf("sourcePaths.add(sourceDir)");
+            int splitPaths = source.indexOf("for (String splitSourceDir", primaryPath);
+            int scannerCall = source.indexOf(
+                    "DexKitAbiScanner.resolveDetailed(loader, sourcePaths)");
+            require(primaryPath >= 0 && splitPaths > primaryPath && scannerCall > splitPaths,
+                    "lifecycle must preserve primary-then-split APK path order");
+            String probe = readSource(
+                    "app/src/test/java/com/lspilot/enhancer/HostV12AbiCheck.java");
+            require(probe.contains("EXPECTED_VERSION = \"1.1.1\""),
+                    "exact version evidence must remain test-only");
+            require(probe.contains("EXPECTED_VERSION_CODE = 12"),
+                    "exact version-code evidence must remain test-only");
+            require(probe.contains(
+                            "DexKitAbiScanner.resolveDetailed(loader, "
+                                    + "Collections.singletonList(apkPath))"),
+                    "v12 probe must use the list-based scanner overload");
+            require(!source.contains("getPackageArchiveInfo")
+                            && !source.contains("getPackageInfo"),
+                    "production lifecycle must not inspect package version metadata");
             require(source.contains("loader = param.getClassLoader()")
                             && source.contains("loader = param.getDefaultClassLoader()"),
                     "class-loader fallback must be retained");
@@ -321,6 +355,10 @@ public final class DexKitFailurePolicyCheck {
                     "logger must expose the capability diagnostic contract");
             require(source.contains("getClass().getSimpleName()"),
                     "logger must use sanitized exception class names");
+            require(source.contains("\"fingerprint\"")
+                            && source.contains("\"cache_hit\"")
+                            && source.contains("\"scan_fresh\""),
+                    "logger must allowlist cache and fingerprint events");
             require(!source.contains("getMessage") && !source.contains("printStackTrace"),
                     "logger must not emit exception details");
             require(!source.contains("contextDisplay") && !source.contains("contextText")
