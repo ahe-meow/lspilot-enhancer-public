@@ -35,13 +35,24 @@ The removed context-length feature, module settings UI, Remote Preferences polic
 | Component | Requirement |
 | --- | --- |
 | Host package | `me.yun.lspilot` |
-| Tested host | Version `1.1.1`, version code `12` |
+| Tested host | Version `1.1.1`, version code `12` (current verified runtime sample) |
+| Newer-host compatibility | Not empirically verified; another host APK/runtime sample is required |
 | Hook API | libxposed API `102` |
 | Compile SDK | Android `37` |
 | Target SDK | Android `29` |
 | Minimum SDK | Android `26` |
 | Java | Source/target compatibility `8` |
 | ABI discovery | DexKit `2.2.0` |
+
+### Adaptive discovery
+
+Compatibility discovery uses SHA-256 content fingerprinting across the primary APK (`sourceDir`) and every non-null split APK (`splitSourceDirs`). The in-process cache key is the exact `ClassLoader` identity plus the combined content fingerprint, and hot reload clears that cache. A content change triggers a fresh scan even when `versionCode` and `versionName` stay the same; neither version field is a production compatibility gate.
+
+The module uses structural DexKit discovery for enum, request, and menu capabilities. Candidate metadata, reflected signatures, required JSON literals, invoke relationships, caller relationships, and uniqueness are validated before hooks are installed. Missing, ambiguous, malformed, or unsupported evidence produces a fail closed result for the affected capability; dependent request capabilities remain disabled when their reasoning prerequisite is unavailable, while unrelated capability attempts remain independent.
+
+Diagnostics are privacy-safe and allowlisted: capability and candidate events, cache state, a validated SHA-256 fingerprint, and exception class names only. APK paths and bytes, request bodies, message contents, credentials, and persistent ABI or policy state are not logged or stored.
+
+The `1.1.1` / version code `12` host sample is the current verified v12 runtime acceptance boundary recorded for this project. Newer-host compatibility is not empirically verified here and requires another host APK/runtime sample; JVM structural and content-change checks do not replace that evidence.
 
 The module is scoped to the host package and has no Activity or Service entry point.
 
@@ -104,4 +115,4 @@ lib/                                Compile-only API 102 AAR
 
 ## Release verification
 
-The current implementation was verified with unit tests, a Release build, static/source checks, and manual host/device/LSPosed runtime acceptance. The host reasoning menu and current-value button display the six requested lowercase values.
+The current v12 host/device/LSPosed acceptance is recorded for the `1.1.1` / version code `12` sample. Local verification of the adaptive implementation includes JVM tests, source/static checks, manifest checks, and Debug/Release assembly. Release assembly requires `-x lintVitalRelease` because the required `targetSdk = 29` triggers the existing `ExpiredTargetSdkVersion` lint error. No newer-host runtime acceptance is claimed.

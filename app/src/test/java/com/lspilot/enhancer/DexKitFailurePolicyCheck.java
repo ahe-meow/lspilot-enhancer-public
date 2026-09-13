@@ -30,6 +30,7 @@ public final class DexKitFailurePolicyCheck {
         assertCurrentV12AbiContracts();
         assertLifecycleSourceContract();
         assertDebugLoggerSourceContract();
+        assertReadmeDocumentationContract();
     }
 
     private static void require(boolean condition, String message) {
@@ -371,6 +372,27 @@ public final class DexKitFailurePolicyCheck {
                     "logger must not expose removed context capabilities");
         } catch (Exception exception) {
             throw new AssertionError("debug logger source contract failed", exception);
+        }
+    }
+
+    private static void assertReadmeDocumentationContract() {
+        try {
+            String readme = readSource("README.md");
+            String[] required = {
+                    "content fingerprint",
+                    "split APK",
+                    "structural DexKit",
+                    "versionCode",
+                    "fail closed",
+                    "targetSdk = 29",
+                    "app-release-unsigned.apk"
+            };
+            for (String phrase : required) {
+                require(readme.contains(phrase),
+                        "README must document: " + phrase);
+            }
+        } catch (Exception exception) {
+            throw new AssertionError("README documentation contract failed", exception);
         }
     }
 
