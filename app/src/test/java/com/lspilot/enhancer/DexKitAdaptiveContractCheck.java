@@ -67,6 +67,14 @@ public final class DexKitAdaptiveContractCheck {
                 invokeEnumPredicate(Qx8.class));
         Assert.assertFalse("string literals are not enum constants",
                 invokeEnumPredicate(StringLiteralCarrier.class));
+        try {
+            String scannerSource = readSource(
+                    "app/src/main/java/com/lspilot/enhancer/DexKitAbiScanner.java");
+            Assert.assertTrue("enum field ownership must use direct owner metadata",
+                    scannerSource.contains("field.getDeclaredClassName()"));
+        } catch (Exception exception) {
+            throw new AssertionError("enum owner metadata fixture failed", exception);
+        }
     }
 
     private static void assertResourceGetterPredicate() {

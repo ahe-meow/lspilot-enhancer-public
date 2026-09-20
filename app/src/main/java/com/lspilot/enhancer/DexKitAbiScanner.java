@@ -300,13 +300,12 @@ final class DexKitAbiScanner {
                     continue;
                 }
                 FieldData field = usingField.getField();
-                ClassData declaringClass = field == null ? null : field.getDeclaredClass();
                 if (field != null
                         && !Modifier.isStatic(field.getModifiers())
                         && "int".equals(field.getTypeName())
-                        && declaringClass != null
+                        && field.getDeclaredClassName() != null
                         && enumData.getName() != null
-                        && enumData.getName().equals(declaringClass.getName())) {
+                        && enumData.getName().equals(field.getDeclaredClassName())) {
                     return true;
                 }
             }
