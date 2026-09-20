@@ -1,0 +1,99 @@
+name: Preview Release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "preview-*"
+
+permissions:
+  contents: write
+
+env:
+  RELEASE_TAG: ${{ github.event_name == 'push' && github.ref_name || format('preview-{0}', github.run_number) }}
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK packages
+        run: sdkmanager "platforms;android-37" "build-tools;37.0.0"
+
+      - name: Run debug unit tests
+        run: bash ./gradlew :app:testDebugUnitTest
+
+      - name: Build release APK
+        run: bash ./gradlew :app:packageReleaseUniversalApk -x lintVitalRelease -PversionCode=${GITHUB_RUN_NUMBER} -PversionName=${RELEASE_TAG}
+
+      - name: Decode signing keystore
+        env:
+          KEYSTORE_B64: ${{ secrets.KEYSTORE_B64 }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$KEYSTORE_B64" | base64 --decode > "$RUNNER_TEMP/preview-release.keystore"
+
+      - name: Align and sign release APK
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          build_tools="$ANDROID_HOME/build-tools/37.0.0"
+          unsigned_apk="app/build/outputs/apk_from_bundle/release/app-release-universal-unsigned.apk"
+          aligned_apk="$RUNNER_TEMP/app-release-universal-aligned.apk"
+          signed_apk="app/build/outputs/apk_from_bundle/release/app-release-universal.apk"
+
+          "$build_tools/zipalign" -f -p 4 "$unsigned_apk" "$aligned_apk"
+          "$build_tools/apksigner" sign \
+            --ks "$RUNNER_TEMP/preview-release.keystore" \
+            --ks-pass env:KEYSTORE_PASSWORD \
+            --ks-key-alias "$KEY_ALIAS" \
+            --key-pass env:KEY_PASSWORD \
+            --out "$signed_apk" \
+            "$aligned_apk"
+          "$build_tools/apksigner" verify --verbose "$signed_apk"
+
+      - name: Write SHA256 checksum
+        working-directory: app/build/outputs/apk_from_bundle/release
+        run: sha256sum app-release-universal.apk > SHA256SUMS.txt
+
+      - name: Upload preview build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: preview-release
+          if-no-files-found: error
+          path: |
+            app/build/outputs/apk_from_bundle/release/app-release-universal.apk
+            app/build/outputs/apk_from_bundle/release/SHA256SUMS.txt
+
+      - name: Create or update GitHub prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release edit "$RELEASE_TAG" --prerelease --title "$RELEASE_TAG"
+          else
+            gh release create "$RELEASE_TAG" \
+              --prerelease \
+              --title "$RELEASE_TAG" \
+              --target "$GITHUB_SHA"
+          fi
+          gh release upload "$RELEASE_TAG" \
+            app/build/outputs/apk_from_bundle/release/app-release-universal.apk \
+            app/build/outputs/apk_from_bundle/release/SHA256SUMS.txt \
+            --clobber
