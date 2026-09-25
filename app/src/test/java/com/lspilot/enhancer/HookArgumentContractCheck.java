@@ -13,6 +13,7 @@ import java.lang.reflect.Modifier;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 public final class HookArgumentContractCheck {
@@ -33,6 +34,7 @@ public final class HookArgumentContractCheck {
         assertRequestNonStringFallbackAndSingleProceed();
         assertRegistryRunIfOpenLifecycle();
         assertRegistryCleanupIsIdempotentAndIndependent();
+        assertRegistryClosesLifecycleBeforeHooks();
     }
 
     private static void assertPublicInstallGuards() {
@@ -267,6 +269,40 @@ public final class HookArgumentContractCheck {
                 Assert.fail("closed registry must not run lifecycle work");
             }
         }));
+    }
+
+    private static void assertRegistryClosesLifecycleBeforeHooks() {
+        final List<String> events = new ArrayList<String>();
+        HookRegistry registry = new HookRegistry();
+        final Object lifecycleIdentity = new Object();
+        Assert.assertTrue(registry.addCloseResource(
+                lifecycleIdentity,
+                new Runnable() {
+                    @Override
+                    public void run() {
+                        events.add("drain");
+                    }
+                }));
+        registry.addForTest(new HookRegistry.TestHookHandle() {
+            @Override
+            public void unhook() {
+                events.add("cleanup-hook");
+            }
+        });
+        registry.addForTest(new HookRegistry.TestHookHandle() {
+            @Override
+            public void unhook() {
+                events.add("starter-hook");
+            }
+        });
+
+        registry.close();
+        Assert.assertEquals(
+                Arrays.asList("drain", "cleanup-hook", "starter-hook"),
+                events);
+        registry.close();
+        Assert.assertEquals("registry close must remain idempotent",
+                3, events.size());
     }
 
     private static String readSource(String path) throws IOException {

@@ -9,12 +9,16 @@ import java.util.List;
 
 import io.github.libxposed.api.XposedInterface;
 
-/** Owns API 102 hook handles for one host process. */
+/** Owns API 102 hook handles and lifecycle resources for one host process. */
 public final class HookRegistry {
     private static final String LOG_TAG = "LSPilot";
 
     private final Object lock = new Object();
     private final XposedInterface xposedInterface;
+    private final List<CloseResource> closeResources =
+            new ArrayList<CloseResource>();
+    private final IdentityHashMap<Object, CloseResource> closeResourcesByIdentity =
+            new IdentityHashMap<Object, CloseResource>();
     private final List<HookResource> hookResources = new ArrayList<HookResource>();
     private final IdentityHashMap<Object, Boolean> hookIdentities =
             new IdentityHashMap<Object, Boolean>();
@@ -28,6 +32,68 @@ public final class HookRegistry {
 
     public HookRegistry(XposedInterface xposedInterface) {
         this.xposedInterface = xposedInterface;
+    }
+
+    XposedInterface getXposedInterface() {
+        return xposedInterface;
+    }
+
+    /** Installs transparent, state-transition-only keep-alive diagnostics. */
+    boolean installKeepAliveDiagnostics() {
+        if (xposedInterface == null || isClosed()) {
+            return false;
+        }
+        final KeepAliveDiagnostics diagnostics = new KeepAliveDiagnostics();
+        boolean installed = false;
+        try {
+            installed |= installHook(
+                    HostForegroundKeepAliveController.ReferenceCountPolicy.class
+                            .getDeclaredMethod("acquire"),
+                    "keep-alive-acquire",
+                    new XposedInterface.Hooker() {
+                        @Override
+                        public Object intercept(XposedInterface.Chain chain) throws Throwable {
+                            Object result = chain.proceed();
+                            diagnostics.acquired(chain.getThisObject(), result);
+                            return result;
+                        }
+                    }) != null;
+        } catch (Throwable ignored) {
+            // Diagnostics must not affect capability installation.
+        }
+        try {
+            installed |= installHook(
+                    HostForegroundKeepAliveController.ReferenceCountPolicy.class
+                            .getDeclaredMethod("release"),
+                    "keep-alive-release",
+                    new XposedInterface.Hooker() {
+                        @Override
+                        public Object intercept(XposedInterface.Chain chain) throws Throwable {
+                            Object result = chain.proceed();
+                            diagnostics.released(result);
+                            return result;
+                        }
+                    }) != null;
+        } catch (Throwable ignored) {
+            // Diagnostics must not affect capability installation.
+        }
+        try {
+            installed |= installHook(
+                    HostForegroundKeepAliveController.class.getDeclaredMethod(
+                            "startBindingLocked", android.content.Context.class),
+                    "keep-alive-binding",
+                    new XposedInterface.Hooker() {
+                        @Override
+                        public Object intercept(XposedInterface.Chain chain) throws Throwable {
+                            Object result = chain.proceed();
+                            diagnostics.bound(result);
+                            return result;
+                        }
+                    }) != null;
+        } catch (Throwable ignored) {
+            // Diagnostics must not affect capability installation.
+        }
+        return installed;
     }
 
     /** Takes ownership of a framework hook handle. */
@@ -55,6 +121,54 @@ public final class HookRegistry {
             action.run();
             return !closed;
         }
+    }
+
+    /**
+     * Adds work that must disable and drain state before hooks are removed.
+     * Returns true only when the open registry takes ownership.
+     */
+    boolean addCloseResource(Object identity, Runnable closeAction) {
+        if (identity == null || closeAction == null) {
+            return false;
+        }
+        CloseResource resource = new CloseResource(closeAction);
+        boolean closeImmediately = false;
+        synchronized (lock) {
+            if (closeResourcesByIdentity.containsKey(identity)) {
+                return false;
+            }
+            if (closed) {
+                closeImmediately = true;
+            } else {
+                closeResourcesByIdentity.put(identity, resource);
+                closeResources.add(resource);
+            }
+        }
+        if (closeImmediately) {
+            closeQuietly(resource, "late-resource-close");
+            return false;
+        }
+        return true;
+    }
+
+    /** Removes and closes one lifecycle resource during failed installation. */
+    boolean removeCloseResource(Object identity) {
+        if (identity == null) {
+            return false;
+        }
+        CloseResource resource;
+        synchronized (lock) {
+            if (closed) {
+                return false;
+            }
+            resource = closeResourcesByIdentity.remove(identity);
+            if (resource == null) {
+                return false;
+            }
+            closeResources.remove(resource);
+        }
+        closeQuietly(resource, "resource-close");
+        return true;
     }
 
     /**
@@ -96,6 +210,35 @@ public final class HookRegistry {
         }
     }
 
+    private static final class KeepAliveDiagnostics {
+        private boolean bindingObserved;
+
+        synchronized void acquired(Object policy, Object result) {
+            if (Boolean.TRUE.equals(result)
+                    && policy instanceof HostForegroundKeepAliveController.ReferenceCountPolicy
+                    && ((HostForegroundKeepAliveController.ReferenceCountPolicy) policy).count() == 1) {
+                DebugLogger.capability("keepAlive", "acquire");
+            }
+        }
+
+        synchronized void bound(Object result) {
+            if (!Boolean.TRUE.equals(result)) {
+                return;
+            }
+            String event = bindingObserved ? "rebind" : "bind";
+            bindingObserved = true;
+            DebugLogger.capability("keepAlive", event);
+        }
+
+        synchronized void released(Object result) {
+            if (!Boolean.TRUE.equals(result)) {
+                return;
+            }
+            bindingObserved = false;
+            DebugLogger.capability("keepAlive", "release");
+        }
+    }
+
     /** Package-visible seam for JVM cleanup tests without the API AAR runtime. */
     void addForTest(final TestHookHandle handle) {
         if (handle == null) {
@@ -126,33 +269,32 @@ public final class HookRegistry {
             hookIdentities.remove(identity);
             hookResources.remove(resource);
         }
-        try {
-            resource.unhook();
-        } catch (Throwable exception) {
-            logCleanupFailure("hook-unhook", exception);
-        }
+        unhookQuietly(resource, "hook-unhook");
         return true;
     }
 
-    /** Releases every owned hook exactly once. */
+    /** Disables/drains lifecycle resources, then releases every hook once. */
     public void close() {
+        List<CloseResource> resources;
         List<HookResource> hooks;
         synchronized (lock) {
             if (closed) {
                 return;
             }
             closed = true;
+            resources = new ArrayList<CloseResource>(closeResources);
             hooks = new ArrayList<HookResource>(hookResources);
         }
 
+        for (CloseResource resource : resources) {
+            closeQuietly(resource, "resource-close");
+        }
         for (HookResource hook : hooks) {
-            try {
-                hook.unhook();
-            } catch (Throwable exception) {
-                logCleanupFailure("hook-unhook", exception);
-            }
+            unhookQuietly(hook, "hook-unhook");
         }
         synchronized (lock) {
+            closeResources.clear();
+            closeResourcesByIdentity.clear();
             hookResources.clear();
             hookIdentities.clear();
             hookResourcesByIdentity.clear();
@@ -186,11 +328,29 @@ public final class HookRegistry {
             }
         }
         if (releaseImmediately) {
-            try {
-                resource.unhook();
-            } catch (Throwable exception) {
-                logCleanupFailure("late-hook-unhook", exception);
-            }
+            unhookQuietly(resource, "late-hook-unhook");
+        }
+    }
+
+    private static void closeQuietly(CloseResource resource, String operation) {
+        if (resource == null) {
+            return;
+        }
+        try {
+            resource.close();
+        } catch (Throwable exception) {
+            logCleanupFailure(operation, exception);
+        }
+    }
+
+    private static void unhookQuietly(HookResource resource, String operation) {
+        if (resource == null) {
+            return;
+        }
+        try {
+            resource.unhook();
+        } catch (Throwable exception) {
+            logCleanupFailure(operation, exception);
         }
     }
 
@@ -202,6 +362,18 @@ public final class HookRegistry {
             Log.w(LOG_TAG, operation + ":" + exceptionClass);
         } catch (Throwable ignored) {
             // Android logging can be unavailable in a local JVM test.
+        }
+    }
+
+    private static final class CloseResource {
+        private final Runnable closeAction;
+
+        private CloseResource(Runnable closeAction) {
+            this.closeAction = closeAction;
+        }
+
+        private void close() {
+            closeAction.run();
         }
     }
 

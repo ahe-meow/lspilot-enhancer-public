@@ -19,6 +19,7 @@ public final class LSPilotEnhancerModule extends XposedModule {
 
     @Override
     public void onModuleLoaded(XposedModuleInterface.ModuleLoadedParam param) {
+        DebugLogger.bind(this);
         try {
             synchronized (lifecycleLock) {
                 if (param == null) {
@@ -183,13 +184,46 @@ public final class LSPilotEnhancerModule extends XposedModule {
         return abi != null && (abi.reasoningSource != null
                 || abi.menuLabels != null
                 || abi.genericRequest != null
-                || abi.thinkingRequest != null);
+                || abi.thinkingRequest != null
+                || abi.network != null
+                || abi.streamLifecycle != null);
     }
 
     private void installCapabilities(
             final DexKitAbiScanner.ScanResult scanResult,
             final HookRegistry currentRegistry) {
         final HostAbi abi = scanResult.abi;
+        boolean streamCandidate = abi.streamLifecycle != null;
+        boolean streamInstalled = false;
+        if (!streamCandidate) {
+            DebugLogger.capability("streamLifecycle", "disabled",
+                    Integer.valueOf(scanResult.streamLifecycleCount));
+        } else {
+            int resourcesBefore = currentRegistry.resourceCount();
+            try {
+                StreamLifecycleHook.install(abi.streamLifecycle, currentRegistry);
+            } catch (Throwable exception) {
+                DebugLogger.capability("streamLifecycle", "stream_failed", exception);
+            }
+            streamInstalled = currentRegistry.resourceCount() > resourcesBefore;
+            DebugLogger.capability("streamLifecycle",
+                    streamInstalled ? "stream_installed" : "stream_failed");
+            if (streamInstalled) {
+                DebugLogger.capability("streamLifecycle", "installed");
+            }
+        }
+        if (streamInstalled) {
+            currentRegistry.installKeepAliveDiagnostics();
+        }
+        if (abi.network == null) {
+            DebugLogger.capability("network", "disabled", Integer.valueOf(0));
+        } else {
+            try {
+                NetworkStabilityHook.install(abi.network, currentRegistry);
+            } catch (Throwable exception) {
+                DebugLogger.capability("network", "disabled", exception);
+            }
+        }
         attemptCapability("menuLabels",
                 abi.menuLabels != null,
                 scanResult.menuLabelsCount,
@@ -280,6 +314,10 @@ public final class LSPilotEnhancerModule extends XposedModule {
                 Boolean.valueOf(scanResult.cacheHit));
         DebugLogger.capability("lifecycle", "scan_fresh",
                 Boolean.valueOf(scanResult.contentFingerprint != null && !scanResult.cacheHit));
+        DebugLogger.capability("streamLifecycle", "candidates",
+                Integer.valueOf(scanResult.streamLifecycleCount));
+        DebugLogger.capability("network", "candidates",
+                Integer.valueOf(scanResult.abi.network == null ? 0 : 1));
         DebugLogger.capability("reasoningSource", "candidates",
                 Integer.valueOf(scanResult.reasoningSourceCount));
         DebugLogger.capability("menuLabels", "candidates",
@@ -291,8 +329,9 @@ public final class LSPilotEnhancerModule extends XposedModule {
     }
 
     private static void disableCapabilities() {
-        DebugLogger.capability("reasoningSource", "disabled", Integer.valueOf(0));
-        DebugLogger.capability("menuLabels", "disabled", Integer.valueOf(0));
+        DebugLogger.capability("streamLifecycle", "disabled", Integer.valueOf(0));
+        DebugLogger.capability("network", "disabled", Integer.valueOf(0));
+        DebugLogger.capability("reasoningSource", "disabled", Integer.valueOf(0));        DebugLogger.capability("menuLabels", "disabled", Integer.valueOf(0));
         DebugLogger.capability("genericRequest", "disabled", Integer.valueOf(0));
         DebugLogger.capability("thinkingRequest", "disabled", Integer.valueOf(0));
     }

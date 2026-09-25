@@ -2,11 +2,18 @@ package com.lspilot.enhancer;
 
 import android.util.Log;
 
+import io.github.libxposed.api.XposedInterface;
+
 /** Emits allowlisted, capability-level diagnostics without exposing host data. */
 public final class DebugLogger {
     private static final String LOG_TAG = "LSPilot";
+    private static volatile XposedInterface xposedInterface;
 
     private DebugLogger() {
+    }
+
+    public static void bind(XposedInterface value) {
+        xposedInterface = value;
     }
 
     public static void capability(String capability, String event, Object... values) {
@@ -17,10 +24,21 @@ public final class DebugLogger {
                 line = line + " " + safeValue(value, eventName);
             }
         }
+        emit(line);
+    }
+
+    private static void emit(String line) {
         try {
             Log.i(LOG_TAG, line);
         } catch (Throwable ignored) {
             // Logging must never become a host-facing failure.
+        }
+        try {
+            if (xposedInterface != null) {
+                xposedInterface.log(XposedInterface.PRIORITY_DEFAULT, LOG_TAG, line);
+            }
+        } catch (Throwable ignored) {
+            // API 102 logging is optional and must never affect host behavior.
         }
     }
 
@@ -30,7 +48,10 @@ public final class DebugLogger {
                 || "reasoningSource".equals(value)
                 || "menuLabels".equals(value)
                 || "genericRequest".equals(value)
-                || "thinkingRequest".equals(value)) {
+                || "thinkingRequest".equals(value)
+                || "streamLifecycle".equals(value)
+                || "network".equals(value)
+                || "keepAlive".equals(value)) {
             return value;
         }
         return "unknown";
@@ -50,6 +71,17 @@ public final class DebugLogger {
                 || "ready".equals(value)
                 || "installed".equals(value)
                 || "disabled".equals(value)
+                || "initializer_installed".equals(value)
+                || "initializer_failed".equals(value)
+                || "setter_installed".equals(value)
+                || "setter_failed".equals(value)
+                || "scope_unavailable".equals(value)
+                || "stream_installed".equals(value)
+                || "stream_failed".equals(value)
+                || "acquire".equals(value)
+                || "bind".equals(value)
+                || "rebind".equals(value)
+                || "release".equals(value)
                 || "hot_reloading".equals(value)
                 || "hot_reloaded".equals(value)) {
             return value;
